@@ -1,5 +1,5 @@
 import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'fs'
-import { basename, dirname, extname, resolve } from 'path'
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'path'
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { getReportStorageRoot } from '../lib/report-storage-path.js'
@@ -26,10 +26,30 @@ function ensureReportRoot() {
 }
 
 function resolveStoredReportPath(storedName) {
-  const safeName = basename(String(storedName || ''))
-  if (!safeName || safeName !== storedName) return null
-  const filePath = resolve(reportRoot, safeName)
-  return dirname(filePath) === reportRoot ? filePath : null
+  const candidate = String(storedName || '').trim().replace(/\\/g, '/')
+  if (!candidate || candidate.startsWith('/') || isAbsolute(candidate)) return null
+  const segments = candidate.split('/')
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..' || /[\x00-\x1f]/.test(segment))) return null
+  const filePath = resolve(reportRoot, ...segments)
+  const insideRoot = relative(reportRoot, filePath)
+  return insideRoot && !insideRoot.startsWith(`..${sep}`) && insideRoot !== '..' && !isAbsolute(insideRoot)
+    ? filePath
+    : null
+}
+
+function toStoredName(filePath) {
+  const storedName = relative(reportRoot, filePath).split(sep).join('/')
+  return resolveStoredReportPath(storedName) ? storedName : null
+}
+
+function listAuditPaths(directory = reportRoot) {
+  const results = []
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = resolve(directory, entry.name)
+    if (entry.isDirectory()) results.push(...listAuditPaths(entryPath))
+    else if (entry.isFile() && extname(entry.name).toLowerCase() === '.json') results.push(entryPath)
+  }
+  return results
 }
 
 function safeText(value) {
@@ -74,17 +94,30 @@ function syncGeneratedReports(db) {
       updated_at = excluded.updated_at
   `)
 
-  for (const entry of readdirSync(reportRoot, { withFileTypes: true })) {
-    if (!entry.isFile() || extname(entry.name).toLowerCase() !== '.json') continue
-    const auditPath = resolveStoredReportPath(entry.name)
-    if (!auditPath) continue
+  for (const auditPath of listAuditPaths()) {
+    const auditName = toStoredName(auditPath)
+    if (!auditName) continue
 
     try {
       const audit = JSON.parse(readFileSync(auditPath, 'utf8'))
       const reportId = safeText(audit.reportId)
-      const storedName = basename(safeText(audit.fileName) || safeText(audit.filePath) || '')
+      const auditDirectory = dirname(auditName)
+      const declaredName = safeText(audit.relativeFilePath) || safeText(audit.fileName)
+      let storedName = declaredName && resolveStoredReportPath(declaredName) ? declaredName.replace(/\\/g, '/') : null
+      if (!storedName) {
+        const legacyName = basename(safeText(audit.filePath) || '')
+        storedName = legacyName || null
+      }
+      if (storedName && auditDirectory !== '.' && !storedName.includes('/')) storedName = `${auditDirectory}/${storedName}`
       const reportPath = resolveStoredReportPath(storedName)
       if (!reportId || !storedName || !reportPath) continue
+      // A JSON audit can only describe its sibling report file. This prevents a
+      // malformed audit in one user/type directory from registering another
+      // controlled file under an arbitrary ownership record.
+      if (dirname(storedName) !== auditDirectory) continue
+      const sourceUserId = safeText(audit.sourceUserId)
+      const storedSegments = storedName.split('/')
+      if (auditDirectory !== '.' && storedSegments[0] !== (sourceUserId || '_unattributed')) continue
 
       const exists = existsSync(reportPath)
       const createdAt = Date.parse(audit.generatedAt || '') || statSync(auditPath).mtimeMs || Date.now()
@@ -92,11 +125,11 @@ function syncGeneratedReports(db) {
       insert.run(
         reportId,
         storedName,
-        entry.name,
+        auditName,
         basename(safeText(audit.title) || storedName),
         safeText(audit.reportType) || 'analysis',
         safeText(audit.sourceSessionId),
-        safeText(audit.sourceUserId),
+        sourceUserId,
         safeText(audit.dataSourceId),
         inferMimeType(storedName),
         exists ? statSync(reportPath).size : 0,
@@ -239,4 +272,4 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
   return router
 }
 
-export const __test__ = { canReadReport, inferMimeType, readExactFilter, syncGeneratedReports }
+export const __test__ = { canReadReport, inferMimeType, readExactFilter, resolveStoredReportPath, syncGeneratedReports }

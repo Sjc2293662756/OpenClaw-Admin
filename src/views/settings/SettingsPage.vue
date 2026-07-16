@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { NAlert, NCard, NForm, NFormItem, NInput, NSelect, NSpace, NText, useMessage } from 'naive-ui'
+import { NAlert, NCard, NForm, NFormItem, NSelect, NSpace, NText, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { useLocaleStore } from '@/stores/locale'
@@ -13,7 +13,7 @@ const localeStore = useLocaleStore()
 const themeStore = useThemeStore()
 const { t } = useI18n()
 const message = useMessage()
-const reportStorageRoot = ref('')
+const reportStorageConfigured = ref(false)
 const reportStorageLoading = ref(false)
 const reportStorageError = ref(false)
 
@@ -37,7 +37,7 @@ function handleLocaleChange(locale: string) {
   }
 }
 
-async function loadReportStorageRoot() {
+async function loadReportStorageStatus() {
   if (!authStore.isAdmin) return
   reportStorageLoading.value = true
   reportStorageError.value = false
@@ -47,22 +47,22 @@ async function loadReportStorageRoot() {
     })
     const contentType = response.headers.get('content-type') || ''
     if (!contentType.includes('application/json')) {
-      throw new Error('Admin BFF 尚未加载报告存储目录接口，请重启本地 Admin BFF 后重试')
+      throw new Error('Admin BFF 尚未加载报告存储状态接口，请重启本地 Admin BFF 后重试')
     }
     const data = await response.json()
-    if (!response.ok || !data.ok || typeof data.reportStorageRoot !== 'string') {
-      throw new Error(data.error?.message || data.error || '读取报告存储目录失败')
+    if (!response.ok || !data.ok || typeof data.reportStorageConfigured !== 'boolean') {
+      throw new Error(data.error?.message || data.error || '读取报告存储状态失败')
     }
-    reportStorageRoot.value = data.reportStorageRoot
+    reportStorageConfigured.value = data.reportStorageConfigured
   } catch (error) {
     reportStorageError.value = true
-    message.error(error instanceof Error ? error.message : '读取报告存储目录失败')
+    message.error(error instanceof Error ? error.message : '读取报告存储状态失败')
   } finally {
     reportStorageLoading.value = false
   }
 }
 
-onMounted(loadReportStorageRoot)
+onMounted(loadReportStorageStatus)
 </script>
 
 <template>
@@ -77,19 +77,15 @@ onMounted(loadReportStorageRoot)
       <SessionManagementPage />
     </section>
 
-    <NCard title="报告存储目录" class="app-card">
-      <NAlert type="info" :bordered="false">此处仅显示部署配置的报告存储根目录，不能在网页修改。报告由会话中的 GAIOP AI 自动生成；查看、筛选、下载与删除请在“报告文件管理”页面进行。</NAlert>
+    <NCard title="报告存储" class="app-card">
+      <NAlert type="info" :bordered="false">报告目录由部署配置控制，网页不会显示或修改服务器路径。报告由会话中的 GAIOP AI 自动生成；查看、筛选、下载与删除请在“报告文件管理”页面进行。</NAlert>
       <NForm v-if="authStore.isAdmin" label-placement="left" label-width="150" style="max-width: 760px; margin-top: 16px;">
-        <NFormItem label="报告存储根目录">
-          <NInput
-            :value="reportStorageRoot"
-            readonly
-            :placeholder="reportStorageLoading ? '正在读取…' : '未配置'"
-          />
+        <NFormItem label="部署状态">
+          <NText :type="reportStorageConfigured ? 'success' : 'warning'">{{ reportStorageLoading ? '正在读取…' : (reportStorageConfigured ? '已配置' : '未配置') }}</NText>
         </NFormItem>
       </NForm>
-      <NAlert v-else type="warning" :bordered="false" style="margin-top: 16px;">仅管理员可查看服务器报告存储目录。</NAlert>
-      <NAlert v-if="reportStorageError && authStore.isAdmin" type="warning" :bordered="false" style="margin-top: 12px;">暂时无法读取报告存储目录，请确认 Admin BFF 已启动并完成部署配置。</NAlert>
+      <NAlert v-else type="warning" :bordered="false" style="margin-top: 16px;">仅管理员可查看报告存储部署状态。</NAlert>
+      <NAlert v-if="reportStorageError && authStore.isAdmin" type="warning" :bordered="false" style="margin-top: 12px;">暂时无法读取报告存储状态，请确认 Admin BFF 已启动并完成部署配置。</NAlert>
     </NCard>
 
     <NCard title="界面偏好" class="app-card">

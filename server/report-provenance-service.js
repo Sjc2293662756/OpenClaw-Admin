@@ -1,6 +1,6 @@
 import { createHmac } from 'crypto'
 
-const PROVENANCE_VERSION = 'gaiop_report_provenance.v1'
+const PROVENANCE_VERSION = 'gaiop_report_provenance.v2'
 
 function cleanText(value, maxLength = 240) {
   const text = String(value || '').trim()
@@ -11,8 +11,8 @@ function resolveSessionId(params = {}) {
   return cleanText(params.sessionKey || params.key || params.session)
 }
 
-function canonicalPayload({ userId, sessionId, issuedAt }) {
-  return [PROVENANCE_VERSION, userId, sessionId, String(issuedAt)].join('|')
+function canonicalPayload({ userId, sessionId, dataSourceId, issuedAt }) {
+  return [PROVENANCE_VERSION, userId, sessionId, dataSourceId || '', String(issuedAt)].join('|')
 }
 
 /**
@@ -25,13 +25,16 @@ export function attachReportProvenance(params = {}, user = null, options = {}) {
   const signingKey = String(options.signingKey || '').trim()
   const userId = cleanText(user?.id)
   const sessionId = resolveSessionId(params)
+  // The browser never supplies this value. It is read from the one active
+  // Admin-side data source immediately before the Gateway RPC is made.
+  const dataSourceId = cleanText(options.dataSourceId, 160)
   if (!enabled || signingKey.length < 32 || !userId || !sessionId) {
     return { params, attached: false }
   }
 
   const issuedAt = Number.isFinite(Number(options.now)) ? Number(options.now) : Date.now()
   const signature = createHmac('sha256', signingKey)
-    .update(canonicalPayload({ userId, sessionId, issuedAt }), 'utf8')
+    .update(canonicalPayload({ userId, sessionId, dataSourceId, issuedAt }), 'utf8')
     .digest('base64url')
   const metadata = params?.metadata && typeof params.metadata === 'object' && !Array.isArray(params.metadata)
     ? { ...params.metadata }
@@ -47,6 +50,7 @@ export function attachReportProvenance(params = {}, user = null, options = {}) {
           version: PROVENANCE_VERSION,
           userId,
           sessionId,
+          dataSourceId: dataSourceId || undefined,
           issuedAt,
           signature,
         },

@@ -1613,10 +1613,14 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
   }
 
   try {
+    const activeDataSource = method === 'chat.send'
+      ? db.prepare('SELECT id FROM data_sources WHERE is_active = 1 LIMIT 1').get()
+      : null
     const reportProvenance = method === 'chat.send'
       ? attachReportProvenance(params, req.user, {
         enabled: envConfig.GAIOP_REPORT_PROVENANCE_ENABLED === 'true',
         signingKey: envConfig.GAIOP_REPORT_PROVENANCE_SIGNING_KEY,
+        dataSourceId: activeDataSource?.id,
       })
       : { params, attached: false }
     const result = await gateway.call(method, reportProvenance.params)
