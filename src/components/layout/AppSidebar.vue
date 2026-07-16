@@ -23,19 +23,20 @@ import {
   TerminalOutline,
   DesktopOutline,
   ArchiveOutline,
+  NotificationsOutline,
+  ShieldCheckmarkOutline,
   SettingsOutline,
   CodeSlashOutline,
+  DocumentTextOutline,
 } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
 import { routes } from '@/router/routes'
-import { useHermesConnectionStore } from '@/stores/hermes/connection'
 
 defineProps<{ collapsed: boolean }>()
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
-const connStore = useHermesConnectionStore()
 
 const iconMap: Record<string, unknown> = {
   GridOutline,
@@ -56,8 +57,11 @@ const iconMap: Record<string, unknown> = {
   TerminalOutline,
   DesktopOutline,
   ArchiveOutline,
+  NotificationsOutline,
+  ShieldCheckmarkOutline,
   SettingsOutline,
   CodeSlashOutline,
+  DocumentTextOutline,
 }
 
 function renderIcon(iconName: string) {
@@ -70,16 +74,10 @@ const menuOptions = computed<MenuOption[]>(() => {
   const mainRoute = routes.find((r) => r.path === '/')
   if (!mainRoute?.children) return []
 
-  const currentGateway = connStore.currentGateway
-
   return mainRoute.children
     .filter((child) => {
       if (child.meta?.hidden) return false
-
-      const gateway = child.meta?.gateway as string | undefined
-
-      // Only show routes matching the current gateway
-      return gateway === currentGateway
+      return true
     })
     .map((child) => ({
       label: child.meta?.titleKey ? t(child.meta.titleKey as string) : (child.meta?.title as string),
@@ -99,20 +97,14 @@ function handleSelect(key: string) {
 
 <template>
   <div style="display: flex; flex-direction: column; height: 100%;">
-    <div style="display: flex; align-items: center; padding: 20px 24px; gap: 10px;">
-      <img
-        v-if="connStore.currentGateway === 'hermes'"
-        src="/hermes-logo.png"
-        alt="Hermes"
-        style="width: 24px; height: 24px; object-fit: contain;"
-      />
-      <span v-else style="font-size: 24px;">🦞</span>
+    <div class="sidebar-brand">
+      <span class="sidebar-brand-mark">G</span>
       <NText
         v-if="!collapsed"
         strong
-        style="font-size: 18px; white-space: nowrap; letter-spacing: -0.5px;"
+        class="sidebar-brand-name"
       >
-        {{ connStore.currentGateway === 'hermes' ? 'Hermes Agent' : 'OpenClaw-Admin' }}
+        观枢 GAIOP
       </NText>
     </div>
 
@@ -127,3 +119,32 @@ function handleSelect(key: string) {
     />
   </div>
 </template>
+
+<style scoped>
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 24px;
+  gap: 10px;
+}
+
+.sidebar-brand-mark {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #0b7552, #31a66e);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.sidebar-brand-name {
+  color: #174d38;
+  font-size: 18px;
+  letter-spacing: -0.5px;
+  white-space: nowrap;
+}
+</style>

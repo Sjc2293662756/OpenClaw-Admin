@@ -1,6 +1,6 @@
 export default {
   app: {
-    title: 'Claw Admin',
+    title: 'GAIOP',
   },
   routes: {
     login: 'Login',
@@ -23,6 +23,9 @@ export default {
     settings: 'Settings',
     remoteDesktop: 'Remote Desktop',
     backup: 'Data Backup',
+    userManagement: 'User Management',
+    accessControl: 'Access Control',
+    systemUpgrade: 'System Upgrade',
     hermesDashboard: 'Dashboard',
     hermesChat: 'Live Chat',
     hermesSessions: 'Sessions',
@@ -150,7 +153,7 @@ export default {
         },
         bundled: {
           title: 'Bundled skills',
-          description: 'Provided with OpenClaw (can control whether visible in Chat)',
+          description: 'Provided with the GAIOP platform (can control availability in the workspace)',
           empty: 'No bundled skills available',
         },
       },
@@ -297,7 +300,7 @@ export default {
     },
     memory: {
       title: 'Memory & Docs',
-      coveredDocsPrefix: 'Covers OpenClaw managed docs: ',
+      coveredDocsPrefix: 'Covers GAIOP managed docs: ',
       coveredDocsSuffix: '.',
       gatewayLimited: 'This Gateway may not support agents.files.* or permission is restricted: {error}',
       agentPlaceholder: 'Select agent',
@@ -660,7 +663,7 @@ export default {
         nameRequired: 'Please enter a job name',
       },
       previewUnavailable: '// Preview unavailable: {error}',
-      modelConfigLoadFailed: 'Failed to read model config; cannot filter by openclaw.json: {error}',
+      modelConfigLoadFailed: 'Failed to read model configuration: {error}',
       modelListLoadFailed: 'Failed to load model list; you can still input manually: {error}',
       messages: {
         jobEnabled: 'Job enabled',
@@ -906,15 +909,15 @@ export default {
     },
     dashboard: {
       hero: {
-        title: 'OpenClaw overview',
-        subtitle: 'Use official Usage aggregates to track tokens/cost, active sessions, and error distribution, then drill down into sessions.',
+        title: 'GAIOP Operations Overview',
+        subtitle: 'Review key Token, model, skill, task, and session activity, then open the relevant management function.',
       },
       connection: {
-        connected: 'Gateway connected',
-        connecting: 'Gateway connecting',
-        reconnecting: 'Gateway reconnecting',
-        failed: 'Gateway connection failed',
-        disconnected: 'Gateway disconnected',
+        connected: 'GAIOP service connected',
+        connecting: 'GAIOP service connecting',
+        reconnecting: 'GAIOP service reconnecting',
+        failed: 'GAIOP service connection failed',
+        disconnected: 'GAIOP service disconnected',
       },
       lastUpdated: {
         none: 'Not synced yet',
@@ -958,7 +961,7 @@ export default {
       },
       cards: {
         kpis: 'Usage KPIs',
-        trend: 'Token trend (official Usage)',
+        trend: 'Token trend',
         structure: 'Usage breakdown',
         top: 'Top distribution',
         sessions: 'Sessions overview (with usage)',
@@ -1087,7 +1090,7 @@ export default {
         error: 'TTS synthesis failed',
       },
       input: {
-        placeholder: 'Type a message (type / for OpenClaw commands, Enter to send, Shift+Enter for new line)',
+        placeholder: 'Describe an operations analysis task (type / for GAIOP commands, Enter to send, Shift+Enter for new line)',
         sendHint: 'Sending to: {key} | Enter send, Shift+Enter newline, Ctrl/Cmd+Enter send',
       },
       quickReplies: {
@@ -1121,7 +1124,7 @@ export default {
         },
       },
       slash: {
-        title: 'OpenClaw slash commands',
+        title: 'GAIOP slash commands',
         hint: 'Up/Down select, Tab apply, Enter apply or send, Esc exit',
         categories: {
           common: 'Common',

@@ -218,7 +218,10 @@ export class ApiClient {
     const result: RPCResponse<T> = await response.json()
 
     if (!result.ok) {
-      throw new Error(result.error?.message || 'RPC call failed')
+      const errorMessage = typeof result.error === 'string'
+        ? result.error
+        : result.error?.message
+      throw new Error(errorMessage || 'RPC call failed')
     }
 
     return result.payload as T

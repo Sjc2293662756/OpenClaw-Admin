@@ -2,15 +2,24 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 
 const AUTH_TOKEN_KEY = 'auth_token'
+const AUTH_USER_KEY = 'auth_user'
+
+export type AuthUser = {
+  id?: string
+  username: string
+  role: 'basic' | 'auditor' | 'standard' | 'admin'
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem(AUTH_TOKEN_KEY))
+  const currentUser = ref<AuthUser | null>(JSON.parse(localStorage.getItem(AUTH_USER_KEY) || 'null'))
   const authEnabled = ref(true)
   const loading = ref(false)
   const error = ref<string | null>(null)
   const configLoaded = ref(false)
 
   const isAuthenticated = computed(() => !!token.value)
+  const isAdmin = computed(() => currentUser.value?.role === 'admin')
 
   function setToken(newToken: string | null) {
     token.value = newToken
@@ -19,6 +28,12 @@ export const useAuthStore = defineStore('auth', () => {
     } else {
       localStorage.removeItem(AUTH_TOKEN_KEY)
     }
+  }
+
+  function setCurrentUser(user: AuthUser | null) {
+    currentUser.value = user
+    if (user) localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user))
+    else localStorage.removeItem(AUTH_USER_KEY)
   }
 
   async function checkAuthConfig(forceRefresh = false) {
@@ -54,9 +69,12 @@ export const useAuthStore = defineStore('auth', () => {
       })
       
       if (response.ok) {
+        const data = await response.json()
+        if (data.user) setCurrentUser(data.user)
         return true
       } else {
         setToken(null)
+        setCurrentUser(null)
         return false
       }
     } catch {
@@ -83,6 +101,7 @@ export const useAuthStore = defineStore('auth', () => {
         if (data.token) {
           setToken(data.token)
         }
+        if (data.user) setCurrentUser(data.user)
         loading.value = false
         return true
       } else {
@@ -111,6 +130,7 @@ export const useAuthStore = defineStore('auth', () => {
       // ignore
     }
     setToken(null)
+    setCurrentUser(null)
   }
 
   function getToken(): string | null {
@@ -119,10 +139,12 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     token,
+    currentUser,
     authEnabled,
     loading,
     error,
     isAuthenticated,
+    isAdmin,
     checkAuthConfig,
     checkAuth,
     login,

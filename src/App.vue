@@ -19,6 +19,7 @@ const { theme } = useTheme();
 const route = useRoute();
 const localeStore = useLocaleStore();
 const { t } = useI18n();
+const appTitle = "NetInside 观枢 GAIOP 智能运维分析平台";
 
 const naiveLocale = computed(() =>
   localeStore.locale === "zh-CN" ? zhCN : enUS,
@@ -33,11 +34,11 @@ watch(
   ([titleKey]) => {
     if (typeof document === "undefined") return;
     if (!titleKey) {
-      document.title = "OpenClaw Admin";
+      document.title = appTitle;
       return;
     }
     const title = t(titleKey);
-    document.title = `${title} - OpenClaw Admin`;
+    document.title = `${title} - ${appTitle}`;
   },
   { immediate: true },
 );

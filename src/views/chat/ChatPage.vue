@@ -27,6 +27,7 @@ import { CopyOutline, RefreshOutline, SendOutline, StopCircleOutline, ChevronBac
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
+import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config'
 import { useSessionStore } from '@/stores/session'
 import { useSkillStore } from '@/stores/skill'
@@ -35,17 +36,26 @@ import { formatDate, formatRelativeTime, parseSessionKey, truncate } from '@/uti
 import { renderSimpleMarkdown } from '@/utils/markdown'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
+import { usePermissions } from '@/composables/usePermissions'
 import type { AgentInstance, ChatMessage, ChatMessageContent, SessionsUsageSession, Skill } from '@/api/types'
+
+const props = withDefaults(defineProps<{ workspace?: boolean; initialDraft?: string }>(), {
+  workspace: false,
+  initialDraft: '',
+})
+const workspaceMode = computed(() => props.workspace)
 
 const message = useMessage()
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const chatStore = useChatStore()
 const configStore = useConfigStore()
 const sessionStore = useSessionStore()
 const skillStore = useSkillStore()
 const wsStore = useWebSocketStore()
 const { t, locale } = useI18n()
+const { canUseFunctions, readOnlyHint } = usePermissions()
 
 const sessionKeyInput = ref('')
 const draft = ref('')
@@ -78,6 +88,7 @@ const roleFilterOptions = computed<SelectOption[]>(() => [
 const BOTTOM_GAP = 32
 const QUICK_REPLY_STORAGE_KEY = 'openclaw_chat_quick_replies_v1'
 const SESSION_KEY_STORAGE_KEY = 'openclaw_chat_selected_session_v1'
+const ALERT_ANALYSIS_DRAFT_STORAGE_KEY = 'gaiop.alert-analysis-draft'
 let pendingForceScroll = false
 let pendingScroll = false
 let destroyed = false
@@ -90,6 +101,27 @@ const quickReplies = ref<Array<{
 
 const expandedToolCalls = ref(new Set<string>())
 const expandedToolResults = ref(new Set<string>())
+
+const workspacePrompts = [
+  '分析当前告警的影响范围和处置优先级',
+  '基于指定时间范围生成运维分析报告',
+  '帮我分析一段网络流量或性能异常',
+]
+
+function applyWorkspacePrompt(prompt: string) {
+  draft.value = prompt
+}
+
+function consumeAlertAnalysisDraft() {
+  try {
+    const value = props.initialDraft.trim() || sessionStorage.getItem(ALERT_ANALYSIS_DRAFT_STORAGE_KEY)?.trim() || ''
+    if (!value) return
+    draft.value = value
+    sessionStorage.removeItem(ALERT_ANALYSIS_DRAFT_STORAGE_KEY)
+  } catch {
+    // The workspace remains usable if browser storage is unavailable.
+  }
+}
 
 // TTS state
 const playingMessageId = ref<string | null>(null)
@@ -2544,6 +2576,7 @@ onMounted(async () => {
   }, 1000)
 
   loadQuickReplies()
+  consumeAlertAnalysisDraft()
   void configStore.fetchConfig()
   void skillStore.fetchSkills()
   document.addEventListener('click', handleCodeCopy)
@@ -2580,6 +2613,15 @@ onMounted(async () => {
   const routeSessionKey = normalizeSessionSelectValue(
     Array.isArray(route.query.session) ? route.query.session[0] : (route.query.session as string | number | null)
   )
+
+  // 对话工作台默认进入的是“未开始的新对话”，不恢复上一次会话，也不自动选中列表中的第一条。
+  if (workspaceMode.value && !routeSessionKey) {
+    sessionKeyInput.value = ''
+    chatStore.setSessionKey('')
+    await chatStore.fetchHistory('')
+    return
+  }
+
   const currentStoreKey = chatStore.sessionKey.trim()
   const storedSessionKey = readStoredSessionKey()
   if (!sessionKeyInput.value && routeSessionKey) {
@@ -2641,9 +2683,41 @@ watch(
   { deep: true }
 )
 
+watch(
+  () => route.query.session,
+  (value) => {
+    const key = normalizeSessionSelectValue(Array.isArray(value) ? value[0] : value)
+    if (workspaceMode.value && !key) {
+      sessionKeyInput.value = ''
+      chatStore.setSessionKey('')
+      void chatStore.fetchHistory('')
+      return
+    }
+    if (key && key !== sessionKeyInput.value) {
+      handleSessionKeyChange(key)
+    }
+  }
+)
+
 async function handleRefreshChatData() {
   await sessionStore.fetchSessions()
   await loadHistoryForKey(ensureSessionKey(), { force: true })
+}
+
+async function createWorkspaceSession(): Promise<string> {
+  const response = await fetch('/api/workspace/sessions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${authStore.getToken() || ''}`,
+    },
+  })
+  const data = await response.json()
+  const sessionKey = typeof data?.sessionKey === 'string' ? data.sessionKey.trim() : ''
+  if (!response.ok || !data?.ok || !sessionKey) {
+    throw new Error(data?.error?.message || data?.error || '创建工作台会话失败')
+  }
+  return sessionKey
 }
 
 async function handleSend() {
@@ -2652,9 +2726,19 @@ async function handleSend() {
   if (agentBusy.value) return
 
   try {
+    if (workspaceMode.value && !sessionKeyInput.value.trim()) {
+      // 不发送 /new 命令，首次正式需求即建立会话，避免用户看到底层系统提示。
+      const key = await createWorkspaceSession()
+      sessionKeyInput.value = key
+      await router.replace({
+        name: 'ChatWorkspace',
+        query: { session: key, ...(route.query.alertReturn === '1' ? { alertReturn: '1' } : {}) },
+      })
+    }
     const key = ensureSessionKey()
     chatStore.setSessionKey(key)
     await chatStore.sendMessage(content)
+    if (workspaceMode.value) void sessionStore.fetchSessions()
     void fetchSessionTokenUsage(key)
     draft.value = ''
     await nextTick()
@@ -2668,9 +2752,9 @@ async function handleSend() {
 </script>
 
 <template>
-  <div class="chat-page">
-    <NCard :title="t('pages.chat.title')" class="app-card chat-root-card">
-      <template #header-extra>
+  <div class="chat-page" :class="{ 'chat-page--workspace': workspaceMode }">
+    <NCard :title="workspaceMode ? undefined : t('pages.chat.title')" class="app-card chat-root-card" :bordered="!workspaceMode">
+      <template v-if="!workspaceMode" #header-extra>
         <NSpace :size="8" class="app-toolbar">
           <div v-if="sessionTokenMetricTags.length" class="chat-token-metrics">
             <NTag
@@ -2696,8 +2780,8 @@ async function handleSend() {
         </NSpace>
       </template>
 
-      <NGrid cols="1 l:3" responsive="screen" :x-gap="12" :y-gap="12" class="chat-grid" :class="{ 'chat-grid--collapsed': sideCollapsed }">
-        <NGridItem :span="1" class="chat-grid-side" :class="{ 'chat-grid-side--collapsed': sideCollapsed }">
+      <NGrid cols="1 l:3" responsive="screen" :x-gap="12" :y-gap="12" class="chat-grid" :class="{ 'chat-grid--collapsed': sideCollapsed, 'chat-grid--workspace': workspaceMode }">
+        <NGridItem v-if="!workspaceMode" :span="1" class="chat-grid-side" :class="{ 'chat-grid-side--collapsed': sideCollapsed }">
           <!-- 折叠按钮 -->
           <div class="chat-side-collapse-btn" @click="sideCollapsed = !sideCollapsed">
             <NIcon :component="ChevronBackOutline" size="14" />
@@ -2833,7 +2917,7 @@ async function handleSend() {
           </NCard>
         </NGridItem>
 
-        <NGridItem :span="sideCollapsed ? 3 : 2" class="chat-grid-main">
+        <NGridItem :span="workspaceMode || sideCollapsed ? 3 : 2" class="chat-grid-main">
           <!-- 展开按钮（侧边栏折叠时显示） -->
           <div v-if="sideCollapsed" class="chat-side-expand-btn" @click="sideCollapsed = false">
             <NIcon :component="ChevronForwardOutline" size="14" />
@@ -2841,7 +2925,7 @@ async function handleSend() {
           
           <div class="chat-main-column">
             <NCard embedded :bordered="false" class="chat-transcript-card">
-              <NSpace justify="space-between" align="center" style="margin-bottom: 10px;">
+              <NSpace v-if="!workspaceMode || renderedMessages.length" justify="space-between" align="center" style="margin-bottom: 10px;">
                 <NSpace align="center" :size="8">
                   <NTag size="small" type="info" :bordered="false" round>
                     {{ t('pages.chat.sessionTag', { key: normalizedSessionKey }) }}
@@ -2874,9 +2958,29 @@ async function handleSend() {
                               {{ entry.item.name }}
                             </NText>
                           </NSpace>
-                          <NText v-if="entry.item.timestamp" depth="3" style="font-size: 12px;">
-                            {{ formatDate(entry.item.timestamp) }}
-                          </NText>
+                          <NSpace align="center" :size="2">
+                            <NText v-if="entry.item.timestamp" depth="3" style="font-size: 12px;">
+                              {{ formatDate(entry.item.timestamp) }}
+                            </NText>
+                            <div class="chat-bubble-actions">
+                              <NButton quaternary size="tiny" title="复制内容" aria-label="复制内容" @click="copyMessageContent(entry)">
+                                <template #icon><NIcon :component="CopyOutline" /></template>
+                              </NButton>
+                              <NButton
+                                v-if="entry.item.role === 'user' || entry.item.role === 'assistant'"
+                                quaternary
+                                size="tiny"
+                                :title="playingMessageId === entry.item.id ? t('pages.chat.tts.stop') : t('pages.chat.tts.play')"
+                                :aria-label="playingMessageId === entry.item.id ? t('pages.chat.tts.stop') : t('pages.chat.tts.play')"
+                                :loading="ttsIsLoading && playingMessageId === entry.item.id"
+                                @click="playTTS(entry.item)"
+                              >
+                                <template #icon>
+                                  <NIcon :component="playingMessageId === entry.item.id ? StopOutline : VolumeHighOutline" />
+                                </template>
+                              </NButton>
+                            </div>
+                          </NSpace>
                         </NSpace>
 
                         <div v-if="entry.structured" class="structured-message-list">
@@ -3020,33 +3124,6 @@ async function handleSend() {
                             <div class="chat-bubble-content structured-plain-text chat-markdown"
                               v-html="renderChatMarkdown(entry.structured.plainTexts.join('\n'), entry.item.role)"
                             ></div>
-                            <div class="chat-content-copy-btn">
-                              <NTooltip>
-                                <template #trigger>
-                                  <NButton quaternary size="tiny" @click="copyMessageContent(entry)">
-                                    <template #icon>
-                                      <NIcon :component="CopyOutline" />
-                                    </template>
-                                  </NButton>
-                                </template>
-                                {{ t('common.copy') }}
-                              </NTooltip>
-                              <NTooltip v-if="entry.item.role === 'user' || entry.item.role === 'assistant'">
-                                <template #trigger>
-                                  <NButton
-                                    quaternary
-                                    size="tiny"
-                                    :loading="ttsIsLoading && playingMessageId === entry.item.id"
-                                    @click="playTTS(entry.item)"
-                                  >
-                                    <template #icon>
-                                      <NIcon :component="playingMessageId === entry.item.id ? StopOutline : VolumeHighOutline" />
-                                    </template>
-                                  </NButton>
-                                </template>
-                                {{ playingMessageId === entry.item.id ? t('pages.chat.tts.stop') : t('pages.chat.tts.play') }}
-                              </NTooltip>
-                            </div>
                           </div>
 
                           <div v-if="entry.structured.images.length" class="chat-images-container">
@@ -3072,37 +3149,25 @@ async function handleSend() {
                             class="chat-bubble-content chat-markdown"
                             v-html="renderChatMarkdown(entry.item.content, entry.item.role)"
                           ></div>
-                          <div class="chat-content-copy-btn">
-                            <NTooltip>
-                              <template #trigger>
-                                <NButton quaternary size="tiny" @click="copyMessageContent(entry)">
-                                  <template #icon>
-                                    <NIcon :component="CopyOutline" />
-                                  </template>
-                                </NButton>
-                              </template>
-                              {{ t('common.copy') }}
-                            </NTooltip>
-                            <NTooltip v-if="entry.item.role === 'user' || entry.item.role === 'assistant'">
-                              <template #trigger>
-                                <NButton
-                                  quaternary
-                                  size="tiny"
-                                  :loading="ttsIsLoading && playingMessageId === entry.item.id"
-                                  @click="playTTS(entry.item)"
-                                >
-                                  <template #icon>
-                                    <NIcon :component="playingMessageId === entry.item.id ? StopOutline : VolumeHighOutline" />
-                                  </template>
-                                </NButton>
-                              </template>
-                              {{ playingMessageId === entry.item.id ? t('pages.chat.tts.stop') : t('pages.chat.tts.play') }}
-                            </NTooltip>
-                          </div>
                         </div>
                       </div>
                     </template>
 
+                    <div v-else-if="workspaceMode" class="workspace-welcome">
+                      <div class="workspace-welcome__mark">G</div>
+                      <h1>开始智能运维分析</h1>
+                      <p>输入告警、性能或流量分析需求，GAIOP 将结合已接入的数据源协助研判与处置。</p>
+                      <div class="workspace-prompt-list">
+                        <button
+                          v-for="prompt in workspacePrompts"
+                          :key="prompt"
+                          type="button"
+                          @click="applyWorkspacePrompt(prompt)"
+                        >
+                          {{ prompt }}
+                        </button>
+                      </div>
+                    </div>
                     <NEmpty
                       v-else
                       :description="visibleMessageEntries.length ? t('pages.chat.messages.emptyFiltered') : t('common.noMessages')"
@@ -3118,6 +3183,8 @@ async function handleSend() {
                 <NInput
                   v-model:value="draft"
                   type="textarea"
+                  :disabled="!canUseFunctions"
+                  :title="!canUseFunctions ? readOnlyHint : undefined"
                   :autosize="{ minRows: 3, maxRows: 8 }"
                   :placeholder="t('pages.chat.input.placeholder')"
                   @keydown="handleDraftKeydown"
@@ -3338,7 +3405,7 @@ async function handleSend() {
                       <template #icon><NIcon :component="StopCircleOutline" /></template>
                       {{ t('pages.chat.actions.stop') }}
                     </NButton>
-                    <NButton size="small" type="primary" :loading="agentBusy" :disabled="agentBusy" @click="handleSend">
+                    <NButton size="small" type="primary" :loading="agentBusy" :disabled="agentBusy || !canUseFunctions" :title="!canUseFunctions ? readOnlyHint : undefined" @click="handleSend">
                       <template #icon><NIcon :component="SendOutline" /></template>
                       {{ t('pages.chat.actions.send') }}
                     </NButton>
@@ -3406,6 +3473,99 @@ async function handleSend() {
 <style scoped>
 .chat-page {
   min-height: 0;
+}
+
+.chat-page--workspace {
+  height: 100% !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-page--workspace .chat-root-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.chat-page--workspace :deep(.chat-root-card > .n-card__content) {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.chat-page--workspace .chat-grid,
+.chat-page--workspace .chat-grid-main,
+.chat-page--workspace .chat-main-column {
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace-welcome {
+  display: grid;
+  min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  padding: 40px 24px 58px;
+  color: #406353;
+  text-align: center;
+}
+
+.workspace-welcome__mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 17px;
+  place-items: center;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #0a7a54, #3cb675);
+  box-shadow: 0 10px 24px rgba(18, 133, 88, 0.2);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.workspace-welcome h1 {
+  margin: 0;
+  color: #214936;
+  font-size: clamp(23px, 2.2vw, 30px);
+  letter-spacing: -0.03em;
+}
+
+.workspace-welcome p {
+  max-width: 560px;
+  margin: 12px 0 22px;
+  color: #789183;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.workspace-prompt-list {
+  display: flex;
+  max-width: 680px;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 9px;
+}
+
+.workspace-prompt-list button {
+  padding: 8px 12px;
+  border: 1px solid #d7e9dd;
+  border-radius: 999px;
+  background: #f8fcf9;
+  color: #397057;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  transition: border-color .16s ease, background .16s ease, color .16s ease;
+}
+
+.workspace-prompt-list button:hover {
+  border-color: #8bcda7;
+  background: #edf8f1;
+  color: #087249;
 }
 
 /* 桌面端：让聊天区尽量占满可用高度，提升 transcript 可视面积 */
@@ -3915,16 +4075,15 @@ async function handleSend() {
   position: relative;
 }
 
-.chat-content-copy-btn {
-  position: absolute;
-  top: 0;
-  right: 0;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  z-index: 10;
+.chat-bubble-actions {
+  display: flex;
+  align-items: center;
+  opacity: .56;
+  transition: opacity .18s ease;
 }
 
-.chat-bubble-content-wrapper:hover .chat-content-copy-btn {
+.chat-bubble:hover .chat-bubble-actions,
+.chat-bubble:focus-within .chat-bubble-actions {
   opacity: 1;
 }
 
@@ -3938,6 +4097,16 @@ async function handleSend() {
   margin-right: auto;
   border-color: rgba(24, 144, 255, 0.3);
   background: rgba(24, 144, 255, 0.08);
+}
+
+.chat-page--workspace .chat-bubble.is-assistant {
+  border-color: rgba(18, 135, 86, .26);
+  background: rgba(31, 154, 99, .075);
+}
+
+.chat-page--workspace .chat-bubble {
+  padding: 12px 14px;
+  border-radius: 12px;
 }
 
 .chat-bubble.is-tool {

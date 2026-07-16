@@ -18,10 +18,12 @@ import { RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useSkillStore } from '@/stores/skill'
 import type { Skill } from '@/api/types'
+import { usePermissions } from '@/composables/usePermissions'
 
 const skillStore = useSkillStore()
 const { t } = useI18n()
 const searchQuery = ref('')
+const { canEditConfiguration, readOnlyHint } = usePermissions()
 
 onMounted(() => {
   skillStore.fetchSkills()
@@ -122,11 +124,11 @@ const pluginGroups = computed(() => {
         <NSpace :size="8" class="app-toolbar">
           <NSpace :size="8" align="center">
             <NText depth="3" style="font-size: 12px;">{{ t('pages.skills.showBundled') }}</NText>
-            <NSwitch v-model:value="skillStore.showBundled" size="small" />
+            <NSwitch v-model:value="skillStore.showBundled" size="small" :disabled="!canEditConfiguration" :title="!canEditConfiguration ? readOnlyHint : undefined" />
           </NSpace>
           <NSpace :size="8" align="center">
             <NText depth="3" style="font-size: 12px;">{{ t('pages.skills.showBundledInChat') }}</NText>
-            <NSwitch v-model:value="skillStore.showBundledInChat" size="small" />
+            <NSwitch v-model:value="skillStore.showBundledInChat" size="small" :disabled="!canEditConfiguration" :title="!canEditConfiguration ? readOnlyHint : undefined" />
           </NSpace>
           <NButton size="small" class="app-toolbar-btn app-toolbar-btn--refresh" @click="skillStore.fetchSkills()">
             <template #icon><NIcon :component="RefreshOutline" /></template>
@@ -216,6 +218,8 @@ const pluginGroups = computed(() => {
                           <NSwitch
                             size="small"
                             :value="skillStore.isSkillVisibleInChat(skill.name)"
+                            :disabled="!canEditConfiguration"
+                            :title="!canEditConfiguration ? readOnlyHint : undefined"
                             @update:value="(val) => skillStore.setSkillVisibleInChat(skill.name, val)"
                           />
                         </NSpace>

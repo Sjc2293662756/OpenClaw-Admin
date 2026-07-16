@@ -1,103 +1,91 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { NButton, NText, NAlert, NSpin, NInput, NFormItem, NForm } from 'naive-ui'
-import { useI18n } from 'vue-i18n'
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { NAlert, NButton, NForm, NInput, NSpin } from 'naive-ui'
+import { ConnectionState } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
-import { ConnectionState } from '@/api/types'
-import AnimatedCharacters from '@/components/common/AnimatedCharacters.vue'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const websocketStore = useWebSocketStore()
-const { t } = useI18n()
 
 const loading = ref(true)
 const checking = ref(true)
 const error = ref('')
 const username = ref('')
 const password = ref('')
-const isTyping = ref(false)
 const showPassword = ref(false)
 
 const connectionState = computed(() => websocketStore.state)
 const isConnected = computed(() => connectionState.value === ConnectionState.CONNECTED)
-const isConnecting = computed(() => 
-  connectionState.value === ConnectionState.CONNECTING || 
-  connectionState.value === ConnectionState.RECONNECTING
+const isConnecting = computed(() =>
+  connectionState.value === ConnectionState.CONNECTING ||
+  connectionState.value === ConnectionState.RECONNECTING,
 )
+
+function redirectToPlatform() {
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/workspace'
+  router.push(redirect)
+}
 
 onMounted(async () => {
   const authEnabled = await authStore.checkAuthConfig()
-  
+
   if (!authEnabled) {
     websocketStore.connect()
-    
+
     const checkConnection = () => {
       if (isConnected.value) {
         loading.value = false
-        const redirect = (route.query.redirect as string) || '/'
-        router.push(redirect)
+        redirectToPlatform()
       } else if (websocketStore.lastError) {
         loading.value = false
         error.value = websocketStore.lastError
       }
     }
 
-    const unsubscribe = websocketStore.subscribe('stateChange', () => {
-      checkConnection()
-    })
-
-    const timer = setTimeout(() => {
+    const unsubscribe = websocketStore.subscribe('stateChange', checkConnection)
+    setTimeout(() => {
       if (loading.value) {
         loading.value = false
-        if (!isConnected.value) {
-          error.value = t('pages.login.connectTimeout')
-        }
+        if (!isConnected.value) error.value = '服务连接超时，请稍后重试。'
       }
       unsubscribe()
     }, 10000)
 
     checkConnection()
-  } else {
-    checking.value = false
-    loading.value = false
-    
-    if (authStore.isAuthenticated) {
-      const valid = await authStore.checkAuth()
-      if (valid) {
-        const redirect = (route.query.redirect as string) || '/'
-        router.push(redirect)
-      }
-    }
+    return
+  }
+
+  checking.value = false
+  loading.value = false
+
+  if (authStore.isAuthenticated && await authStore.checkAuth()) {
+    redirectToPlatform()
   }
 })
 
 async function handleLogin() {
   if (!username.value || !password.value) {
-    error.value = t('pages.login.credentialsRequired')
+    error.value = '请输入账户名和密码。'
     return
   }
-  
+
   loading.value = true
   error.value = ''
-  
+
   const success = await authStore.login(username.value, password.value)
-  
   if (success) {
-    const redirect = (route.query.redirect as string) || '/'
-    router.push(redirect)
-  } else {
-    const serverError = authStore.error
-    if (serverError === 'Invalid credentials') {
-      error.value = t('pages.login.invalidCredentials')
-    } else {
-      error.value = serverError || t('pages.login.invalidCredentials')
-    }
-    loading.value = false
+    redirectToPlatform()
+    return
   }
+
+  error.value = authStore.error === 'Invalid credentials'
+    ? '账户名或密码错误，请重新输入。'
+    : authStore.error || '登录失败，请稍后重试。'
+  loading.value = false
 }
 
 function handleRetry() {
@@ -105,147 +93,104 @@ function handleRetry() {
   loading.value = true
   websocketStore.disconnect()
   websocketStore.connect()
-  
-  const timer = setTimeout(() => {
-    if (loading.value) {
+
+  setTimeout(() => {
+    if (loading.value && !isConnected.value) {
       loading.value = false
-      if (!isConnected.value) {
-        error.value = t('pages.login.connectTimeout')
-      }
+      error.value = '服务连接超时，请稍后重试。'
     }
   }, 10000)
-}
-
-function handleFocus() {
-  isTyping.value = true
-}
-
-function handleBlur() {
-  isTyping.value = false
 }
 </script>
 
 <template>
-  <div class="login-container">
-    <div class="login-left">
-      <div class="login-brand">
-        <span class="login-logo">🦞</span>
-        <span class="login-brand-text">Claw Admin</span>
-      </div>
+  <main class="login-page">
+    <div class="login-halo login-halo-top"></div>
+    <div class="login-halo login-halo-bottom"></div>
 
-      <div class="login-characters">
-        <AnimatedCharacters 
-          :is-typing="isTyping"
-          :show-password="showPassword"
-          :password-length="password.length"
-        />
-      </div>
-
-      <div class="login-decoration login-decoration-1"></div>
-      <div class="login-decoration login-decoration-2"></div>
-      <div class="login-decoration login-decoration-3"></div>
+    <div class="login-brand" aria-label="NetInside 观枢 GAIOP">
+      <span class="brand-logo"><span class="brand-net">Net</span><span class="brand-inside">Inside</span></span>
+      <span class="brand-divider"></span>
+      <span class="brand-product">观枢 GAIOP</span>
     </div>
-    
-    <div class="login-right">
-      <div class="login-form-wrapper">
-        <div class="login-mobile-brand">
-          <span class="login-logo-small">🦞</span>
-          <span>Claw Admin</span>
-        </div>
 
-        <div v-if="loading && !checking" class="login-loading">
+    <section class="login-shell" aria-labelledby="login-title">
+      <div class="login-heading">
+        <h1 id="login-title">
+          <span class="title-net">Net</span><span class="title-inside">Inside</span><span class="title-name"> 观枢 </span><span class="title-gaiop">GAIOP</span><span class="title-name"> 智能运维分析平台</span>
+        </h1>
+      </div>
+
+      <div class="login-card">
+        <div v-if="loading && !checking" class="login-state">
           <NSpin size="medium" />
-          <div class="login-loading-text">
-            <NText depth="3">{{ t('pages.login.loggingIn') }}</NText>
-          </div>
+          <span>正在连接平台服务...</span>
         </div>
 
         <template v-else-if="authStore.authEnabled || checking">
-          <div class="login-form-header">
-            <h2 class="login-form-title">{{ t('pages.login.login') }}</h2>
-            <p class="login-form-desc">{{ t('pages.login.subtitle') }}</p>
-          </div>
-
-          <NAlert v-if="error" type="error" :bordered="false" style="margin-bottom: 20px;">
+          <NAlert v-if="error" type="error" :bordered="false" class="login-alert">
             {{ error }}
           </NAlert>
 
           <NForm @submit.prevent="handleLogin">
-            <div class="form-item">
-              <label class="form-label">{{ t('pages.login.username') }}</label>
+            <label class="form-label" for="gaiop-username">账户名</label>
+            <NInput
+              id="gaiop-username"
+              v-model:value="username"
+              placeholder="请输入账户名"
+              size="large"
+              class="login-input"
+              @keydown.enter="handleLogin"
+            />
+
+            <label class="form-label password-label" for="gaiop-password">密码</label>
+            <div class="password-wrapper">
               <NInput
-                v-model:value="username"
-                :placeholder="t('pages.login.usernamePlaceholder')"
+                id="gaiop-password"
+                v-model:value="password"
+                :type="showPassword ? 'text' : 'password'"
+                placeholder="请输入密码"
                 size="large"
                 class="login-input"
-                @focus="handleFocus"
-                @blur="handleBlur"
                 @keydown.enter="handleLogin"
               />
-            </div>
-            
-            <div class="form-item">
-              <label class="form-label">{{ t('pages.login.password') }}</label>
-              <div class="password-wrapper">
-                <NInput
-                  v-model:value="password"
-                  :type="showPassword ? 'text' : 'password'"
-                  :placeholder="t('pages.login.passwordPlaceholder')"
-                  size="large"
-                  class="login-input"
-                  @focus="handleFocus"
-                  @blur="handleBlur"
-                  @keydown.enter="handleLogin"
-                />
-                <button
-                  type="button"
-                  class="password-toggle"
-                  @click="showPassword = !showPassword"
-                >
-                  <svg v-if="showPassword" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                    <line x1="1" y1="1" x2="23" y2="23"/>
-                  </svg>
-                  <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-              </div>
+              <button
+                type="button"
+                class="password-toggle"
+                :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                @click="showPassword = !showPassword"
+              >
+                <svg v-if="showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 4.2A10.7 10.7 0 0 1 12 4c6.3 0 10 8 10 8a18.2 18.2 0 0 1-3 4.2M6.2 6.2C4.1 7.8 2 12 2 12s3.7 8 10 8a10.7 10.7 0 0 0 4.1-.8" stroke-linecap="round" />
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M2 12s3.7-8 10-8 10 8 10 8-3.7 8-10 8S2 12 2 12Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
             </div>
 
             <NButton
               type="primary"
               block
               size="large"
-              class="login-btn"
+              class="login-button"
               :loading="loading"
               @click="handleLogin"
             >
-              {{ t('pages.login.login') }}
+              登录
             </NButton>
           </NForm>
         </template>
 
         <template v-else>
-          <div class="login-form-header">
-            <h2 class="login-form-title">{{ t('pages.login.login') }}</h2>
-            <p class="login-form-desc">{{ t('pages.login.subtitle') }}</p>
-          </div>
-
-          <div v-if="loading || isConnecting" class="login-loading">
+          <div v-if="loading || isConnecting" class="login-state">
             <NSpin size="medium" />
-            <div class="login-loading-text">
-              <NText depth="3">{{ t('pages.login.connecting') }}</NText>
-            </div>
+            <span>正在连接平台服务...</span>
           </div>
 
-          <NAlert v-if="error" type="error" :bordered="false" style="margin-bottom: 20px;">
+          <NAlert v-if="error" type="error" :bordered="false" class="login-alert">
             {{ error }}
-          </NAlert>
-
-          <NAlert v-if="!loading && !error && !isConnected" type="warning" :bordered="false" style="margin-bottom: 20px;">
-            {{ t('pages.login.gatewayDisconnected') }}
           </NAlert>
 
           <NButton
@@ -253,209 +198,201 @@ function handleBlur() {
             type="primary"
             block
             size="large"
-            class="login-btn"
+            class="login-button"
             @click="handleRetry"
           >
-            {{ t('pages.login.retry') }}
+            重新连接
           </NButton>
         </template>
       </div>
-    </div>
-  </div>
+
+      <p class="login-footer">© {{ new Date().getFullYear() }} 北京网深科技有限公司</p>
+    </section>
+  </main>
 </template>
 
 <style scoped>
-.login-container {
+.login-page {
   min-height: 100vh;
-  display: flex;
-  width: 100%;
-}
-
-.login-left {
-  flex: 1;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  padding: 48px;
-  position: relative;
   overflow: hidden;
+  position: relative;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 32px 24px;
+  background:
+    radial-gradient(circle at 83% 14%, rgba(77, 192, 131, 0.17), transparent 24%),
+    radial-gradient(circle at 12% 90%, rgba(84, 198, 139, 0.13), transparent 28%),
+    linear-gradient(135deg, #fcfefc 0%, #f5fbf7 52%, #ecf9f1 100%);
+  color: #173e31;
+  font-family: Inter, 'PingFang SC', 'Microsoft YaHei', sans-serif;
 }
 
-.login-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 600;
-  color: white;
-}
-
-.login-logo {
-  font-size: 32px;
-  display: inline-block;
-  background: rgba(255,255,255,0.1);
-  backdrop-filter: blur(8px);
-  padding: 4px;
-  border-radius: 12px;
-}
-
-.login-brand-text {
-  color: white;
-}
-
-.login-characters {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 500px;
-}
-
-.login-decoration {
+.login-halo {
   position: absolute;
+  border: 1px solid rgba(55, 169, 107, 0.12);
   border-radius: 50%;
   pointer-events: none;
 }
 
-.login-decoration-1 {
-  inset: 0;
-  background: radial-gradient(circle at center, rgba(255,255,255,0.05) 0%, transparent 70%);
+.login-halo-top {
+  top: -31vw;
+  right: -20vw;
+  width: 48vw;
+  height: 48vw;
 }
 
-.login-decoration-2 {
-  top: 25%;
-  right: 25%;
-  width: 256px;
-  height: 256px;
-  background: rgba(255,255,255,0.05);
-  filter: blur(64px);
+.login-halo-bottom {
+  bottom: -32vw;
+  left: -22vw;
+  width: 47vw;
+  height: 47vw;
 }
 
-.login-decoration-3 {
-  bottom: 25%;
-  left: 25%;
-  width: 384px;
-  height: 384px;
-  background: rgba(255,255,255,0.03);
-  filter: blur(64px);
+.login-shell {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 650px);
+  text-align: center;
 }
 
-.login-right {
-  flex: 1;
+.login-brand {
+  position: absolute;
+  z-index: 1;
+  top: 28px;
+  left: clamp(30px, 3.3vw, 64px);
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 32px;
-  background: var(--bg-primary);
+  gap: 13px;
 }
 
-.login-form-wrapper {
-  width: 100%;
-  max-width: 420px;
-}
-
-.login-mobile-brand {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  font-size: 18px;
+.brand-logo {
+  color: #171e1b;
+  font-size: 16px;
   font-weight: 600;
-  margin-bottom: 48px;
-  color: var(--text-primary);
+  letter-spacing: -0.045em;
+  line-height: 1;
+  white-space: nowrap;
 }
 
-.login-logo-small {
-  font-size: 28px;
+.brand-net { color: #50ae65; }
+.brand-inside { color: #171e1b; }
+
+.brand-divider {
+  width: 1px;
+  height: 23px;
+  background: rgba(23, 62, 49, 0.2);
 }
 
-.login-form-header {
-  margin-bottom: 32px;
-  text-align: center;
+.brand-product {
+  color: #174d38;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
 }
 
-.login-form-title {
-  font-size: 32px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 8px;
-  letter-spacing: -0.5px;
+.login-heading { margin: 0 0 27px; }
+
+.login-heading h1 {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  white-space: nowrap;
 }
 
-.login-form-desc {
-  color: var(--text-secondary);
-  font-size: 15px;
-}
+.title-net { color: #087249; }
+.title-inside { color: #69ba77; }
+.title-name,
+.title-gaiop { color: #0b553a; }
 
-.login-loading {
-  text-align: center;
-  padding: 40px 0;
-}
-
-.login-loading-text {
-  margin-top: 16px;
-}
-
-.form-item {
-  margin-bottom: 16px;
+.login-card {
+  box-sizing: border-box;
+  width: min(100%, 390px);
+  min-height: 247px;
+  margin-inline: auto;
+  padding: 30px;
+  border: 1px solid rgba(48, 139, 91, 0.14);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 22px 46px rgba(45, 124, 78, 0.1);
+  text-align: left;
 }
 
 .form-label {
   display: block;
+  margin-bottom: 9px;
+  color: #315f4b;
   font-size: 14px;
   font-weight: 500;
-  color: var(--text-primary);
-  margin-bottom: 8px;
 }
 
-.login-input {
-  border-radius: 8px;
+.password-label { margin-top: 19px; }
+
+.login-input :deep(.n-input-wrapper) {
+  border-radius: 10px;
 }
 
-.password-wrapper {
-  position: relative;
-}
+.password-wrapper { position: relative; }
 
 .password-toggle {
   position: absolute;
-  right: 12px;
+  z-index: 1;
   top: 50%;
+  right: 11px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
   transform: translateY(-50%);
-  background: none;
-  border: none;
-  color: var(--text-secondary);
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #76978a;
   cursor: pointer;
-  padding: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.2s;
 }
 
-.password-toggle:hover {
-  color: var(--text-primary);
-}
+.password-toggle:hover { color: #087249; background: #edf9f1; }
+.password-toggle svg { width: 18px; height: 18px; }
 
-.login-btn {
-  border-radius: 8px;
-  height: 48px;
-  font-weight: 600;
+.login-button {
+  --n-color: #087249 !important;
+  --n-color-hover: #0b8858 !important;
+  --n-color-pressed: #075c3c !important;
+  --n-color-focus: #087249 !important;
+  --n-text-color: #fff !important;
+  height: 46px;
+  margin-top: 27px;
+  border-radius: 11px;
   font-size: 15px;
-  margin-top: 8px;
+  font-weight: 600;
 }
 
-@media (max-width: 900px) {
-  .login-left {
-    display: none;
-  }
-  
-  .login-right {
-    padding: 24px;
-  }
+.login-alert { margin-bottom: 18px; }
 
-  .login-mobile-brand {
-    display: flex;
-  }
+.login-state {
+  display: grid;
+  min-height: 185px;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  color: #6d8f80;
+  font-size: 14px;
+}
+
+.login-footer {
+  margin: 31px 0 0;
+  color: rgba(67, 111, 87, 0.72);
+  font-size: 12px;
+}
+
+@media (max-width: 480px) {
+  .login-page { padding: 26px 20px; }
+  .login-card { padding: 25px 21px; }
+  .login-brand { top: 22px; left: 22px; }
+  .brand-logo { font-size: 15px; }
+  .brand-product { font-size: 15px; }
+  .login-heading h1 { font-size: 16px; letter-spacing: -0.045em; }
 }
 </style>

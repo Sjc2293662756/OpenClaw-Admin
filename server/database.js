@@ -62,6 +62,117 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_scenarios_status ON scenarios(status);
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
   CREATE INDEX IF NOT EXISTS idx_backup_records_created_at ON backup_records(created_at);
+
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'basic' CHECK (role IN ('basic', 'auditor', 'standard', 'admin')),
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_users_updated_at ON users(updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS audit_logs (
+    id TEXT PRIMARY KEY,
+    actor_user_id TEXT,
+    actor_username TEXT NOT NULL,
+    actor_role TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT,
+    detail TEXT,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS data_sources (
+    id TEXT PRIMARY KEY,
+    ip TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    type TEXT NOT NULL CHECK (type IN ('local', 'remote')),
+    username TEXT NOT NULL,
+    password_encrypted TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'untested' CHECK (status IN ('success', 'failed', 'untested', 'disabled')),
+    tls_mode TEXT NOT NULL DEFAULT 'strict' CHECK (tls_mode IN ('strict', 'napm_self_signed')),
+    is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    last_tested_at INTEGER,
+    last_test_message TEXT DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_data_sources_updated_at ON data_sources(updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS host_network_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    hostname TEXT NOT NULL DEFAULT '',
+    domain TEXT DEFAULT '',
+    ip_address TEXT NOT NULL DEFAULT '',
+    subnet_mask TEXT NOT NULL DEFAULT '',
+    gateway TEXT NOT NULL DEFAULT '',
+    dns_servers TEXT NOT NULL DEFAULT '[]',
+    internal_address_ranges TEXT NOT NULL DEFAULT '[]',
+    timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+    ntp_servers TEXT NOT NULL DEFAULT '[]',
+    locale TEXT NOT NULL DEFAULT 'zh-CN',
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS system_sensitive_configs (
+    config_key TEXT PRIMARY KEY,
+    category TEXT NOT NULL CHECK (category IN ('runtime', 'integration', 'security', 'certificate')),
+    description TEXT DEFAULT '',
+    is_sensitive INTEGER NOT NULL DEFAULT 1 CHECK (is_sensitive IN (0, 1)),
+    value_plain TEXT,
+    value_encrypted TEXT,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_system_sensitive_configs_category ON system_sensitive_configs(category, config_key);
+
+  CREATE TABLE IF NOT EXISTS session_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    login_session_hours INTEGER NOT NULL DEFAULT 24,
+    idle_timeout_minutes INTEGER NOT NULL DEFAULT 0,
+    agent_context_idle_minutes INTEGER NOT NULL DEFAULT 30,
+    history_retention_days INTEGER NOT NULL DEFAULT 180,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS workspace_sessions (
+    session_key TEXT PRIMARY KEY,
+    owner_user_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    deleted_at INTEGER
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_workspace_sessions_owner_active
+    ON workspace_sessions(owner_user_id, status, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS report_files (
+    id TEXT PRIMARY KEY,
+    stored_name TEXT NOT NULL UNIQUE,
+    audit_name TEXT,
+    original_name TEXT NOT NULL,
+    report_type TEXT NOT NULL DEFAULT 'analysis',
+    source_session_id TEXT,
+    source_user_id TEXT,
+    data_source_id TEXT,
+    mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+    size INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready', 'missing', 'failed')),
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_report_files_created_at ON report_files(created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_report_files_session_id ON report_files(source_session_id);
 `)
 
 try {
@@ -79,6 +190,40 @@ try {
     console.error('[Database] Failed to add execution_history column:', e.message)
   }
 }
+
+try {
+  db.exec('ALTER TABLE data_sources ADD COLUMN is_active INTEGER NOT NULL DEFAULT 0')
+} catch (e) {
+  if (!e.message.includes('duplicate column name')) {
+    console.error('[Database] Failed to add data_sources.is_active column:', e.message)
+  }
+}
+
+try {
+  db.exec("ALTER TABLE data_sources ADD COLUMN tls_mode TEXT NOT NULL DEFAULT 'strict'")
+} catch (e) {
+  if (!e.message.includes('duplicate column name')) {
+    console.error('[Database] Failed to add data_sources.tls_mode column:', e.message)
+  }
+}
+
+try {
+  db.exec('ALTER TABLE report_files ADD COLUMN audit_name TEXT')
+} catch (e) {
+  if (!e.message.includes('duplicate column name')) {
+    console.error('[Database] Failed to add report_files.audit_name column:', e.message)
+  }
+}
+
+try {
+  db.exec('ALTER TABLE session_settings ADD COLUMN agent_context_idle_minutes INTEGER NOT NULL DEFAULT 30')
+} catch (e) {
+  if (!e.message.includes('duplicate column name')) {
+    console.error('[Database] Failed to add session_settings.agent_context_idle_minutes column:', e.message)
+  }
+}
+
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_data_sources_single_active ON data_sources(is_active) WHERE is_active = 1')
 
 export function createBackupRecord(id, type, filename = null) {
   const stmt = db.prepare(`

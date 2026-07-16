@@ -25,7 +25,6 @@ import {
 import { useI18n } from 'vue-i18n'
 import StatCard from '@/components/common/StatCard.vue'
 import { useWebSocketStore } from '@/stores/websocket'
-import { useHermesConnectionStore } from '@/stores/hermes/connection'
 import { formatRelativeTime } from '@/utils/format'
 import type {
   CostUsageSummary,
@@ -42,8 +41,6 @@ type UsageMode = 'tokens' | 'cost'
 
 const router = useRouter()
 const wsStore = useWebSocketStore()
-const hermesConnStore = useHermesConnectionStore()
-const isHermes = computed(() => hermesConnStore.currentGateway === 'hermes')
 const { t, locale } = useI18n()
 const loading = ref(true)
 const refreshing = ref(false)
@@ -82,11 +79,6 @@ const ZERO_USAGE_TOTALS: SessionsUsageTotals = {
 }
 
 const connectionLabel = computed(() => {
-  if (isHermes.value) {
-    return hermesConnStore.hermesConnected
-      ? t('pages.dashboard.connection.connected')
-      : t('pages.dashboard.connection.connecting')
-  }
   if (wsStore.state === 'connected') return t('pages.dashboard.connection.connected')
   if (wsStore.state === 'connecting') return t('pages.dashboard.connection.connecting')
   if (wsStore.state === 'reconnecting') return t('pages.dashboard.connection.reconnecting')
@@ -95,9 +87,6 @@ const connectionLabel = computed(() => {
 })
 
 const connectionType = computed<'success' | 'warning' | 'error' | 'default'>(() => {
-  if (isHermes.value) {
-    return hermesConnStore.hermesConnected ? 'success' : 'warning'
-  }
   if (wsStore.state === 'connected') return 'success'
   if (wsStore.state === 'connecting' || wsStore.state === 'reconnecting') return 'warning'
   if (wsStore.state === 'failed') return 'error'
@@ -431,22 +420,12 @@ const topToolMax = computed(() =>
 
 onMounted(async () => {
   applyRangePreset('7d', false)
-
-  if (isHermes.value) {
-    // Hermes 模式：先确保连接，再刷新数据
-    if (!hermesConnStore.hermesConnected) {
-      await hermesConnStore.connect()
-    }
-  } else {
-    retryAfterFirstConnect = wsStore.state !== 'connected'
-    cleanupStateChange = wsStore.subscribe('stateChange', () => {
-      maybeRetryAfterConnect()
-    })
-  }
-  await refreshDashboard()
-  if (!isHermes.value) {
+  retryAfterFirstConnect = wsStore.state !== 'connected'
+  cleanupStateChange = wsStore.subscribe('stateChange', () => {
     maybeRetryAfterConnect()
-  }
+  })
+  await refreshDashboard()
+  maybeRetryAfterConnect()
 })
 
 onUnmounted(() => {
@@ -470,112 +449,50 @@ async function refreshDashboard() {
   usageError.value = null
 
   try {
-    if (isHermes.value) {
-      // Hermes 模式：通过 Hermes API 获取数据
-      if (!hermesConnStore.hermesConnected) {
-        await hermesConnStore.connect()
-      }
-      const hermesApi = hermesConnStore.getClient()
-      if (!hermesApi) throw new Error('Hermes not connected')
+    const [sessionsRes, cronsRes, modelsRes, skillsRes, configRes, usageRes, usageCostRes] = await Promise.allSettled([
+      wsStore.rpc.listSessions(),
+      wsStore.rpc.listCrons(),
+      wsStore.rpc.listModels(),
+      wsStore.rpc.listSkills(),
+      wsStore.rpc.getConfig(),
+      wsStore.rpc.getSessionsUsage({
+        startDate: usageStartDate.value,
+        endDate: usageEndDate.value,
+        limit: 1000,
+      }),
+      wsStore.rpc.getUsageCost({
+        startDate: usageStartDate.value,
+        endDate: usageEndDate.value,
+      }),
+    ])
 
-      const [sessionsRes, cronsRes, skillsRes, usageRes] = await Promise.allSettled([
-        hermesApi.listSessions(),
-        hermesApi.listCronJobs(),
-        hermesApi.listSkills(),
-        hermesApi.getUsageAnalytics(7),
-      ])
+    const sessionList = sessionsRes.status === 'fulfilled' ? sessionsRes.value : []
+    const cronList = cronsRes.status === 'fulfilled' ? cronsRes.value : []
+    const modelList = modelsRes.status === 'fulfilled' ? modelsRes.value : []
+    const skillList = skillsRes.status === 'fulfilled' ? skillsRes.value : []
+    const config = configRes.status === 'fulfilled' ? configRes.value : null
+    stats.value = {
+      sessionCount: sessionList.length,
+      cronCount: cronList.filter((job: CronJob) => job.enabled).length,
+      modelCount: resolveConfiguredModelCount(config, modelList),
+      installedSkills: skillList.filter((s: Skill) => s.installed).length,
+    }
 
-      const sessionList = sessionsRes.status === 'fulfilled' ? (sessionsRes.value as any[]) : []
-      const cronList = cronsRes.status === 'fulfilled' ? (cronsRes.value as any[]) : []
-      const skillList = skillsRes.status === 'fulfilled' ? (skillsRes.value as any[]) : []
-
-      stats.value = {
-        sessionCount: sessionList.length,
-        cronCount: cronList.filter((job: any) => job.enabled).length,
-        modelCount: 1,
-        installedSkills: skillList.length,
-      }
-
-      if (usageRes.status === 'fulfilled') {
-        const usage = usageRes.value as any
-        sessionsUsageResult.value = {
-          updatedAt: Date.now(),
-          startDate: usageStartDate.value || '',
-          endDate: usageEndDate.value || '',
-          sessions: [],
-          totals: {
-            input: usage.total_input_tokens || 0,
-            output: usage.total_output_tokens || 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            totalTokens: (usage.total_input_tokens || 0) + (usage.total_output_tokens || 0),
-            totalCost: usage.total_cost_usd || 0,
-            inputCost: 0,
-            outputCost: 0,
-            cacheReadCost: 0,
-            cacheWriteCost: 0,
-            missingCostEntries: 0,
-          },
-          aggregates: {
-            messages: { total: 0, user: 0, assistant: 0, toolCalls: 0, toolResults: 0, errors: 0 },
-            tools: { totalCalls: 0, uniqueTools: 0, tools: [] },
-            byModel: [],
-            byProvider: [],
-            byAgent: [],
-            byChannel: [],
-            daily: [],
-          },
-        } as SessionsUsageResult
-      } else {
-        sessionsUsageResult.value = null
-      }
+    if (usageRes.status === 'fulfilled') {
+      sessionsUsageResult.value = usageRes.value
     } else {
-      // OpenClaw 模式：通过 WebSocket RPC 获取数据
-      const [sessionsRes, cronsRes, modelsRes, skillsRes, configRes, usageRes, usageCostRes] = await Promise.allSettled([
-        wsStore.rpc.listSessions(),
-        wsStore.rpc.listCrons(),
-        wsStore.rpc.listModels(),
-        wsStore.rpc.listSkills(),
-        wsStore.rpc.getConfig(),
-        wsStore.rpc.getSessionsUsage({
-          startDate: usageStartDate.value,
-          endDate: usageEndDate.value,
-          limit: 1000,
-        }),
-        wsStore.rpc.getUsageCost({
-          startDate: usageStartDate.value,
-          endDate: usageEndDate.value,
-        }),
-      ])
+      sessionsUsageResult.value = null
+      usageError.value = usageRes.reason instanceof Error ? usageRes.reason.message : String(usageRes.reason)
+    }
 
-      const sessionList = sessionsRes.status === 'fulfilled' ? sessionsRes.value : []
-      const cronList = cronsRes.status === 'fulfilled' ? cronsRes.value : []
-      const modelList = modelsRes.status === 'fulfilled' ? modelsRes.value : []
-      const skillList = skillsRes.status === 'fulfilled' ? skillsRes.value : []
-      const config = configRes.status === 'fulfilled' ? configRes.value : null
-      stats.value = {
-        sessionCount: sessionList.length,
-        cronCount: cronList.filter((job: CronJob) => job.enabled).length,
-        modelCount: resolveConfiguredModelCount(config, modelList),
-        installedSkills: skillList.filter((s: Skill) => s.installed).length,
-      }
-
-      if (usageRes.status === 'fulfilled') {
-        sessionsUsageResult.value = usageRes.value
-      } else {
-        sessionsUsageResult.value = null
-        usageError.value = usageRes.reason instanceof Error ? usageRes.reason.message : String(usageRes.reason)
-      }
-
-      if (usageCostRes.status === 'fulfilled') {
-        usageCostSummary.value = usageCostRes.value
-      } else {
-        usageCostSummary.value = null
-        if (!usageError.value) {
-          usageError.value = usageCostRes.reason instanceof Error
-            ? usageCostRes.reason.message
-            : String(usageCostRes.reason)
-        }
+    if (usageCostRes.status === 'fulfilled') {
+      usageCostSummary.value = usageCostRes.value
+    } else {
+      usageCostSummary.value = null
+      if (!usageError.value) {
+        usageError.value = usageCostRes.reason instanceof Error
+          ? usageCostRes.reason.message
+          : String(usageCostRes.reason)
       }
     }
 
@@ -792,7 +709,7 @@ function topBarWidth(value: number, max: number): string {
 }
 
 function viewChat() {
-  router.push({ name: 'Chat' })
+  router.push({ name: 'ChatWorkspace' })
 }
 
 function viewCron() {
@@ -849,7 +766,7 @@ function viewModels() {
           </NButton>
           <NButton secondary @click="viewChat">
             <template #icon><NIcon :component="ChatboxEllipsesOutline" /></template>
-            {{ t('routes.chat') }}
+            对话工作台
           </NButton>
           <NButton secondary @click="viewCron">{{ t('routes.cron') }}</NButton>
           <NButton secondary @click="viewModels">{{ t('routes.models') }}</NButton>

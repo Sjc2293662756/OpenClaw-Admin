@@ -29,7 +29,6 @@ import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { faQq } from '@fortawesome/free-brands-svg-icons'
 import { useI18n } from 'vue-i18n'
 import {
-  faCircleCheck,
   faBuilding,
   faComments,
   faPaperPlane,
@@ -40,13 +39,13 @@ import {
   resolveChannelTemplate,
 } from '@/utils/channel-config'
 import { maskSecretValue } from '@/utils/secret-mask'
+import { usePermissions } from '@/composables/usePermissions'
 
 interface ChinaChannelMeta {
   key: 'qqbot' | 'feishu' | 'dingtalk' | 'wecom'
   icon: IconDefinition
   pluginPackages: string[]
   pluginIds: string[]
-  guideUrl: string
 }
 
 interface ChannelCard extends ChinaChannelMeta {
@@ -65,32 +64,29 @@ const CHINA_CHANNELS: ChinaChannelMeta[] = [
     icon: faQq,
     pluginPackages: ['@openclaw-china/qqbot'],
     pluginIds: ['qqbot'],
-    guideUrl: 'https://github.com/BytePioneer-AI/openclaw-china/blob/main/doc/guides/qqbot/configuration.md',
   },
   {
     key: 'feishu',
     icon: faPaperPlane,
     pluginPackages: ['@openclaw-china/feishu-china', '@openclaw/feishu'],
     pluginIds: ['feishu', 'feishu-china'],
-    guideUrl: 'https://github.com/openclaw/openclaw/blob/main/docs/zh-CN/channels/feishu.md',
   },
   {
     key: 'dingtalk',
     icon: faComments,
     pluginPackages: ['@openclaw-china/dingtalk'],
     pluginIds: ['dingtalk'],
-    guideUrl: 'https://github.com/BytePioneer-AI/openclaw-china/blob/main/doc/guides/dingtalk/configuration.md',
   },
   {
     key: 'wecom',
     icon: faBuilding,
     pluginPackages: ['@openclaw-china/wecom', '@openclaw-china/wecom-app'],
     pluginIds: ['wecom', 'wecom-app'],
-    guideUrl: 'https://github.com/BytePioneer-AI/openclaw-china/blob/main/doc/guides/wecom/configuration.md',
   },
 ]
 
 const channelStore = useChannelManagementStore()
+const { canEditConfiguration, readOnlyHint } = usePermissions()
 const message = useMessage()
 const { t } = useI18n()
 
@@ -236,10 +232,6 @@ function refreshExpandedPanels(): void {
   expandedChannelKeys.value = channelCards.value.map((card) => card.channelKey)
 }
 
-function buildPluginInstallCommands(pluginPackages: string[]): string[] {
-  return pluginPackages.map((pluginPackage) => `openclaw plugins install ${pluginPackage}`)
-}
-
 async function installChannel(meta: ChannelCard): Promise<void> {
   const channelKey = meta.channelKey || resolveManagedChannelKey(meta.key)
   installLoading.value[channelKey] = true
@@ -314,7 +306,8 @@ onMounted(() => {
             type="primary"
             class="toolbar-btn toolbar-btn--save"
             :loading="channelStore.saving"
-            :disabled="channelStore.applying"
+            :disabled="channelStore.applying || !canEditConfiguration"
+            :title="!canEditConfiguration ? readOnlyHint : undefined"
             @click="handleSave(false)"
           >
             <template #icon><NIcon :component="SaveOutline" /></template>
@@ -325,6 +318,8 @@ onMounted(() => {
             type="warning"
             class="toolbar-btn toolbar-btn--apply"
             :loading="channelStore.saving || channelStore.applying"
+            :disabled="!canEditConfiguration"
+            :title="!canEditConfiguration ? readOnlyHint : undefined"
             @click="handleSave(true)"
           >
             <template #icon><NIcon :component="PlayOutline" /></template>
@@ -334,32 +329,6 @@ onMounted(() => {
       </template>
 
       <NSpace vertical :size="10">
-        <div class="thanks-panel">
-          <div class="thanks-title-row">
-            <span class="thanks-icon">
-              <FontAwesomeIcon :icon="faCircleCheck" />
-            </span>
-            <span>
-              {{ t('pages.channels.thanks.prefix') }}
-              <a
-                href="https://github.com/BytePioneer-AI/openclaw-china"
-                target="_blank"
-                rel="noopener noreferrer"
-                class="banner-link"
-              >
-                openclaw-china
-              </a>
-              {{ t('pages.channels.thanks.suffix') }}
-            </span>
-          </div>
-          <span class="guide-pill-row">
-            <a class="guide-pill" href="https://github.com/BytePioneer-AI/openclaw-china/blob/main/doc/guides/qqbot/configuration.md" target="_blank" rel="noopener noreferrer">{{ t('pages.channels.guides.qqbot') }}</a>
-            <a class="guide-pill" href="https://github.com/openclaw/openclaw/blob/main/docs/zh-CN/channels/feishu.md" target="_blank" rel="noopener noreferrer">{{ t('pages.channels.guides.feishu') }}</a>
-            <a class="guide-pill" href="https://github.com/BytePioneer-AI/openclaw-china/blob/main/doc/guides/dingtalk/configuration.md" target="_blank" rel="noopener noreferrer">{{ t('pages.channels.guides.dingtalk') }}</a>
-            <a class="guide-pill" href="https://github.com/BytePioneer-AI/openclaw-china/blob/main/doc/guides/wecom/configuration.md" target="_blank" rel="noopener noreferrer">{{ t('pages.channels.guides.wecom') }}</a>
-          </span>
-        </div>
-
         <NAlert v-if="channelStore.lastError" type="error" :bordered="false">
           {{ channelStore.lastError }}
         </NAlert>
@@ -398,9 +367,6 @@ onMounted(() => {
               <NSpace vertical :size="10" class="channel-section-stack">
                 <div class="channel-desc-panel">
                   <span>{{ card.description }}</span>
-                  <a :href="card.guideUrl" target="_blank" rel="noopener noreferrer" class="desc-link">
-                    {{ t('pages.channels.viewGuide') }}
-                  </a>
                 </div>
 
                 <NCard
@@ -424,6 +390,8 @@ onMounted(() => {
                     <NButton
                       type="primary"
                       :loading="installLoading[card.channelKey]"
+                      :disabled="!canEditConfiguration"
+                      :title="!canEditConfiguration ? readOnlyHint : undefined"
                       @click="installChannel(card)"
                     >
                       <template #icon><NIcon :component="AddOutline" /></template>
@@ -443,14 +411,7 @@ onMounted(() => {
                     :bordered="false"
                     style="margin-top: 10px;"
                   >
-                    {{ t('pages.channels.remoteInstallFallback') }}
-                    <div
-                      v-for="command in buildPluginInstallCommands(card.pluginPackages)"
-                      :key="`${card.channelKey}-${command}`"
-                      style="margin-top: 6px;"
-                    >
-                      <code>{{ command }}</code>
-                    </div>
+                    当前平台无法确认通道组件状态，请联系平台管理员在服务器完成通道组件安装后再刷新本页。
                   </NAlert>
                 </NCard>
 

@@ -1,7 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import { createServer } from 'http'
-import { randomUUID } from 'crypto'
+import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { fileURLToPath } from 'url'
 import { dirname, join, resolve, basename, extname, sep } from 'path'
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync, mkdirSync, rmSync, unlinkSync, stat, promises as fsPromises, createReadStream, createWriteStream, copyFileSync, readlinkSync, symlinkSync, renameSync } from 'fs'
@@ -13,7 +13,37 @@ import checkDiskSpace from 'check-disk-space'
 import { execSync } from 'child_process'
 import pty from 'node-pty'
 import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord } from './database.js'
-import hermesProxyRouter, { initHermesConfig, setAuthMiddleware } from './hermes-proxy.js'
+import { USER_ROLES, USER_STATUSES, getRpcPermissionDecision, isReadOnlyRpcMethod, createRoleMiddleware } from './lib/permissions.js'
+import { sendError } from './lib/api-response.js'
+import { sanitizeGatewayConfigPayload } from './lib/sensitive-data.js'
+import { createAuditRouter } from './routes/audit.js'
+import { createAuthRouter } from './routes/auth.js'
+import { createUsersRouter } from './routes/users.js'
+import { createDataSourcesRouter } from './routes/data-sources.js'
+import { createHostNetworkRouter } from './routes/host-network.js'
+import { createSensitiveConfigRouter } from './routes/sensitive-config.js'
+import { createReportsRouter } from './routes/reports.js'
+import { createAlertsRouter } from './routes/alerts.js'
+import { createReportStorageRouter } from './routes/report-storage.js'
+import { createSessionSettingsRouter } from './routes/session-settings.js'
+import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
+import { readSessionSettings } from './lib/session-settings.js'
+import {
+  SESSION_LIST_METHODS,
+  SESSION_SCOPED_READ_METHODS,
+  SESSION_SCOPED_WRITE_METHODS,
+  canAccessWorkspaceSession,
+  ensureWorkspaceSessionAccess,
+  extractSessionKeyFromEvent,
+  filterSessionListPayload,
+  getSessionKeyFromParams,
+  listOwnedWorkspaceSessionKeys,
+  markWorkspaceSessionDeleted,
+} from './lib/session-ownership-service.js'
+import { attachReportProvenance } from './report-provenance-service.js'
+import { decryptDataSourcePassword, encryptDataSourcePassword, isDataSourceEncryptionReady, testNapmDataSource, toPublicDataSource, validateDataSourceInput } from './data-source-service.js'
+import { getDataSourceRuntimeStatus, writeActiveDataSourceRuntime } from './data-source-runtime-service.js'
+import { encryptSensitiveConfigValue, isSensitiveConfigEncryptionReady, toPublicSystemSensitiveConfig, validateSystemSensitiveConfigInput } from './sensitive-config-service.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -37,6 +67,8 @@ function loadEnvConfig() {
       HERMES_API_KEY: '',
       HERMES_CLI_PATH: '',
       HERMES_HOME: '',
+      GAIOP_REPORT_PROVENANCE_ENABLED: 'false',
+      GAIOP_REPORT_PROVENANCE_SIGNING_KEY: '',
     }
   }
   const content = readFileSync(envPath, 'utf-8')
@@ -56,6 +88,8 @@ function loadEnvConfig() {
     HERMES_API_KEY: parsed.HERMES_API_KEY || '',
     HERMES_CLI_PATH: parsed.HERMES_CLI_PATH || '',
     HERMES_HOME: parsed.HERMES_HOME || '',
+    GAIOP_REPORT_PROVENANCE_ENABLED: parsed.GAIOP_REPORT_PROVENANCE_ENABLED || 'false',
+    GAIOP_REPORT_PROVENANCE_SIGNING_KEY: parsed.GAIOP_REPORT_PROVENANCE_SIGNING_KEY || '',
   }
 }
 
@@ -80,9 +114,17 @@ const sessions = new Map()
 app.use(cors())
 app.use(express.json())
 
-// 初始化 Hermes 代理
-initHermesConfig(envConfig)
-app.use(hermesProxyRouter)
+// Hermes 相关源码按产品迁移需要保留，但当前 GAIOP 正式运行态不启用该模式。
+// 这里在路由入口直接拦截，避免通过旧地址绕过前端菜单进入已停用能力。
+function disabledHermesApi(_req, res) {
+  return sendError(res, {
+    status: 404,
+    code: 'FEATURE_DISABLED',
+    message: '该功能当前未启用',
+  })
+}
+app.use('/api/hermes', disabledHermesApi)
+app.use('/api/hermes-cli', disabledHermesApi)
 
 let gateway = new OpenClawGateway(envConfig.OPENCLAW_WS_URL, envConfig.OPENCLAW_AUTH_TOKEN, envConfig.OPENCLAW_AUTH_PASSWORD, envConfig.LOG_LEVEL)
 
@@ -265,6 +307,7 @@ gateway.connect()
 function broadcastSSE(data) {
   const message = `data: ${JSON.stringify(data)}\n\n`
   for (const [id, client] of sseClients) {
+    if (!canReceiveSseData(client.user, data)) continue
     try {
       client.res.write(message)
     } catch (e) {
@@ -274,36 +317,110 @@ function broadcastSSE(data) {
 }
 
 function isAuthEnabled() {
-  return envConfig.AUTH_USERNAME && envConfig.AUTH_PASSWORD
+  return !!db.prepare('SELECT 1 FROM users LIMIT 1').get() || !!(envConfig.AUTH_USERNAME && envConfig.AUTH_PASSWORD)
 }
 
+function canReceiveSseData(user, data) {
+  if (data?.type !== 'event' || user?.role === 'admin') return true
+  const sessionKey = extractSessionKeyFromEvent(data.payload)
+  return !!sessionKey && canAccessWorkspaceSession(db, user, sessionKey)
+}
+
+const RESET_PASSWORD = 'admin123'
+
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('base64')
+  const hash = scryptSync(password, salt, 64).toString('base64')
+  return `scrypt$${salt}$${hash}`
+}
+
+function verifyPassword(password, storedHash) {
+  const [algorithm, salt, encodedHash] = String(storedHash || '').split('$')
+  if (algorithm !== 'scrypt' || !salt || !encodedHash) return false
+  const expected = Buffer.from(encodedHash, 'base64')
+  const actual = scryptSync(password, salt, expected.length)
+  return expected.length === actual.length && timingSafeEqual(expected, actual)
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    description: user.description || '',
+    status: user.status,
+    createdAt: user.created_at,
+    updatedAt: user.updated_at,
+  }
+}
+
+function ensureInitialAdmin() {
+  const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
+  if (count || !envConfig.AUTH_USERNAME || !envConfig.AUTH_PASSWORD) return
+  const now = Date.now()
+  db.prepare(`INSERT INTO users (id, username, password_hash, role, description, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'admin', ?, 'active', ?, ?)`)
+    .run(randomUUID(), envConfig.AUTH_USERNAME.trim(), hashPassword(envConfig.AUTH_PASSWORD), '初始管理员账户', now, now)
+  console.log('[Auth] Initial administrator account created')
+}
+
+ensureInitialAdmin()
+
 function checkAuth(req) {
-  if (!isAuthEnabled()) return true
+  if (!isAuthEnabled()) return { username: 'anonymous', role: 'admin' }
   let token = req.headers.authorization?.replace('Bearer ', '') || req.cookies?.session
   if (!token && req.query && req.query.token) {
     token = req.query.token
   }
-  if (!token) return false
+  if (!token) return null
   const session = sessions.get(token)
-  if (!session) return false
-  if (session.expires < Date.now()) {
+  if (!session) return null
+  const now = Date.now()
+  if (session.expires < now) {
     sessions.delete(token)
-    return false
+    return null
   }
-  return true
+  const policy = readSessionSettings(db)
+  const idleTimeoutMs = policy.idleTimeoutMinutes * 60 * 1000
+  const lastActiveAt = session.lastActiveAt || session.createdAt || now
+  if (idleTimeoutMs > 0 && lastActiveAt + idleTimeoutMs < now) {
+    sessions.delete(token)
+    return null
+  }
+  session.lastActiveAt = now
+  return session
 }
 
 function authMiddleware(req, res, next) {
   if (!isAuthEnabled()) return next()
-  if (!checkAuth(req)) {
-    return res.status(401).json({ error: 'Unauthorized' })
+  const session = checkAuth(req)
+  if (!session) {
+    return sendError(res, { status: 401, code: 'UNAUTHORIZED', message: '登录状态已失效，请重新登录' })
   }
+  req.user = session
   next()
 }
 
-// 设置 Hermes 代理的认证中间件
-setAuthMiddleware(authMiddleware)
+const adminMiddleware = createRoleMiddleware(authMiddleware, ['admin'], '仅管理员可以执行此操作')
+const operatorMiddleware = createRoleMiddleware(authMiddleware, ['standard', 'admin'], '当前用户仅有查看权限，不能执行此操作')
+const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
 
+function recordAudit(user, action, target = '', detail = '') {
+  try {
+    db.prepare(`INSERT INTO audit_logs (id, actor_user_id, actor_username, actor_role, action, target, detail, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      randomUUID(), user?.id || null, user?.username || 'system', user?.role || 'system', action,
+      String(target || '').slice(0, 200), String(detail || '').slice(0, 500), Date.now()
+    )
+  } catch (error) {
+    console.error('[Audit] Failed to record event:', error.message)
+  }
+}
+
+// 设置 Hermes 代理的认证中间件
+
+// 迁移保留：认证路由已由下方独立模块接管，不再注册以下旧实现。
+function registerLegacyAuthRoutes() {
 app.get('/api/auth/config', (req, res) => {
   res.json({
     enabled: isAuthEnabled(),
@@ -321,29 +438,336 @@ app.post('/api/auth/login', (req, res) => {
     return res.status(400).json({ ok: false, error: 'Username and password required' })
   }
 
-  if (username !== envConfig.AUTH_USERNAME || password !== envConfig.AUTH_PASSWORD) {
+  const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(String(username).trim())
+  const validUser = user && user.status === 'active' && verifyPassword(password, user.password_hash)
+  const validLegacyUser = !user && username === envConfig.AUTH_USERNAME && password === envConfig.AUTH_PASSWORD
+  if (!validUser && !validLegacyUser) {
     return res.status(401).json({ ok: false, error: 'Invalid credentials' })
   }
 
   const token = randomUUID()
   const expires = Date.now() + 24 * 60 * 60 * 1000
 
-  sessions.set(token, { username, expires })
+  const sessionUser = validUser
+    ? { id: user.id, username: user.username, role: user.role }
+    : { username: envConfig.AUTH_USERNAME, role: 'admin' }
+  sessions.set(token, { ...sessionUser, expires })
+  recordAudit(sessionUser, '登录', '管理平台', '登录成功')
 
-  res.json({ ok: true, token })
+  res.json({ ok: true, token, user: sessionUser })
 })
 
 app.post('/api/auth/logout', (req, res) => {
   const token = req.headers.authorization?.replace('Bearer ', '')
   if (token) {
+    recordAudit(sessions.get(token), '退出登录', '管理平台', '用户主动退出')
     sessions.delete(token)
   }
   res.json({ ok: true })
 })
 
 app.get('/api/auth/check', authMiddleware, (req, res) => {
-  res.json({ ok: true, authenticated: true })
+  res.json({ ok: true, authenticated: true, user: { id: req.user.id, username: req.user.username, role: req.user.role } })
 })
+}
+
+app.use('/api/auth', createAuthRouter({
+  db,
+  sessions,
+  authMiddleware,
+  isAuthEnabled,
+  getLegacyCredentials: () => ({ username: envConfig.AUTH_USERNAME, password: envConfig.AUTH_PASSWORD }),
+  verifyPassword,
+  recordAudit,
+  createId: randomUUID,
+  getSessionSettings: () => readSessionSettings(db),
+}))
+app.use('/api/system-settings/report-storage', createReportStorageRouter({ adminMiddleware, recordAudit }))
+app.use('/api/system-settings/sessions', createSessionSettingsRouter({ db, authMiddleware, adminMiddleware, recordAudit, gateway }))
+app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({ db, authMiddleware, operatorMiddleware, recordAudit }))
+app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
+
+// 迁移保留：阶段 B 已由下方独立路由接管这些 API。保留旧实现仅用于短期回归比对，
+// 不再注册，确认线上稳定后会在后续清理。
+function registerLegacyAccountAndConfigurationRoutes() {
+app.get('/api/users', authMiddleware, (_req, res) => {
+  const users = db.prepare('SELECT id, username, role, description, status, created_at, updated_at FROM users ORDER BY updated_at DESC').all()
+  res.json({ ok: true, users: users.map(publicUser) })
+})
+
+app.get('/api/audit-logs', auditViewerMiddleware, (req, res) => {
+  const requestedLimit = Number.parseInt(String(req.query.limit || '100'), 10)
+  const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100
+  const logs = db.prepare(`SELECT id, actor_username, actor_role, action, target, detail, created_at
+    FROM audit_logs ORDER BY created_at DESC LIMIT ?`).all(limit)
+  res.json({ ok: true, logs: logs.map((log) => ({
+    id: log.id, username: log.actor_username, role: log.actor_role, action: log.action,
+    target: log.target || '', detail: log.detail || '', createdAt: log.created_at,
+  })) })
+})
+
+app.post('/api/users', adminMiddleware, (req, res) => {
+  const username = String(req.body?.username || '').trim()
+  const password = String(req.body?.password || '')
+  const role = String(req.body?.role || '')
+  const description = String(req.body?.description || '').trim()
+  const status = String(req.body?.status || 'active')
+
+  if (!username || username.length > 64 || !password || password.length < 6 || !USER_ROLES.has(role) || !USER_STATUSES.has(status) || description.length > 500) {
+    return res.status(400).json({ ok: false, error: '用户信息不完整或格式不正确' })
+  }
+  try {
+    const now = Date.now()
+    const user = { id: randomUUID(), username, password_hash: hashPassword(password), role, description, status, created_at: now, updated_at: now }
+    db.prepare(`INSERT INTO users (id, username, password_hash, role, description, status, created_at, updated_at)
+      VALUES (@id, @username, @password_hash, @role, @description, @status, @created_at, @updated_at)`).run(user)
+    recordAudit(req.user, '创建用户', username, `角色：${role}；状态：${status}`)
+    res.status(201).json({ ok: true, user: publicUser(user) })
+  } catch (error) {
+    const duplicate = String(error.message).includes('UNIQUE')
+    res.status(duplicate ? 409 : 500).json({ ok: false, error: duplicate ? '用户名已存在' : '创建用户失败' })
+  }
+})
+
+app.post('/api/users/:id/reset-password', adminMiddleware, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
+  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' })
+  const updatedAt = Date.now()
+  db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hashPassword(RESET_PASSWORD), updatedAt, user.id)
+  for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
+  recordAudit(req.user, '重置用户密码', user.username, '已重置为默认密码')
+  res.json({ ok: true, updatedAt })
+})
+
+app.put('/api/users/:id/password', authMiddleware, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
+  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' })
+  const newPassword = String(req.body?.newPassword || '')
+  const isSelf = req.user.id === user.id
+  if (!isSelf && req.user.role !== 'admin') return res.status(403).json({ ok: false, error: '无权修改该用户密码' })
+  if (newPassword.length < 6) return res.status(400).json({ ok: false, error: '密码至少 6 位' })
+  if (isSelf && !verifyPassword(String(req.body?.currentPassword || ''), user.password_hash)) {
+    return res.status(400).json({ ok: false, error: '当前密码不正确' })
+  }
+  const updatedAt = Date.now()
+  db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hashPassword(newPassword), updatedAt, user.id)
+  for (const [token, session] of sessions) if (session.id === user.id && token !== req.headers.authorization?.replace('Bearer ', '')) sessions.delete(token)
+  recordAudit(req.user, isSelf ? '修改本人密码' : '修改用户密码', user.username)
+  res.json({ ok: true, updatedAt })
+})
+
+app.delete('/api/users/:id', adminMiddleware, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
+  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' })
+  if (req.user.id === user.id) return res.status(400).json({ ok: false, error: '不能删除当前登录账户' })
+  if (user.role === 'admin') {
+    const adminCount = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'").get().count
+    if (adminCount <= 1) return res.status(400).json({ ok: false, error: '至少需要保留一个已激活的管理员账户' })
+  }
+  db.prepare('DELETE FROM users WHERE id = ?').run(user.id)
+  for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
+  recordAudit(req.user, '删除用户', user.username, `角色：${user.role}`)
+  res.json({ ok: true })
+})
+
+function dataSourceEncryptionMiddleware(_req, res, next) {
+  if (!isDataSourceEncryptionReady()) {
+    return res.status(503).json({ ok: false, error: '数据源加密密钥未配置，请在服务端环境变量中设置 DATA_SOURCE_ENCRYPTION_KEY' })
+  }
+  next()
+}
+
+app.get('/api/data-sources', authMiddleware, dataSourceEncryptionMiddleware, (_req, res) => {
+  const rows = db.prepare(`SELECT id, ip, description, type, username, password_encrypted, status,
+    last_tested_at, last_test_message, created_at, updated_at FROM data_sources ORDER BY updated_at DESC`).all()
+  res.json({ ok: true, dataSources: rows.map(toPublicDataSource) })
+})
+
+app.post('/api/data-sources', adminMiddleware, dataSourceEncryptionMiddleware, (req, res) => {
+  const validated = validateDataSourceInput(req.body, { passwordRequired: true })
+  if (!validated.ok) return res.status(400).json({ ok: false, error: validated.error })
+  try {
+    const now = Date.now()
+    const source = {
+      id: randomUUID(), ...validated.value,
+      passwordEncrypted: encryptDataSourcePassword(validated.value.password),
+      createdAt: now, updatedAt: now,
+    }
+    db.prepare(`INSERT INTO data_sources (id, ip, description, type, username, password_encrypted, status, created_at, updated_at)
+      VALUES (@id, @ip, @description, @type, @username, @passwordEncrypted, @status, @createdAt, @updatedAt)`).run(source)
+    const row = db.prepare('SELECT * FROM data_sources WHERE id = ?').get(source.id)
+    recordAudit(req.user, '添加数据源', source.ip, `类型：${source.type}`)
+    res.status(201).json({ ok: true, dataSource: toPublicDataSource(row) })
+  } catch (error) {
+    res.status(500).json({ ok: false, error: '添加数据源失败' })
+  }
+})
+
+app.put('/api/data-sources/:id', adminMiddleware, dataSourceEncryptionMiddleware, (req, res) => {
+  const existing = db.prepare('SELECT * FROM data_sources WHERE id = ?').get(req.params.id)
+  if (!existing) return res.status(404).json({ ok: false, error: '数据源不存在' })
+  const validated = validateDataSourceInput(req.body, { passwordRequired: false })
+  if (!validated.ok) return res.status(400).json({ ok: false, error: validated.error })
+  try {
+    const value = validated.value
+    const passwordEncrypted = value.password ? encryptDataSourcePassword(value.password) : existing.password_encrypted
+    const now = Date.now()
+    db.prepare(`UPDATE data_sources SET ip = ?, description = ?, type = ?, username = ?, password_encrypted = ?, status = ?, updated_at = ? WHERE id = ?`)
+      .run(value.ip, value.description, value.type, value.username, passwordEncrypted, value.status, now, existing.id)
+    const row = db.prepare('SELECT * FROM data_sources WHERE id = ?').get(existing.id)
+    recordAudit(req.user, '编辑数据源', value.ip, `类型：${value.type}`)
+    res.json({ ok: true, dataSource: toPublicDataSource(row) })
+  } catch (error) {
+    res.status(500).json({ ok: false, error: '更新数据源失败' })
+  }
+})
+
+app.delete('/api/data-sources/:id', adminMiddleware, dataSourceEncryptionMiddleware, (req, res) => {
+  const source = db.prepare('SELECT * FROM data_sources WHERE id = ?').get(req.params.id)
+  if (!source) return res.status(404).json({ ok: false, error: '数据源不存在' })
+  db.prepare('DELETE FROM data_sources WHERE id = ?').run(source.id)
+  recordAudit(req.user, '删除数据源', source.ip, `类型：${source.type}`)
+  res.json({ ok: true })
+})
+
+app.post('/api/data-sources/:id/test', adminMiddleware, dataSourceEncryptionMiddleware, async (req, res) => {
+  const source = db.prepare('SELECT * FROM data_sources WHERE id = ?').get(req.params.id)
+  if (!source) return res.status(404).json({ ok: false, error: '数据源不存在' })
+  if (source.status === 'disabled') return res.status(400).json({ ok: false, error: '已停用的数据源不能执行连接测试' })
+  try {
+    const result = await testNapmDataSource({ ip: source.ip, username: source.username, password: decryptDataSourcePassword(source.password_encrypted) })
+    const now = Date.now()
+    db.prepare('UPDATE data_sources SET status = ?, last_tested_at = ?, last_test_message = ?, updated_at = ? WHERE id = ?')
+      .run(result.ok ? 'success' : 'failed', now, result.message, now, source.id)
+    recordAudit(req.user, '测试数据源连接', source.ip, result.ok ? '连接成功' : '连接失败')
+    res.json({ ok: true, result: { ...result, testedAt: now } })
+  } catch (_error) {
+    res.status(500).json({ ok: false, error: '数据源测试失败，请检查加密密钥和 NAPM 配置' })
+  }
+})
+
+function parseStringList(value, fieldName, maxItems = 32) {
+  if (!Array.isArray(value) || value.length > maxItems || value.some(item => typeof item !== 'string' || item.trim().length === 0 || item.trim().length > 255)) {
+    throw new Error(`${fieldName}格式不正确`)
+  }
+  return value.map(item => item.trim())
+}
+
+function isIpv4(value) {
+  const parts = String(value || '').trim().split('.')
+  return parts.length === 4 && parts.every(part => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)
+}
+
+function publicHostNetworkConfig(row) {
+  return {
+    hostname: row?.hostname || '', domain: row?.domain || '', ipAddress: row?.ip_address || '',
+    subnetMask: row?.subnet_mask || '', gateway: row?.gateway || '',
+    dnsServers: row?.dns_servers ? JSON.parse(row.dns_servers) : [],
+    internalAddressRanges: row?.internal_address_ranges ? JSON.parse(row.internal_address_ranges) : [],
+    timezone: row?.timezone || 'Asia/Shanghai', ntpServers: row?.ntp_servers ? JSON.parse(row.ntp_servers) : [],
+    locale: row?.locale || 'zh-CN', updatedAt: row?.updated_at || null,
+  }
+}
+
+app.get('/api/host-network-config', authMiddleware, (_req, res) => {
+  const row = db.prepare('SELECT * FROM host_network_config WHERE id = 1').get()
+  res.json({ ok: true, config: publicHostNetworkConfig(row) })
+})
+
+app.put('/api/host-network-config', adminMiddleware, (req, res) => {
+  try {
+    const hostname = String(req.body?.hostname || '').trim()
+    const domain = String(req.body?.domain || '').trim()
+    const ipAddress = String(req.body?.ipAddress || '').trim()
+    const subnetMask = String(req.body?.subnetMask || '').trim()
+    const gateway = String(req.body?.gateway || '').trim()
+    const timezone = String(req.body?.timezone || '').trim()
+    const locale = String(req.body?.locale || '').trim()
+    if (!hostname || hostname.length > 128 || domain.length > 255 || !isIpv4(ipAddress) || !isIpv4(subnetMask) || !isIpv4(gateway)) {
+      return res.status(400).json({ ok: false, error: '主机名、IP 地址、子网掩码或网关格式不正确' })
+    }
+    if (!['Asia/Shanghai', 'UTC'].includes(timezone) || !['zh-CN', 'en-US'].includes(locale)) {
+      return res.status(400).json({ ok: false, error: '时区或语言设置不受支持' })
+    }
+    const dnsServers = parseStringList(req.body?.dnsServers || [], '域名服务器')
+    const internalAddressRanges = parseStringList(req.body?.internalAddressRanges || [], '内部地址列表', 128)
+    const ntpServers = parseStringList(req.body?.ntpServers || [], 'NTP 服务器')
+    const updatedAt = Date.now()
+    db.prepare(`INSERT INTO host_network_config (id, hostname, domain, ip_address, subnet_mask, gateway, dns_servers, internal_address_ranges, timezone, ntp_servers, locale, updated_at)
+      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, domain = excluded.domain, ip_address = excluded.ip_address,
+        subnet_mask = excluded.subnet_mask, gateway = excluded.gateway, dns_servers = excluded.dns_servers,
+        internal_address_ranges = excluded.internal_address_ranges, timezone = excluded.timezone,
+        ntp_servers = excluded.ntp_servers, locale = excluded.locale, updated_at = excluded.updated_at`)
+      .run(hostname, domain, ipAddress, subnetMask, gateway, JSON.stringify(dnsServers), JSON.stringify(internalAddressRanges), timezone, JSON.stringify(ntpServers), locale, updatedAt)
+    const row = db.prepare('SELECT * FROM host_network_config WHERE id = 1').get()
+    recordAudit(req.user, '保存主机与网络配置', hostname, `IP：${ipAddress}`)
+    res.json({ ok: true, config: publicHostNetworkConfig(row) })
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message || '保存主机与网络配置失败' })
+  }
+})
+
+}
+
+// 阶段 B：稳定管理接口从服务入口拆出。访问地址保持不变，避免影响已完成的前端页面。
+app.use('/api/users', createUsersRouter({
+  db,
+  sessions,
+  authMiddleware,
+  adminMiddleware,
+  recordAudit,
+  hashPassword,
+  verifyPassword,
+  publicUser,
+  userRoles: USER_ROLES,
+  userStatuses: USER_STATUSES,
+  resetPassword: RESET_PASSWORD,
+  createId: randomUUID,
+}))
+app.use('/api/audit-logs', createAuditRouter({ db, auditViewerMiddleware }))
+app.use('/api/data-sources', createDataSourcesRouter({
+  db,
+  authMiddleware,
+  adminMiddleware,
+  recordAudit,
+  createId: randomUUID,
+  decryptDataSourcePassword,
+  encryptDataSourcePassword,
+  isDataSourceEncryptionReady,
+  testNapmDataSource,
+  toPublicDataSource,
+  validateDataSourceInput,
+  getDataSourceRuntimeStatus,
+  writeActiveDataSourceRuntime,
+}))
+app.use('/api/host-network-config', createHostNetworkRouter({ db, authMiddleware, adminMiddleware, recordAudit }))
+app.use('/api/system-config/environment', createSensitiveConfigRouter({
+  db,
+  adminMiddleware,
+  recordAudit,
+  encryptSensitiveConfigValue,
+  isSensitiveConfigEncryptionReady,
+  toPublicSystemSensitiveConfig,
+  validateSystemSensitiveConfigInput,
+}))
+app.use('/api/reports', createReportsRouter({ db, authMiddleware, adminMiddleware, recordAudit }))
+
+// 报告文件管理已替代旧的通用工作区文件浏览器。保留旧实现代码便于回归，
+// 但所有 /api/files/* 外部访问统一停用，防止绕过报告目录边界。
+app.use('/api/files', authMiddleware, (_req, res) => sendError(res, {
+  status: 410,
+  code: 'LEGACY_FILE_BROWSER_DISABLED',
+  message: '通用文件浏览器已停用，请使用报告文件管理',
+}))
+
+// 旧接口会直接读取和写入服务端 .env，无法满足“敏感值不回显”的产品边界。
+// 保留下方迁移期实现以便回归对照，但禁止任何正式页面继续调用。
+app.use('/api/config', adminMiddleware, (_req, res) => sendError(res, {
+  status: 410,
+  code: 'LEGACY_CONFIG_API_DISABLED',
+  message: '旧环境配置接口已停用，请使用系统配置中的环境与敏感配置模块',
+}))
 
 function parseEnvFile(content) {
   const result = {}
@@ -374,7 +798,7 @@ function stringifyEnvFile(data) {
   return lines.join('\n') + '\n'
 }
 
-app.get('/api/config', authMiddleware, (req, res) => {
+app.get('/api/config', adminMiddleware, (req, res) => {
   try {
     if (!existsSync(envPath)) {
       return res.json({ ok: true, config: {} })
@@ -387,7 +811,7 @@ app.get('/api/config', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/config', authMiddleware, (req, res) => {
+app.post('/api/config', adminMiddleware, (req, res) => {
   try {
     const { AUTH_USERNAME, AUTH_PASSWORD, OPENCLAW_WS_URL, OPENCLAW_AUTH_TOKEN, OPENCLAW_AUTH_PASSWORD } = req.body
     
@@ -436,6 +860,7 @@ app.post('/api/config', authMiddleware, (req, res) => {
     }
     
     console.log('[Config] Configuration reloaded')
+    recordAudit(req.user, '修改环境配置', '系统设置', '已保存环境变量与网关连接配置')
     res.json({ ok: true, message: 'Configuration saved and reloaded.' })
   } catch (err) {
     res.status(500).json({ ok: false, error: { message: err.message } })
@@ -482,7 +907,7 @@ app.get('/api/npm/versions', async (req, res) => {
   }
 })
 
-app.post('/api/npm/update', async (req, res) => {
+app.post('/api/npm/update', adminMiddleware, async (req, res) => {
   try {
     const { version } = req.body
     const packageSpec = version ? `openclaw@${version}` : 'openclaw@latest'
@@ -942,7 +1367,7 @@ app.get('/api/files/get', authMiddleware, async (req, res) => {
   }
 })
 
-app.post('/api/files/set', authMiddleware, async (req, res) => {
+app.post('/api/files/set', adminMiddleware, async (req, res) => {
   try {
     const { path: relPath, name, content, workspace: workspaceParam } = req.body
     const filePath = relPath || name
@@ -993,7 +1418,7 @@ app.post('/api/files/set', authMiddleware, async (req, res) => {
   }
 })
 
-app.post('/api/files/mkdir', authMiddleware, async (req, res) => {
+app.post('/api/files/mkdir', adminMiddleware, async (req, res) => {
   try {
     const { path: relPath, name, workspace: workspaceParam } = req.body
     const dirPath = relPath || name
@@ -1034,7 +1459,7 @@ app.post('/api/files/mkdir', authMiddleware, async (req, res) => {
   }
 })
 
-app.post('/api/files/delete', authMiddleware, async (req, res) => {
+app.post('/api/files/delete', adminMiddleware, async (req, res) => {
   try {
     const { path: relPath, name, workspace: workspaceParam } = req.body
     const filePath = relPath || name
@@ -1069,7 +1494,7 @@ app.post('/api/files/delete', authMiddleware, async (req, res) => {
   }
 })
 
-app.post('/api/files/rename', authMiddleware, async (req, res) => {
+app.post('/api/files/rename', adminMiddleware, async (req, res) => {
   try {
     const { oldPath, newPath, workspace: workspaceParam } = req.body
     
@@ -1119,7 +1544,7 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }
 })
 
-app.post('/api/files/upload', authMiddleware, upload.single('file'), async (req, res) => {
+app.post('/api/files/upload', adminMiddleware, upload.single('file'), async (req, res) => {
   try {
     const file = req.file
     const relPath = req.body.path
@@ -1182,21 +1607,53 @@ app.get('/api/status', authMiddleware, async (req, res) => {
 })
 
 app.post('/api/rpc', authMiddleware, async (req, res) => {
-  const { method, params } = req.body
+  const method = typeof req.body?.method === 'string' ? req.body.method.trim() : ''
+  const params = req.body?.params
 
   if (!method) {
-    return res.status(400).json({ error: 'Method is required' })
+    return sendError(res, { status: 400, code: 'RPC_METHOD_REQUIRED', message: '必须提供 RPC 方法' })
+  }
+
+  const permission = getRpcPermissionDecision(req.user, method)
+  if (!permission.allowed) {
+    return sendError(res, { status: 403, code: permission.code, message: permission.message })
   }
 
   if (!gateway.isConnected) {
-    return res.status(503).json({ error: 'Gateway not connected' })
+    return sendError(res, { status: 503, code: 'GATEWAY_UNAVAILABLE', message: 'GAIOP 智能体服务暂未连接' })
+  }
+
+  const isSessionList = SESSION_LIST_METHODS.has(method)
+  const isSessionScoped = SESSION_SCOPED_READ_METHODS.has(method) || SESSION_SCOPED_WRITE_METHODS.has(method)
+  const sessionKey = isSessionScoped ? getSessionKeyFromParams(params) : ''
+  if (isSessionScoped) {
+    const access = ensureWorkspaceSessionAccess(db, req.user, sessionKey)
+    if (!access.ok) {
+      return sendError(res, { status: 404, code: access.code, message: access.message })
+    }
   }
 
   try {
-    const result = await gateway.call(method, params)
-    res.json({ ok: true, payload: result })
+    const reportProvenance = method === 'chat.send'
+      ? attachReportProvenance(params, req.user, {
+        enabled: envConfig.GAIOP_REPORT_PROVENANCE_ENABLED === 'true',
+        signingKey: envConfig.GAIOP_REPORT_PROVENANCE_SIGNING_KEY,
+      })
+      : { params, attached: false }
+    const result = await gateway.call(method, reportProvenance.params)
+    let payload = method === 'config.get' && req.user?.role !== 'admin'
+      ? sanitizeGatewayConfigPayload(result)
+      : result
+    if (isSessionList) {
+      payload = filterSessionListPayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))
+    }
+    if (method === 'sessions.delete' || method === 'session.delete') {
+      markWorkspaceSessionDeleted(db, sessionKey)
+    }
+    if (!isReadOnlyRpcMethod(method)) recordAudit(req.user, '执行业务操作', method)
+    res.json({ ok: true, payload })
   } catch (err) {
-    res.status(500).json({ ok: false, error: { message: err.message } })
+    res.status(500).json({ ok: false, error: { message: err.message }, code: 'RPC_CALL_FAILED' })
   }
 })
 
@@ -1210,7 +1667,7 @@ app.get('/api/events', authMiddleware, (req, res) => {
   res.flushHeaders()
 
   const clientId = randomUUID()
-  sseClients.set(clientId, { res, subscriptions: new Set(['*']) })
+  sseClients.set(clientId, { res, user: req.user, subscriptions: new Set(['*']) })
   debug('[SSE] Client connected:', clientId, 'total clients:', sseClients.size)
 
   res.write(`data: ${JSON.stringify({ type: 'connected', clientId })}\n\n`)
@@ -1230,7 +1687,7 @@ app.get('/api/events', authMiddleware, (req, res) => {
   })
 })
 
-app.get('/api/terminal/stream', authMiddleware, (req, res) => {
+app.get('/api/terminal/stream', adminMiddleware, (req, res) => {
   const cols = parseInt(req.query.cols) || 120
   const rows = parseInt(req.query.rows) || 36
   const nodeId = req.query.nodeId || 'local'
@@ -1313,7 +1770,7 @@ app.get('/api/terminal/stream', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/terminal/input', authMiddleware, (req, res) => {
+app.post('/api/terminal/input', adminMiddleware, (req, res) => {
   const { sessionId, data } = req.body
 
   if (!sessionId || !data) {
@@ -1334,7 +1791,7 @@ app.post('/api/terminal/input', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/terminal/resize', authMiddleware, (req, res) => {
+app.post('/api/terminal/resize', adminMiddleware, (req, res) => {
   const { sessionId, cols, rows } = req.body
 
   if (!sessionId || cols === undefined || rows === undefined) {
@@ -1355,7 +1812,7 @@ app.post('/api/terminal/resize', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/terminal/destroy', authMiddleware, (req, res) => {
+app.post('/api/terminal/destroy', adminMiddleware, (req, res) => {
   const { sessionId } = req.body
 
   if (!sessionId) {
@@ -1369,7 +1826,7 @@ app.post('/api/terminal/destroy', authMiddleware, (req, res) => {
   res.json({ ok: true, message: cleaned ? 'Session destroyed' : 'Session already destroyed' })
 })
 
-app.post('/api/terminal/heartbeat', authMiddleware, (req, res) => {
+app.post('/api/terminal/heartbeat', adminMiddleware, (req, res) => {
   const { sessionId } = req.body
 
   if (!sessionId) {
@@ -1526,7 +1983,7 @@ app.get('/api/hermes-cli/sessions', authMiddleware, (req, res) => {
 })
 
 // POST /api/hermes-cli/sessions/rename — Rename a session
-app.post('/api/hermes-cli/sessions/rename', authMiddleware, (req, res) => {
+app.post('/api/hermes-cli/sessions/rename', adminMiddleware, (req, res) => {
   const { sessionId, name } = req.body
 
   if (!sessionId || !name) {
@@ -1544,7 +2001,7 @@ app.post('/api/hermes-cli/sessions/rename', authMiddleware, (req, res) => {
 })
 
 // GET /api/hermes-cli/stream — Create new or reconnect to existing session
-app.get('/api/hermes-cli/stream', authMiddleware, (req, res) => {
+app.get('/api/hermes-cli/stream', adminMiddleware, (req, res) => {
   const cols = parseInt(req.query.cols) || 120
   const rows = parseInt(req.query.rows) || 36
   const existingSessionId = req.query.sessionId || null
@@ -1732,7 +2189,7 @@ app.get('/api/hermes-cli/stream', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/hermes-cli/input', authMiddleware, (req, res) => {
+app.post('/api/hermes-cli/input', adminMiddleware, (req, res) => {
   const { sessionId, data } = req.body
 
   if (!sessionId || !data) {
@@ -1753,7 +2210,7 @@ app.post('/api/hermes-cli/input', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/hermes-cli/resize', authMiddleware, (req, res) => {
+app.post('/api/hermes-cli/resize', adminMiddleware, (req, res) => {
   const { sessionId, cols, rows } = req.body
 
   if (!sessionId || cols === undefined || rows === undefined) {
@@ -1774,7 +2231,7 @@ app.post('/api/hermes-cli/resize', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/hermes-cli/destroy', authMiddleware, (req, res) => {
+app.post('/api/hermes-cli/destroy', adminMiddleware, (req, res) => {
   const { sessionId } = req.body
 
   if (!sessionId) {
@@ -1788,7 +2245,7 @@ app.post('/api/hermes-cli/destroy', authMiddleware, (req, res) => {
   res.json({ ok: true, message: cleaned ? 'Session destroyed' : 'Session already destroyed' })
 })
 
-app.post('/api/hermes-cli/heartbeat', authMiddleware, (req, res) => {
+app.post('/api/hermes-cli/heartbeat', adminMiddleware, (req, res) => {
   const { sessionId } = req.body
 
   if (!sessionId) {
@@ -2015,7 +2472,7 @@ async function captureWindowsDesktop() {
   })
 }
 
-app.get('/api/desktop/displays', authMiddleware, (req, res) => {
+app.get('/api/desktop/displays', adminMiddleware, (req, res) => {
   if (process.platform === 'win32') {
     return res.json({ ok: true, displays: [], platform: 'windows' })
   }
@@ -2046,7 +2503,7 @@ app.get('/api/desktop/displays', authMiddleware, (req, res) => {
   res.json({ ok: true, displays, platform: 'linux' })
 })
 
-app.get('/api/desktop/list', authMiddleware, (req, res) => {
+app.get('/api/desktop/list', adminMiddleware, (req, res) => {
   const sessions = []
   for (const [id, session] of desktopSessions) {
     sessions.push({
@@ -2064,7 +2521,7 @@ app.get('/api/desktop/list', authMiddleware, (req, res) => {
   res.json({ ok: true, sessions })
 })
 
-app.post('/api/desktop/create', authMiddleware, async (req, res) => {
+app.post('/api/desktop/create', adminMiddleware, async (req, res) => {
   const { nodeId, width, height, host, port, password, display: inputDisplay } = req.body
   
   const sessionId = randomUUID()
@@ -2146,7 +2603,7 @@ app.post('/api/desktop/create', authMiddleware, async (req, res) => {
   }
 })
 
-app.get('/api/desktop/stream', authMiddleware, (req, res) => {
+app.get('/api/desktop/stream', adminMiddleware, (req, res) => {
   const sessionId = req.query.sessionId
   
   if (!sessionId) {
@@ -2249,7 +2706,7 @@ app.get('/api/desktop/stream', authMiddleware, (req, res) => {
   })
 })
 
-app.post('/api/desktop/input/mouse', authMiddleware, (req, res) => {
+app.post('/api/desktop/input/mouse', adminMiddleware, (req, res) => {
   const { sessionId, x, y, button, buttons, type, wheelDeltaX, wheelDeltaY } = req.body
   
   if (!sessionId) {
@@ -2289,7 +2746,7 @@ app.post('/api/desktop/input/mouse', authMiddleware, (req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/desktop/input/keyboard', authMiddleware, (req, res) => {
+app.post('/api/desktop/input/keyboard', adminMiddleware, (req, res) => {
   const { sessionId, key, code, keyCode, shiftKey, ctrlKey, altKey, metaKey, type } = req.body
   
   if (!sessionId) {
@@ -2354,7 +2811,7 @@ app.post('/api/desktop/input/keyboard', authMiddleware, (req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/desktop/input/clipboard', authMiddleware, (req, res) => {
+app.post('/api/desktop/input/clipboard', adminMiddleware, (req, res) => {
   const { sessionId, text } = req.body
   
   if (!sessionId) {
@@ -2371,7 +2828,7 @@ app.post('/api/desktop/input/clipboard', authMiddleware, (req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/desktop/resize', authMiddleware, (req, res) => {
+app.post('/api/desktop/resize', adminMiddleware, (req, res) => {
   const { sessionId, width, height } = req.body
   
   if (!sessionId) {
@@ -2396,7 +2853,7 @@ app.post('/api/desktop/resize', authMiddleware, (req, res) => {
   res.json({ ok: true, width: session.width, height: session.height })
 })
 
-app.post('/api/desktop/destroy', authMiddleware, (req, res) => {
+app.post('/api/desktop/destroy', adminMiddleware, (req, res) => {
   const { sessionId } = req.body
   
   if (!sessionId) {
@@ -2441,7 +2898,7 @@ app.post('/api/desktop/destroy', authMiddleware, (req, res) => {
   res.json({ ok: true })
 })
 
-app.post('/api/desktop/heartbeat', authMiddleware, (req, res) => {
+app.post('/api/desktop/heartbeat', adminMiddleware, (req, res) => {
   const { sessionId } = req.body
   
   if (!sessionId) {
@@ -2574,7 +3031,7 @@ app.get('/api/wizard/scenarios/:id', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/wizard/scenarios', authMiddleware, (req, res) => {
+app.post('/api/wizard/scenarios', operatorMiddleware, (req, res) => {
   try {
     const id = randomUUID()
     const now = Date.now()
@@ -2621,7 +3078,7 @@ app.post('/api/wizard/scenarios', authMiddleware, (req, res) => {
   }
 })
 
-app.put('/api/wizard/scenarios/:id', authMiddleware, (req, res) => {
+app.put('/api/wizard/scenarios/:id', operatorMiddleware, (req, res) => {
   try {
     const existing = db.prepare('SELECT id FROM scenarios WHERE id = ?').get(req.params.id)
     if (!existing) {
@@ -2657,7 +3114,7 @@ app.put('/api/wizard/scenarios/:id', authMiddleware, (req, res) => {
   }
 })
 
-app.delete('/api/wizard/scenarios/:id', authMiddleware, (req, res) => {
+app.delete('/api/wizard/scenarios/:id', operatorMiddleware, (req, res) => {
   try {
     db.prepare('DELETE FROM tasks WHERE scenario_id = ?').run(req.params.id)
     db.prepare('DELETE FROM scenarios WHERE id = ?').run(req.params.id)
@@ -2729,7 +3186,7 @@ app.get('/api/wizard/tasks/:id', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/wizard/tasks', authMiddleware, (req, res) => {
+app.post('/api/wizard/tasks', operatorMiddleware, (req, res) => {
   try {
     const id = randomUUID()
     const now = Date.now()
@@ -2776,7 +3233,7 @@ app.post('/api/wizard/tasks', authMiddleware, (req, res) => {
   }
 })
 
-app.put('/api/wizard/tasks/:id', authMiddleware, (req, res) => {
+app.put('/api/wizard/tasks/:id', operatorMiddleware, (req, res) => {
   try {
     const existing = db.prepare('SELECT id FROM tasks WHERE id = ?').get(req.params.id)
     if (!existing) {
@@ -2812,7 +3269,7 @@ app.put('/api/wizard/tasks/:id', authMiddleware, (req, res) => {
   }
 })
 
-app.delete('/api/wizard/tasks/:id', authMiddleware, (req, res) => {
+app.delete('/api/wizard/tasks/:id', operatorMiddleware, (req, res) => {
   try {
     db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id)
     
@@ -3685,7 +4142,7 @@ app.get('/api/backup/tasks/:taskId', authMiddleware, (req, res) => {
   })
 })
 
-app.delete('/api/backup/tasks/completed', authMiddleware, (req, res) => {
+app.delete('/api/backup/tasks/completed', adminMiddleware, (req, res) => {
   try {
     const result = db.prepare('DELETE FROM backup_records WHERE status IN (?, ?)').run('completed', 'failed')
     console.log(`[Backup] Cleared ${result.changes} completed/failed tasks`)
@@ -3696,7 +4153,7 @@ app.delete('/api/backup/tasks/completed', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/backup/create', authMiddleware, async (req, res) => {
+app.post('/api/backup/create', adminMiddleware, async (req, res) => {
   try {
     const taskId = generateTaskId()
     const task = {
@@ -3755,7 +4212,7 @@ app.get('/api/backup/download', authMiddleware, (req, res) => {
 })
 
 // 恢复备份
-app.post('/api/backup/restore', authMiddleware, async (req, res) => {
+app.post('/api/backup/restore', adminMiddleware, async (req, res) => {
   try {
     const { filename } = req.body
     if (!filename) {
@@ -3798,7 +4255,7 @@ app.post('/api/backup/restore', authMiddleware, async (req, res) => {
 })
 
 // 删除备份
-app.delete('/api/backup/delete', authMiddleware, (req, res) => {
+app.delete('/api/backup/delete', adminMiddleware, (req, res) => {
   try {
     const filename = req.query.filename
     if (!filename) {
@@ -3830,7 +4287,7 @@ const backupUpload = multer({
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB 限制
 })
 
-app.post('/api/backup/upload', authMiddleware, backupUpload.single('backup'), async (req, res) => {
+app.post('/api/backup/upload', adminMiddleware, backupUpload.single('backup'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ ok: false, error: { message: 'No backup file uploaded' } })

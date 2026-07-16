@@ -1,4 +1,5 @@
-import { readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { dirname, join } from 'path'
 import WebSocket from 'ws'
 import { randomUUID } from 'crypto'
 import EventEmitter from 'events'
@@ -25,6 +26,8 @@ export class OpenClawGateway extends EventEmitter {
     this.reconnectTimer = null
     this.heartbeatTimer = null
     this.deviceIdentity = null
+    this.deviceIdentityPath = process.env.OPENCLAW_DEVICE_IDENTITY_PATH
+      || join(process.cwd(), 'data', 'gateway-device-identity.json')
   }
 
   debug(...args) {
@@ -149,7 +152,7 @@ export class OpenClawGateway extends EventEmitter {
 
     try {
       if (!this.deviceIdentity) {
-        this.deviceIdentity = await this.generateDeviceIdentity()
+        this.deviceIdentity = await this.loadOrCreateDeviceIdentity()
       }
 
       const signedAtMs = Date.now()
@@ -193,6 +196,27 @@ export class OpenClawGateway extends EventEmitter {
       publicKey,
       privateKey,
     }
+  }
+
+  async loadOrCreateDeviceIdentity() {
+    try {
+      if (existsSync(this.deviceIdentityPath)) {
+        const identity = JSON.parse(readFileSync(this.deviceIdentityPath, 'utf-8'))
+        if (identity?.deviceId && identity?.publicKey && identity?.privateKey) {
+          return identity
+        }
+      }
+    } catch (error) {
+      this.debug('Device identity load failed; generating a new identity:', error.message)
+    }
+
+    const identity = await this.generateDeviceIdentity()
+    const directory = dirname(this.deviceIdentityPath)
+    const temporaryPath = `${this.deviceIdentityPath}.${process.pid}.tmp`
+    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    writeFileSync(temporaryPath, `${JSON.stringify(identity)}\n`, { encoding: 'utf-8', mode: 0o600 })
+    renameSync(temporaryPath, this.deviceIdentityPath)
+    return identity
   }
 
   generateEd25519KeyPair() {

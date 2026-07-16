@@ -33,11 +33,13 @@ import { useConfigStore } from '@/stores/config'
 import { useWebSocketStore } from '@/stores/websocket'
 import type { DataTableColumns } from 'naive-ui'
 import type { ConfigPatch, ModelProviderConfig, OpenClawConfig } from '@/api/types'
+import { usePermissions } from '@/composables/usePermissions'
 
 const configStore = useConfigStore()
 const wsStore = useWebSocketStore()
 const message = useMessage()
 const { t, locale } = useI18n()
+const { canEditConfiguration, readOnlyHint } = usePermissions()
 
 function joinDisplayList(values: string[]): string {
   const separator = locale.value === 'zh-CN' ? '、' : ', '
@@ -2244,7 +2246,7 @@ function handleCreateProviderClick() {
                 :placeholder="t('pages.models.workbench.searchPlaceholder')"
                 style="width: 100%; max-width: 340px;"
               />
-              <NButton size="small" type="primary" @click="handleNewProvider">
+              <NButton size="small" type="primary" :disabled="!canEditConfiguration" :title="!canEditConfiguration ? readOnlyHint : undefined" @click="handleNewProvider">
                 <template #icon><NIcon :component="AddOutline" /></template>
                 {{ t('pages.models.actions.createProvider') }}
               </NButton>
@@ -2326,7 +2328,8 @@ function handleCreateProviderClick() {
             <NButton
               type="primary"
               :loading="quickProviderSaving[item.key]"
-              :disabled="quickProviderConfiguredMap[item.key]"
+              :disabled="quickProviderConfiguredMap[item.key] || !canEditConfiguration"
+              :title="!canEditConfiguration ? readOnlyHint : undefined"
               @click="handleQuickProviderSetup(item.key)"
             >
               {{ quickProviderConfiguredMap[item.key]

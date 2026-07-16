@@ -1,6 +1,6 @@
 export default {
   app: {
-    title: 'Claw Admin',
+    title: '观枢 GAIOP',
   },
   routes: {
     login: '登录',
@@ -23,6 +23,9 @@ export default {
     settings: '系统设置',
     remoteDesktop: '远程桌面',
     backup: '数据备份',
+    userManagement: '账户管理',
+    accessControl: '访问控制',
+    systemUpgrade: '系统升级',
     hermesDashboard: '仪表盘',
     hermesChat: '在线对话',
     hermesSessions: '会话管理',
@@ -150,7 +153,7 @@ export default {
         },
         bundled: {
           title: '系统内置插件',
-          description: '随 OpenClaw 一起提供（可控制是否在 Chat 中可选）',
+          description: '随 GAIOP 平台提供（可控制是否在对话工作台中可用）',
           empty: '当前没有内置插件',
         },
       },
@@ -297,7 +300,7 @@ export default {
     },
     memory: {
       title: '记忆与文档管理',
-      coveredDocsPrefix: '覆盖 OpenClaw 官方可管理文档：',
+      coveredDocsPrefix: '覆盖 GAIOP 可管理文档：',
       coveredDocsSuffix: '。',
       gatewayLimited: '当前网关可能不支持 agents.files.* 或权限受限：{error}',
       agentPlaceholder: '选择多智能体',
@@ -660,7 +663,7 @@ export default {
         nameRequired: '请输入任务名称',
       },
       previewUnavailable: '// 预览暂不可用：{error}',
-      modelConfigLoadFailed: '模型配置读取失败，暂时无法按 openclaw.json 过滤：{error}',
+      modelConfigLoadFailed: '模型配置读取失败，暂时无法按平台配置过滤：{error}',
       modelListLoadFailed: '模型列表拉取失败，可继续手动输入模型：{error}',
       messages: {
         jobEnabled: '任务已启用',
@@ -902,22 +905,22 @@ export default {
       },
       index: {
         title: '模型索引',
-        hint: '已配置模型（来自 openclaw.json）。可在列表中快速将任意模型设为默认。',
+        hint: '已配置模型。可在列表中快速将任意模型设为默认。',
         empty: '当前未配置任何模型',
         emptyHint: '请先在上方渠道工作台中填写模型并保存',
       },
     },
     dashboard: {
       hero: {
-        title: 'OpenClaw 运行总览',
-        subtitle: '用官方 Usage 聚合数据看 token/cost、活跃会话、错误分布，再进入具体会话处理。',
+        title: '观枢 GAIOP 运行总览',
+        subtitle: '查看 Token、模型、Skills、任务与会话等关键运行数据，快速进入对应管理功能。',
       },
       connection: {
-        connected: '网关已连接',
-        connecting: '网关连接中',
-        reconnecting: '网关重连中',
-        failed: '网关连接失败',
-        disconnected: '网关未连接',
+        connected: 'GAIOP 服务已连接',
+        connecting: 'GAIOP 服务连接中',
+        reconnecting: 'GAIOP 服务重连中',
+        failed: 'GAIOP 服务连接失败',
+        disconnected: 'GAIOP 服务未连接',
       },
       lastUpdated: {
         none: '尚未同步',
@@ -961,7 +964,7 @@ export default {
       },
       cards: {
         kpis: 'Usage 关键指标',
-        trend: 'Token 趋势（官方 Usage）',
+        trend: 'Token 趋势',
         structure: 'Usage 结构',
         top: 'Top 分布',
         sessions: '会话概览（带用量）',
@@ -1090,7 +1093,7 @@ export default {
         error: '语音合成失败',
       },
       input: {
-        placeholder: '输入消息（输入 / 可查看 OpenClaw 命令，Enter 发送，Shift+Enter 换行）',
+        placeholder: '输入运维分析需求（输入 / 可查看 GAIOP 命令，Enter 发送，Shift+Enter 换行）',
         sendHint: '当前发送到：{key} ｜ Enter 发送，Shift+Enter 换行，Ctrl/Cmd+Enter 发送',
       },
       quickReplies: {
@@ -1124,7 +1127,7 @@ export default {
         },
       },
       slash: {
-        title: 'OpenClaw 斜杠命令',
+        title: 'GAIOP 斜杠命令',
         hint: '↑/↓ 选择，Tab 应用，Enter 应用或发送，Esc 退出',
         categories: {
           common: '常用',
@@ -1511,7 +1514,7 @@ export default {
     themeLight: '浅色模式',
     themeDark: '深色模式',
     about: '关于',
-    aboutLine1: 'OpenClaw Gateway 管理后台',
+    aboutLine1: '观枢 GAIOP 智能运维分析平台',
     aboutLine2: '基于 Vue 3 + Naive UI 构建',
     connectionManagedByBackend: 'Gateway 连接由后端服务器管理，请在系统设置中配置',
     envSettings: '环境变量设置',

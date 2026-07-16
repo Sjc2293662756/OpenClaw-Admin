@@ -21,7 +21,7 @@ router.beforeEach(async (to, _from, next) => {
 
   if (!authEnabled) {
     if (to.name === 'Login') {
-      next({ name: 'Dashboard' })
+      next({ name: 'ChatWorkspace' })
       return
     }
     next()
@@ -33,7 +33,7 @@ router.beforeEach(async (to, _from, next) => {
       try {
         const valid = await authStore.checkAuth()
         if (valid) {
-          const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/'
+          const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/workspace'
           next(redirect)
           return
         }
@@ -46,19 +46,19 @@ router.beforeEach(async (to, _from, next) => {
   }
 
   if (!authStore.isAuthenticated) {
-    next({ name: 'Login', query: { redirect: to.fullPath } })
+    next({ name: 'Welcome', query: { redirect: to.fullPath } })
     return
   }
 
   try {
     const valid = await authStore.checkAuth()
     if (!valid) {
-      next({ name: 'Login', query: { redirect: to.fullPath } })
+      next({ name: 'Welcome', query: { redirect: to.fullPath } })
       return
     }
   } catch (error) {
     console.error('[Router] checkAuth failed:', error)
-    next({ name: 'Login', query: { redirect: to.fullPath } })
+    next({ name: 'Welcome', query: { redirect: to.fullPath } })
     return
   }
 

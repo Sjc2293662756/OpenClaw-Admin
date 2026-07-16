@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NBreadcrumb, NBreadcrumbItem, NButton, NSpace, NTooltip, NIcon } from 'naive-ui'
-import { SunnyOutline, MoonOutline, LogOutOutline, LanguageOutline, ExpandOutline, ContractOutline } from '@vicons/ionicons5'
+import { SunnyOutline, MoonOutline, LogOutOutline, LanguageOutline, ExpandOutline, ContractOutline, ChatbubbleEllipsesOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '@/composables/useTheme'
 import { useAuthStore } from '@/stores/auth'
@@ -10,7 +10,6 @@ import { useLocaleStore } from '@/stores/locale'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useWideModeStore } from '@/stores/wideMode'
 import ConnectionStatus from '@/components/common/ConnectionStatus.vue'
-import GatewaySwitcher from '@/components/common/GatewaySwitcher.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -36,7 +35,7 @@ const languageToggleTarget = computed(() => (localeStore.locale === 'zh-CN' ? t(
 async function handleLogout() {
   wsStore.disconnect()
   await authStore.logout()
-  router.push({ name: 'Login' })
+  router.push({ name: 'Welcome', query: { redirect: '/' } })
 }
 </script>
 
@@ -53,8 +52,11 @@ async function handleLogout() {
     </NBreadcrumb>
 
     <NSpace :size="8" align="center">
+      <NButton secondary type="primary" size="small" @click="router.push({ name: 'ChatWorkspace' })">
+        <template #icon><NIcon :component="ChatbubbleEllipsesOutline" /></template>
+        对话工作台
+      </NButton>
       <ConnectionStatus />
-      <GatewaySwitcher />
 
       <NTooltip>
         <template #trigger>
