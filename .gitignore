@@ -6,4 +6,6 @@ backups
 !.env.example
 data/wizard.db-shm
 data/wizard.db-wal
+data/gateway-device-identity.json
+data/reports/
 .trae
