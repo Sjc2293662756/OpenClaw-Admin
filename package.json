@@ -9,7 +9,7 @@
     "dev:server": "node --env-file=.env server/index.js",
     "dev:all": "concurrently -n \"frontend,backend\" -c \"blue,green\" \"vite\" \"node --env-file=.env server/index.js\"",
     "build": "vue-tsc -b && vite build",
-    "test:node": "node --test server/lib/syslog-alerts.test.js server/lib/alert-export.test.js",
+    "test:node": "node --test server/gateway.test.js server/lib/syslog-alerts.test.js server/lib/alert-export.test.js server/routes/gaiop-service.test.js",
     "test:vitest": "vitest run server/lib/gateway-session-settings.test.js server/lib/session-ownership-service.test.js",
     "test": "npm run test:node && npm run test:vitest",
     "preview": "vite preview",

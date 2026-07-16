@@ -25,6 +25,7 @@ export class OpenClawGateway extends EventEmitter {
     this.connectSent = false
     this.reconnectTimer = null
     this.heartbeatTimer = null
+    this.shouldReconnect = true
     this.deviceIdentity = null
     this.deviceIdentityPath = process.env.OPENCLAW_DEVICE_IDENTITY_PATH
       || join(process.cwd(), 'data', 'gateway-device-identity.json')
@@ -37,8 +38,12 @@ export class OpenClawGateway extends EventEmitter {
   }
 
   async connect() {
+    this.shouldReconnect = true
     if (this.ws) {
-      this.ws.close()
+      const previousSocket = this.ws
+      this.ws = null
+      previousSocket.removeAllListeners()
+      previousSocket.close()
     }
 
     const authParam = this.authToken || this.authPassword || ''
@@ -384,7 +389,7 @@ export class OpenClawGateway extends EventEmitter {
     }
     this.pendingCalls.clear()
 
-    this.scheduleReconnect()
+    if (this.shouldReconnect) this.scheduleReconnect()
   }
 
   scheduleReconnect() {
@@ -436,10 +441,13 @@ export class OpenClawGateway extends EventEmitter {
   }
 
   disconnect() {
+    this.shouldReconnect = false
     this.clearTimers()
     if (this.ws) {
-      this.ws.close()
+      const activeSocket = this.ws
       this.ws = null
+      activeSocket.removeAllListeners()
+      activeSocket.close()
     }
     this.isConnected = false
   }

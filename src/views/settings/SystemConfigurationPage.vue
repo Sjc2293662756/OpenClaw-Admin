@@ -5,17 +5,17 @@ import { NCard, NIcon, NTag, NText } from 'naive-ui'
 import {
   AlertCircleOutline,
   CloudOutline,
-  ServerOutline,
+  LinkOutline,
 } from '@vicons/ionicons5'
 
 const router = useRouter()
 
 const modules = [
   {
-    name: 'HostNetworkConfiguration',
-    title: '主机与网络配置',
-    description: '维护主机名、IP、网关、DNS、内部地址、时区和 NTP 信息。',
-    icon: ServerOutline,
+    name: 'GAIOPServiceConfiguration',
+    title: 'GAIOP 服务配置',
+    description: '维护 GAIOP 服务接入与连接状态。',
+    icon: LinkOutline,
     tone: 'green',
   },
   {
@@ -45,7 +45,7 @@ const moduleCount = computed(() => modules.length)
           <NTag type="success" round :bordered="false">系统配置</NTag>
           <h1>GAIOP 部署与数据接入配置</h1>
           <NText depth="3">
-            此处用于维护主机网络、NAPM 数据源、告警接入及运行安全配置。具体字段与保存规则将在对应模块实施时确定。
+            此处用于维护 NAPM 数据源与告警接入配置。服务器网络和部署参数由部署环境维护，不在管理控制台编辑。
           </NText>
         </div>
         <span class="configuration-intro__count">{{ moduleCount }} 个配置分区</span>

@@ -138,18 +138,18 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/settings/SettingsPage.vue'),
         meta: { titleKey: 'routes.settings', icon: 'CogOutline', gateway: 'openclaw' },
       },
-      {
-        path: 'system-configuration',
-        name: 'SystemConfiguration',
-        component: () => import('@/views/settings/SystemConfigurationPage.vue'),
-        meta: { title: '系统配置', icon: 'SettingsOutline', gateway: 'openclaw' },
-      },
-      {
-        path: 'system-configuration/host-network',
-        name: 'HostNetworkConfiguration',
-        component: () => import('@/views/settings/HostNetworkConfigurationPage.vue'),
-        meta: { hidden: true, gateway: 'openclaw' },
-      },
+        {
+          path: 'system-configuration',
+          name: 'SystemConfiguration',
+          component: () => import('@/views/settings/SystemConfigurationPage.vue'),
+          meta: { title: '系统配置', icon: 'SettingsOutline', gateway: 'openclaw' },
+        },
+        {
+          path: 'system-configuration/gaiop-service',
+          name: 'GAIOPServiceConfiguration',
+          component: () => import('@/views/settings/GAIOPServiceConfigurationPage.vue'),
+          meta: { hidden: true, gateway: 'openclaw' },
+        },
       {
         path: 'system-configuration/data-sources',
         name: 'DataSourceManagement',

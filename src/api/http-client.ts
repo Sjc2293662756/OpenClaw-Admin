@@ -103,10 +103,11 @@ export class ApiClient {
             this.emit('stateChange', ConnectionState.CONNECTED)
             this.emit('connected', { version: message.version, updateAvailable: message.updateAvailable })
           } else if (message.state === 'disconnected' || message.state === 'failed') {
-            if (this._state === ConnectionState.CONNECTED) {
-              this._state = ConnectionState.RECONNECTING
-              this.emit('stateChange', ConnectionState.RECONNECTING)
-            }
+            const nextState = message.state === 'failed'
+              ? ConnectionState.FAILED
+              : ConnectionState.RECONNECTING
+            this._state = nextState
+            this.emit('stateChange', nextState)
           } else if (message.state === 'connecting') {
             this._state = ConnectionState.CONNECTING
             this.emit('stateChange', ConnectionState.CONNECTING)

@@ -1507,6 +1507,7 @@ export default {
       statusFailed: 'Connection failed',
       statusDisconnected: 'Disconnected',
       appearanceSettings: 'Appearance',
+      interfaceLanguage: 'Interface Language',
       themeMode: 'Theme',
       themeLight: 'Light',
       themeDark: 'Dark',

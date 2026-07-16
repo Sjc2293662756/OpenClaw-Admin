@@ -1510,6 +1510,7 @@ export default {
     statusFailed: '连接失败',
     statusDisconnected: '已断开',
     appearanceSettings: '外观设置',
+    interfaceLanguage: '界面语言',
     themeMode: '主题模式',
     themeLight: '浅色模式',
     themeDark: '深色模式',

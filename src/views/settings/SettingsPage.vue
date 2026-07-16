@@ -3,10 +3,13 @@ import { computed, onMounted, ref } from 'vue'
 import { NAlert, NCard, NForm, NFormItem, NInput, NSelect, NSpace, NText, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
+import { useLocaleStore } from '@/stores/locale'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
+import type { AppLocale } from '@/i18n/locale'
 import SessionManagementPage from './SessionManagementPage.vue'
 
 const authStore = useAuthStore()
+const localeStore = useLocaleStore()
 const themeStore = useThemeStore()
 const { t } = useI18n()
 const message = useMessage()
@@ -19,8 +22,19 @@ const themeOptions = computed(() => ([
   { label: t('pages.settings.themeDark'), value: 'dark' },
 ]))
 
+const localeOptions = computed(() => ([
+  { label: t('common.languageZh'), value: 'zh-CN' },
+  { label: t('common.languageEn'), value: 'en-US' },
+]))
+
 function handleThemeChange(mode: ThemeMode) {
   themeStore.setMode(mode)
+}
+
+function handleLocaleChange(locale: string) {
+  if (locale === 'zh-CN' || locale === 'en-US') {
+    localeStore.setLocale(locale as AppLocale)
+  }
 }
 
 async function loadReportStorageRoot() {
@@ -64,7 +78,7 @@ onMounted(loadReportStorageRoot)
     </section>
 
     <NCard title="报告存储目录" class="app-card">
-      <NAlert type="info" :bordered="false">此处仅显示部署配置的报告存储根目录，不能在网页修改。报告由会话中的 GAIOP AI 自动生成；查看、筛选、预览、下载与删除请在“报告文件管理”页面进行。</NAlert>
+      <NAlert type="info" :bordered="false">此处仅显示部署配置的报告存储根目录，不能在网页修改。报告由会话中的 GAIOP AI 自动生成；查看、筛选、下载与删除请在“报告文件管理”页面进行。</NAlert>
       <NForm v-if="authStore.isAdmin" label-placement="left" label-width="150" style="max-width: 760px; margin-top: 16px;">
         <NFormItem label="报告存储根目录">
           <NInput
@@ -80,6 +94,13 @@ onMounted(loadReportStorageRoot)
 
     <NCard title="界面偏好" class="app-card">
       <NForm label-placement="left" label-width="120" style="max-width: 500px;">
+        <NFormItem :label="t('pages.settings.interfaceLanguage')">
+          <NSelect
+            :value="localeStore.locale"
+            :options="localeOptions"
+            @update:value="handleLocaleChange"
+          />
+        </NFormItem>
         <NFormItem :label="t('pages.settings.themeMode')">
           <NSelect
             :value="themeStore.mode"

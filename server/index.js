@@ -20,13 +20,13 @@ import { createAuditRouter } from './routes/audit.js'
 import { createAuthRouter } from './routes/auth.js'
 import { createUsersRouter } from './routes/users.js'
 import { createDataSourcesRouter } from './routes/data-sources.js'
-import { createHostNetworkRouter } from './routes/host-network.js'
 import { createSensitiveConfigRouter } from './routes/sensitive-config.js'
 import { createReportsRouter } from './routes/reports.js'
 import { createAlertsRouter } from './routes/alerts.js'
 import { createReportStorageRouter } from './routes/report-storage.js'
 import { createSessionSettingsRouter } from './routes/session-settings.js'
 import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
+import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -269,37 +269,41 @@ setInterval(cleanupOrphanedHermesCliSessions, 5 * 60 * 1000)
 let gatewayVersion = null
 let updateInfo = null
 
-gateway.on('connected', () => {
-  console.log('[Gateway] Connected to OpenClaw')
-})
+function bindGAIOPServiceEvents(targetGateway) {
+  targetGateway.on('connected', () => {
+    console.log('[Gateway] Connected to GAIOP service')
+  })
 
-gateway.on('version', (info) => {
-  debug('Gateway version info:', info)
-  updateInfo = info
-  gatewayVersion = info.currentVersion
-  broadcastSSE({ type: 'gatewayState', state: 'connected', version: info.currentVersion, updateAvailable: info })
-})
+  targetGateway.on('version', (info) => {
+    debug('Gateway version info:', info)
+    updateInfo = info
+    gatewayVersion = info.currentVersion
+    broadcastSSE({ type: 'gatewayState', state: 'connected', version: info.currentVersion, updateAvailable: info })
+  })
 
-gateway.on('disconnected', () => {
-  console.log('[Gateway] Disconnected from OpenClaw')
-  gatewayVersion = null
-  broadcastSSE({ type: 'gatewayState', state: 'disconnected' })
-})
+  targetGateway.on('disconnected', () => {
+    console.log('[Gateway] Disconnected from GAIOP service')
+    gatewayVersion = null
+    broadcastSSE({ type: 'gatewayState', state: 'disconnected' })
+  })
 
-gateway.on('error', (err) => {
-  console.error('[Gateway] Error:', err.message)
-  debug('Error stack:', err.stack)
-})
+  targetGateway.on('error', (err) => {
+    console.error('[Gateway] Error:', err.message)
+    debug('Error stack:', err.stack)
+  })
 
-gateway.on('event', (event, payload) => {
-  debug('Gateway event:', event, 'payload keys:', payload ? Object.keys(payload) : null)
-  broadcastSSE({ type: 'event', event, payload })
-})
+  targetGateway.on('event', (event, payload) => {
+    debug('Gateway event:', event, 'payload keys:', payload ? Object.keys(payload) : null)
+    broadcastSSE({ type: 'event', event, payload })
+  })
 
-gateway.on('stateChange', (state) => {
-  debug('Gateway state changed to:', state)
-  broadcastSSE({ type: 'gatewayState', state })
-})
+  targetGateway.on('stateChange', (state) => {
+    debug('Gateway state changed to:', state)
+    broadcastSSE({ type: 'gatewayState', state })
+  })
+}
+
+bindGAIOPServiceEvents(gateway)
 
 debug('Connecting to Gateway at:', envConfig.OPENCLAW_WS_URL)
 gateway.connect()
@@ -318,6 +322,29 @@ function broadcastSSE(data) {
 
 function isAuthEnabled() {
   return !!db.prepare('SELECT 1 FROM users LIMIT 1').get() || !!(envConfig.AUTH_USERNAME && envConfig.AUTH_PASSWORD)
+}
+
+function getGAIOPServiceConfig() {
+  return {
+    endpoint: envConfig.OPENCLAW_WS_URL,
+    accessTokenConfigured: Boolean(envConfig.OPENCLAW_AUTH_TOKEN),
+    state: gateway.isConnected ? 'connected' : 'disconnected',
+  }
+}
+
+function saveGAIOPServiceConfig({ endpoint, accessToken }) {
+  const existingContent = existsSync(envPath) ? readFileSync(envPath, 'utf-8') : ''
+  const existing = parseEnvFile(existingContent)
+  existing.OPENCLAW_WS_URL = endpoint
+  if (accessToken) existing.OPENCLAW_AUTH_TOKEN = accessToken
+  writeFileSync(envPath, stringifyEnvFile(existing), 'utf-8')
+
+  gateway.disconnect()
+  envConfig = loadEnvConfig()
+  gateway = new OpenClawGateway(envConfig.OPENCLAW_WS_URL, envConfig.OPENCLAW_AUTH_TOKEN, envConfig.OPENCLAW_AUTH_PASSWORD, envConfig.LOG_LEVEL)
+  bindGAIOPServiceEvents(gateway)
+  gateway.connect()
+  return getGAIOPServiceConfig()
 }
 
 function canReceiveSseData(user, data) {
@@ -483,7 +510,20 @@ app.use('/api/auth', createAuthRouter({
   getSessionSettings: () => readSessionSettings(db),
 }))
 app.use('/api/system-settings/report-storage', createReportStorageRouter({ adminMiddleware, recordAudit }))
-app.use('/api/system-settings/sessions', createSessionSettingsRouter({ db, authMiddleware, adminMiddleware, recordAudit, gateway }))
+app.use('/api/system-settings/sessions', createSessionSettingsRouter({
+  db,
+  authMiddleware,
+  adminMiddleware,
+  recordAudit,
+  gateway,
+  getGateway: () => gateway,
+}))
+app.use('/api/system-config/gaiop-service', createGAIOPServiceRouter({
+  adminMiddleware,
+  recordAudit,
+  getServiceConfig: getGAIOPServiceConfig,
+  saveServiceConfig: saveGAIOPServiceConfig,
+}))
 app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({ db, authMiddleware, operatorMiddleware, recordAudit }))
 app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
 
@@ -646,68 +686,6 @@ app.post('/api/data-sources/:id/test', adminMiddleware, dataSourceEncryptionMidd
   }
 })
 
-function parseStringList(value, fieldName, maxItems = 32) {
-  if (!Array.isArray(value) || value.length > maxItems || value.some(item => typeof item !== 'string' || item.trim().length === 0 || item.trim().length > 255)) {
-    throw new Error(`${fieldName}格式不正确`)
-  }
-  return value.map(item => item.trim())
-}
-
-function isIpv4(value) {
-  const parts = String(value || '').trim().split('.')
-  return parts.length === 4 && parts.every(part => /^\d+$/.test(part) && Number(part) >= 0 && Number(part) <= 255)
-}
-
-function publicHostNetworkConfig(row) {
-  return {
-    hostname: row?.hostname || '', domain: row?.domain || '', ipAddress: row?.ip_address || '',
-    subnetMask: row?.subnet_mask || '', gateway: row?.gateway || '',
-    dnsServers: row?.dns_servers ? JSON.parse(row.dns_servers) : [],
-    internalAddressRanges: row?.internal_address_ranges ? JSON.parse(row.internal_address_ranges) : [],
-    timezone: row?.timezone || 'Asia/Shanghai', ntpServers: row?.ntp_servers ? JSON.parse(row.ntp_servers) : [],
-    locale: row?.locale || 'zh-CN', updatedAt: row?.updated_at || null,
-  }
-}
-
-app.get('/api/host-network-config', authMiddleware, (_req, res) => {
-  const row = db.prepare('SELECT * FROM host_network_config WHERE id = 1').get()
-  res.json({ ok: true, config: publicHostNetworkConfig(row) })
-})
-
-app.put('/api/host-network-config', adminMiddleware, (req, res) => {
-  try {
-    const hostname = String(req.body?.hostname || '').trim()
-    const domain = String(req.body?.domain || '').trim()
-    const ipAddress = String(req.body?.ipAddress || '').trim()
-    const subnetMask = String(req.body?.subnetMask || '').trim()
-    const gateway = String(req.body?.gateway || '').trim()
-    const timezone = String(req.body?.timezone || '').trim()
-    const locale = String(req.body?.locale || '').trim()
-    if (!hostname || hostname.length > 128 || domain.length > 255 || !isIpv4(ipAddress) || !isIpv4(subnetMask) || !isIpv4(gateway)) {
-      return res.status(400).json({ ok: false, error: '主机名、IP 地址、子网掩码或网关格式不正确' })
-    }
-    if (!['Asia/Shanghai', 'UTC'].includes(timezone) || !['zh-CN', 'en-US'].includes(locale)) {
-      return res.status(400).json({ ok: false, error: '时区或语言设置不受支持' })
-    }
-    const dnsServers = parseStringList(req.body?.dnsServers || [], '域名服务器')
-    const internalAddressRanges = parseStringList(req.body?.internalAddressRanges || [], '内部地址列表', 128)
-    const ntpServers = parseStringList(req.body?.ntpServers || [], 'NTP 服务器')
-    const updatedAt = Date.now()
-    db.prepare(`INSERT INTO host_network_config (id, hostname, domain, ip_address, subnet_mask, gateway, dns_servers, internal_address_ranges, timezone, ntp_servers, locale, updated_at)
-      VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, domain = excluded.domain, ip_address = excluded.ip_address,
-        subnet_mask = excluded.subnet_mask, gateway = excluded.gateway, dns_servers = excluded.dns_servers,
-        internal_address_ranges = excluded.internal_address_ranges, timezone = excluded.timezone,
-        ntp_servers = excluded.ntp_servers, locale = excluded.locale, updated_at = excluded.updated_at`)
-      .run(hostname, domain, ipAddress, subnetMask, gateway, JSON.stringify(dnsServers), JSON.stringify(internalAddressRanges), timezone, JSON.stringify(ntpServers), locale, updatedAt)
-    const row = db.prepare('SELECT * FROM host_network_config WHERE id = 1').get()
-    recordAudit(req.user, '保存主机与网络配置', hostname, `IP：${ipAddress}`)
-    res.json({ ok: true, config: publicHostNetworkConfig(row) })
-  } catch (error) {
-    res.status(400).json({ ok: false, error: error.message || '保存主机与网络配置失败' })
-  }
-})
-
 }
 
 // 阶段 B：稳定管理接口从服务入口拆出。访问地址保持不变，避免影响已完成的前端页面。
@@ -741,7 +719,6 @@ app.use('/api/data-sources', createDataSourcesRouter({
   getDataSourceRuntimeStatus,
   writeActiveDataSourceRuntime,
 }))
-app.use('/api/host-network-config', createHostNetworkRouter({ db, authMiddleware, adminMiddleware, recordAudit }))
 app.use('/api/system-config/environment', createSensitiveConfigRouter({
   db,
   adminMiddleware,

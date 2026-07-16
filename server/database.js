@@ -107,21 +107,6 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_data_sources_updated_at ON data_sources(updated_at DESC);
 
-  CREATE TABLE IF NOT EXISTS host_network_config (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    hostname TEXT NOT NULL DEFAULT '',
-    domain TEXT DEFAULT '',
-    ip_address TEXT NOT NULL DEFAULT '',
-    subnet_mask TEXT NOT NULL DEFAULT '',
-    gateway TEXT NOT NULL DEFAULT '',
-    dns_servers TEXT NOT NULL DEFAULT '[]',
-    internal_address_ranges TEXT NOT NULL DEFAULT '[]',
-    timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
-    ntp_servers TEXT NOT NULL DEFAULT '[]',
-    locale TEXT NOT NULL DEFAULT 'zh-CN',
-    updated_at INTEGER NOT NULL
-  );
-
   CREATE TABLE IF NOT EXISTS system_sensitive_configs (
     config_key TEXT PRIMARY KEY,
     category TEXT NOT NULL CHECK (category IN ('runtime', 'integration', 'security', 'certificate')),

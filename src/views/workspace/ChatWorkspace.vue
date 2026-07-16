@@ -35,6 +35,16 @@ const creatingSession = ref(false)
 const userMenuOpen = ref(false)
 let unsubscribeState: (() => void) | null = null
 
+const connectionText = computed(() => {
+  if (wsStore.state === ConnectionState.FAILED) return 'GAIOP 智能运维服务暂不可用'
+  if (wsStore.state === ConnectionState.RECONNECTING) return '正在重新连接 GAIOP 智能运维服务'
+  return '正在连接 GAIOP 智能运维服务'
+})
+
+const canRetryConnection = computed(() =>
+  wsStore.state === ConnectionState.FAILED || wsStore.state === ConnectionState.DISCONNECTED
+)
+
 function readAlertAnalysisDraft() {
   const value = route.query.alertAnalysis
   return (typeof value === 'string' ? value : Array.isArray(value) ? value[0] || '' : '').trim()
@@ -118,6 +128,10 @@ async function logout() {
 
 function refreshHistory() {
   void sessionStore.fetchSessions()
+}
+
+function retryConnection() {
+  wsStore.connect()
 }
 
 watch(
@@ -251,7 +265,8 @@ onUnmounted(() => {
       </div>
       <div v-else class="workspace-connecting">
         <NSpin size="medium" />
-        <p>正在连接 GAIOP 智能运维服务</p>
+        <p>{{ connectionText }}</p>
+        <NButton v-if="canRetryConnection" type="primary" secondary @click="retryConnection">重新连接</NButton>
       </div>
     </section>
   </main>

@@ -3,15 +3,16 @@ import { sendError, sendOk } from '../lib/api-response.js'
 import { readSessionSettings, validateSessionSettings } from '../lib/session-settings.js'
 import { applyGatewaySessionSettings, readGatewaySessionState } from '../lib/gateway-session-settings.js'
 
-export function createSessionSettingsRouter({ db, authMiddleware, adminMiddleware, recordAudit, gateway }) {
+export function createSessionSettingsRouter({ db, authMiddleware, adminMiddleware, recordAudit, gateway, getGateway }) {
   const router = Router()
+  const currentGateway = () => typeof getGateway === 'function' ? getGateway() : gateway
 
   router.get('/', authMiddleware, async (_req, res) => {
     const settings = readSessionSettings(db)
     sendOk(res, {
       settings,
       historyCleanupStatus: 'planned',
-      runtime: await readGatewaySessionState(gateway, settings),
+      runtime: await readGatewaySessionState(currentGateway(), settings),
     })
   })
 
@@ -22,7 +23,7 @@ export function createSessionSettingsRouter({ db, authMiddleware, adminMiddlewar
     const settings = validated.value
     let gatewaySync
     try {
-      gatewaySync = await applyGatewaySessionSettings(gateway, settings)
+      gatewaySync = await applyGatewaySessionSettings(currentGateway(), settings)
     } catch (error) {
       return sendError(res, {
         status: error?.code === 'GATEWAY_UNAVAILABLE' ? 503 : 502,
@@ -60,7 +61,7 @@ export function createSessionSettingsRouter({ db, authMiddleware, adminMiddlewar
     sendOk(res, {
       settings: savedSettings,
       historyCleanupStatus: 'planned',
-      runtime: { ...(await readGatewaySessionState(gateway, savedSettings)), patchMode: gatewaySync.mode },
+      runtime: { ...(await readGatewaySessionState(currentGateway(), savedSettings)), patchMode: gatewaySync.mode },
     })
   })
 
