@@ -3,7 +3,7 @@
 | 属性 | 内容 |
 |---|---|
 | 创建日期 | 2026-07-16 |
-| 状态 | 契约准备完成，等待后端负责人确认；尚未进入真实 Gateway 或服务器部署联调 |
+| 状态 | 告警接收器基础实现、237 兼容健康验证和 Admin 正式查询替换已完成；NAPM 发送端与浏览器端到端联调待完成 |
 | Admin 基线 | `dev-yangshuo` 的当前工作树；浏览器仅调用 Admin BFF |
 | GAIOP 基线 | `GAIOP-latest`，`8fe0cbe`（`origin/main`） |
 | 不在范围 | 服务器网络、域名、DNS、网关、NTP、时区、真实环境凭据和部署操作 |
@@ -23,7 +23,7 @@
 | 领域 | 已确认实现 | 尚未冻结或尚未完成 |
 |---|---|---|
 | 报告 | GAIOP 报告 Skill 会生成报告与同名审计 JSON；Admin 可安全扫描、下载、管理员删除并按来源字段隔离 | 当前 GAIOP 审计生成链未写入 `sourceUserId`、`sourceSessionId`、`dataSourceId`；当前只写根目录，不支持用户/类型分层 |
-| 告警 | GAIOP 已有 NAPM Alert Query 与 Syslog watcher；Admin 临时通过只读 SSH 读取并解析 Syslog | watcher 当前主要用于企业微信推送，不是 GAIOP 的持久化告警服务；Admin 临时 SSH 读取不能作为正式运行时 |
+| 告警 | GAIOP 已有 NAPM Alert Query 与 Syslog watcher；新增独立接收器可规范化持久化事件并提供健康/配置/分页接口；Admin BFF 已适配正式接口且浏览器仍只调用 BFF | 237 已完成兼容接收器健康、持久化分页和 BFF 隧道适配；NAPM 新告警、浏览器端到端、保留策略和多用户审计待完成 |
 | 会话 | Admin BFF 已有会话归属、Gateway `config.get/config.patch` 适配和基础测试 | Web 路由字段、真实 Gateway 版本兼容和生效回显尚未验收 |
 | 数据源 | Admin 已实现加密存储、单一激活源和受控运行时桥接 | 该桥接消费能力目前在原 GAIOP 本地未提交工作树中，不能假定已进入 `8fe0cbe` 最新基线；需后端确认合并方式 |
 
@@ -127,7 +127,7 @@ Admin BFF 已准备在 `chat.send.metadata.gaiopReportProvenance` 中附加用�
 NAPM Syslog → GAIOP 接收器 → 解析/去重/持久化 → Admin BFF → 告警通知 → 对话分析
 ```
 
-当前 `GAIOP-Admin → 只读 SSH → OpenClaw Syslog` 仅是页面过渡数据源：不写入远端、不修改 NAPM/OpenClaw，也不替代正式接收器。正式接收器可复用 watcher 的解析、GBK 兼容、分钟窗口和告警详情补充逻辑，但不得绑定企业微信推送或 OpenClaw 固定目录。
+历史 `GAIOP-Admin → 只读 SSH → OpenClaw Syslog` 是已退役的页面过渡数据源；当前 BFF 只调用正式接收器接口，接收器不可用时返回明确错误而不回退。正式接收器可复用 watcher 的解析、GBK 兼容、分钟窗口和告警详情补充逻辑，但不得绑定企业微信推送或 OpenClaw 固定目录。
 
 ### 5.2 告警记录 v1（待后端确认）
 
@@ -220,7 +220,7 @@ Admin 保存多条数据源、仅允许一条激活源，并只向页面回显�
 后端负责人确认本文件后，实施顺序为：
 
 1. 报告审计 v1 与来源验签（最小可验证闭环）。
-2. 告警接收/持久化与 Admin BFF 适配（替换只读 SSH 过渡源）。
+2. 告警接收/持久化与 Admin BFF 适配已完成，后续进行 NAPM 发送端和浏览器端到端验收。
 3. Gateway 会话策略真实版本适配。
 4. 数据源桥接从本地未提交改动整理为后端正式能力。
 5. 所有模块在本地完成契约测试后，才进入 237 并行部署。

@@ -27,6 +27,7 @@ import { createReportStorageRouter } from './routes/report-storage.js'
 import { createSessionSettingsRouter } from './routes/session-settings.js'
 import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
 import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
+import { createAlertIngestionRouter } from './routes/alert-ingestion.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -524,6 +525,7 @@ app.use('/api/system-config/gaiop-service', createGAIOPServiceRouter({
   getServiceConfig: getGAIOPServiceConfig,
   saveServiceConfig: saveGAIOPServiceConfig,
 }))
+app.use('/api/system-config/alert-ingestion', createAlertIngestionRouter({ db, adminMiddleware, recordAudit }))
 app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({ db, authMiddleware, operatorMiddleware, recordAudit }))
 app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
 

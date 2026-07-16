@@ -78,8 +78,13 @@ export function filterAlerts(alerts, { severity, category, keyword, startAt, end
   const normalizedSeverity = String(severity || '').trim()
   const normalizedCategory = String(category || '').trim()
   const normalizedKeyword = String(keyword || '').trim().toLocaleLowerCase()
-  const start = Number.isFinite(Number(startAt)) ? Number(startAt) : null
-  const end = Number.isFinite(Number(endAt)) ? Number(endAt) : null
+  const parseOptionalTimestamp = (value) => {
+    if (value === null || value === undefined || value === '') return null
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  const start = parseOptionalTimestamp(startAt)
+  const end = parseOptionalTimestamp(endAt)
   return alerts.filter((alert) => {
     const occurredAt = Date.parse(alert.occurredAt)
     if (start !== null && (!Number.isFinite(occurredAt) || occurredAt < start)) return false

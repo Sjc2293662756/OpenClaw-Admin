@@ -144,8 +144,8 @@ export const routes: RouteRecordRaw[] = [
           component: () => import('@/views/settings/SystemConfigurationPage.vue'),
           meta: { title: '系统配置', icon: 'SettingsOutline', gateway: 'openclaw' },
         },
-        {
-          path: 'system-configuration/gaiop-service',
+      {
+        path: 'system-configuration/gaiop-service',
           name: 'GAIOPServiceConfiguration',
           component: () => import('@/views/settings/GAIOPServiceConfigurationPage.vue'),
           meta: { hidden: true, gateway: 'openclaw' },
@@ -154,6 +154,12 @@ export const routes: RouteRecordRaw[] = [
         path: 'system-configuration/data-sources',
         name: 'DataSourceManagement',
         component: () => import('@/views/settings/DataSourceManagementPage.vue'),
+        meta: { hidden: true, gateway: 'openclaw' },
+      },
+      {
+        path: 'system-configuration/alert-ingestion',
+        name: 'AlertIngestionConfiguration',
+        component: () => import('@/views/settings/AlertIngestionConfigurationPage.vue'),
         meta: { hidden: true, gateway: 'openclaw' },
       },
       {

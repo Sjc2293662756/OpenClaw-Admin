@@ -9,6 +9,8 @@ function readPositiveInteger(value, fallback) {
 
 const localPort = readPositiveInteger(process.env.GAIOP_GATEWAY_LOCAL_PORT, 8080)
 const remotePort = readPositiveInteger(process.env.GAIOP_GATEWAY_REMOTE_PORT, 18789)
+const alertReceiverLocalPort = readPositiveInteger(process.env.GAIOP_ALERT_RECEIVER_LOCAL_PORT, 0)
+const alertReceiverRemotePort = readPositiveInteger(process.env.GAIOP_ALERT_RECEIVER_REMOTE_PORT, 19090)
 const sshHost = process.env.GAIOP_GATEWAY_SSH_HOST
 const sshUsername = process.env.GAIOP_GATEWAY_SSH_USERNAME
 const sshPassword = process.env.GAIOP_GATEWAY_SSH_PASSWORD
@@ -18,7 +20,11 @@ if (!sshHost || !sshUsername || !sshPassword) {
   process.exit(1)
 }
 
-let server
+const tunnels = [
+  { localPort, remotePort, label: 'Gateway' },
+  ...(alertReceiverLocalPort ? [{ localPort: alertReceiverLocalPort, remotePort: alertReceiverRemotePort, label: 'Alert receiver' }] : []),
+]
+const servers = new Map()
 let closing = false
 let connection = null
 let connectionReady = false
@@ -30,15 +36,16 @@ function closeTunnel(exitCode = 0) {
   if (closing) return
   closing = true
   if (reconnectTimer) clearTimeout(reconnectTimer)
-  server?.close()
+  for (const server of servers.values()) server.close()
+  servers.clear()
   connection?.end()
   process.exit(exitCode)
 }
 
-function ensureLocalServer() {
-  if (server) return
-
-  server = net.createServer((socket) => {
+function ensureLocalServers() {
+  for (const tunnel of tunnels) {
+    if (servers.has(tunnel.localPort)) continue
+    const server = net.createServer((socket) => {
     const activeConnection = connection
     if (!connectionReady || !activeConnection) {
       socket.destroy(new Error('Gateway SSH connection is temporarily unavailable.'))
@@ -49,7 +56,7 @@ function ensureLocalServer() {
       socket.remoteAddress || '127.0.0.1',
       socket.remotePort || 0,
       '127.0.0.1',
-      remotePort,
+        tunnel.remotePort,
       (error, stream) => {
         if (error) {
           socket.destroy(error)
@@ -60,14 +67,16 @@ function ensureLocalServer() {
         stream.on('error', () => socket.destroy())
       },
     )
-  })
+    })
 
-  server.on('error', (error) => {
-    console.error(`Gateway SSH tunnel failed: ${error.message}`)
-    closeTunnel(1)
-  })
+    server.on('error', (error) => {
+      console.error(`${tunnel.label} SSH tunnel failed: ${error.message}`)
+      closeTunnel(1)
+    })
 
-  server.listen(localPort, '127.0.0.1')
+    server.listen(tunnel.localPort, '127.0.0.1')
+    servers.set(tunnel.localPort, server)
+  }
 }
 
 function scheduleReconnect() {
@@ -95,7 +104,7 @@ function connectSsh() {
     }
     connectionReady = true
     reconnectAttempts = 0
-    ensureLocalServer()
+    ensureLocalServers()
   })
 
   nextConnection.on('error', (error) => {

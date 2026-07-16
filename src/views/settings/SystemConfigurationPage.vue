@@ -26,9 +26,9 @@ const modules = [
     tone: 'blue',
   },
   {
-    name: 'AlertForwardingConfiguration',
-    title: '告警接入与转发配置',
-    description: '预留 Syslog 告警接入、解析和转发规则。',
+    name: 'AlertIngestionConfiguration',
+    title: '告警接入配置',
+    description: '查看和维护 Syslog 告警接收状态。',
     icon: AlertCircleOutline,
     tone: 'red',
   },

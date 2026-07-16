@@ -158,6 +158,12 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_report_files_created_at ON report_files(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_report_files_session_id ON report_files(source_session_id);
+
+  CREATE TABLE IF NOT EXISTS alert_ingestion_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+    updated_at INTEGER NOT NULL
+  );
 `)
 
 try {

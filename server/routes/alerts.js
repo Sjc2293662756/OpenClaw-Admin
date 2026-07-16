@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { createAlertExportWorkbook, normalizeAlertExportRows } from '../lib/alert-export.js'
 import { ALERT_CATEGORY_LABELS, filterAlerts } from '../lib/syslog-alerts.js'
-import { readSyslogAlerts } from '../lib/syslog-alert-source.js'
+import { readGAIOPAlerts } from '../lib/gaiop-alert-source.js'
 
 function readFilter(value, maxLength = 120) {
   return String(value || '').trim().slice(0, maxLength)
@@ -18,7 +18,7 @@ function readTimestamp(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-export function createAlertsRouter({ authMiddleware, recordAudit }) {
+export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSource = readGAIOPAlerts }) {
   const router = Router()
   router.post('/export', authMiddleware, (req, res) => {
     const rows = normalizeAlertExportRows(req.body?.rows)
@@ -48,16 +48,14 @@ export function createAlertsRouter({ authMiddleware, recordAudit }) {
       const page = readBoundedInteger(req.query.page, 1, 1, 10_000)
       const pageSize = readBoundedInteger(req.query.pageSize, 10, 10, 100)
       const maxResults = readBoundedInteger(req.query.maxResults, 200, pageSize, 3000)
-      // TOP 是本次读取与返回的共同上限：TOP 200 仅读取最近 200 行。
-      // 缓存由数据源层复用，避免翻页或普通筛选重复建立 SSH 连接。
-      const sourceLineCount = Math.min(50_000, maxResults)
-      const source = await readSyslogAlerts(process.env, sourceLineCount)
+      // 正式接收器以 newest-first 存储，BFF 统一映射后维持既有页面排序和 TOP 语义。
+      const source = await readAlertSource(process.env, maxResults)
       const filtered = filterAlerts(source.alerts, filters)
       const capped = filtered.slice(0, maxResults)
       const startIndex = (page - 1) * pageSize
       const alerts = capped.slice(startIndex, startIndex + pageSize)
       const hasMore = startIndex + pageSize < capped.length
-      recordAudit(req.user, '查看 Syslog 告警', '告警通知', `第 ${page} 页，每页 ${pageSize} 条，返回 ${alerts.length} 条`)
+      recordAudit(req.user, '查看 GAIOP 告警', '告警通知', `第 ${page} 页，每页 ${pageSize} 条，返回 ${alerts.length} 条；来源：正式接收器`)
       sendOk(res, {
         alerts,
         categoryOptions: Object.entries(ALERT_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
@@ -65,7 +63,7 @@ export function createAlertsRouter({ authMiddleware, recordAudit }) {
         pagination: { page, pageSize, maxResults, availableCount: capped.length, hasMore, limitReached: filtered.length > capped.length },
       })
     } catch {
-      sendError(res, { status: 503, code: 'ALERT_SOURCE_UNAVAILABLE', message: 'Syslog 告警数据源暂不可用，请联系管理员检查只读 SSH 配置和远端日志权限' })
+      sendError(res, { status: 503, code: 'ALERT_SOURCE_UNAVAILABLE', message: 'GAIOP 告警接收器暂不可用，请联系管理员检查接收器服务状态' })
     }
   })
   return router
