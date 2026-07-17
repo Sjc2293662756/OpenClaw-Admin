@@ -28,6 +28,7 @@ import { createSessionSettingsRouter } from './routes/session-settings.js'
 import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
 import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
 import { createAlertIngestionRouter } from './routes/alert-ingestion.js'
+import { createChannelsRouter } from './routes/channels.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -526,6 +527,13 @@ app.use('/api/system-config/gaiop-service', createGAIOPServiceRouter({
   saveServiceConfig: saveGAIOPServiceConfig,
 }))
 app.use('/api/system-config/alert-ingestion', createAlertIngestionRouter({ db, adminMiddleware, recordAudit }))
+app.use('/api/channels', createChannelsRouter({
+  authMiddleware,
+  adminMiddleware,
+  recordAudit,
+  gateway,
+  getGateway: () => gateway,
+}))
 app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({ db, authMiddleware, operatorMiddleware, recordAudit }))
 app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
 

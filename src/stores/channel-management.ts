@@ -10,6 +10,7 @@ import type {
 } from '@/api/types'
 import { ConnectionState } from '@/api/types'
 import { useWebSocketStore } from './websocket'
+import { useAuthStore } from './auth'
 import {
   buildChannelPatches,
   cloneChannelConfigs,
@@ -18,6 +19,7 @@ import {
   ensureAccountConfig,
   ensureChannelConfig,
   removeAccountConfig,
+  resolveChannelTemplate,
 } from '@/utils/channel-config'
 import { normalizeSecretInput } from '@/utils/secret-mask'
 import { byLocale, getActiveLocale } from '@/i18n/text'
@@ -31,6 +33,18 @@ type SecretScope = {
 type PluginInstallHints = {
   channelKey?: string
   pluginIds?: string[]
+}
+
+export type FeishuOnboardingSession = {
+  id: string
+  status: 'starting' | 'waiting_for_scan' | 'configuring' | 'configured' | 'failed' | 'expired' | 'cancelled'
+  appName: string
+  dmPolicy: 'pairing' | 'allowlist' | 'open' | 'disabled'
+  verificationUrl?: string
+  qrDataUrl?: string
+  expiresAt?: number
+  completedAt?: number
+  errorCode?: string
 }
 
 const PLUGIN_LIST_METHODS = ['plugins.list', 'plugin.list', 'plugins.status', 'plugin.status']
@@ -84,6 +98,7 @@ function sleep(ms: number): Promise<void> {
 
 export const useChannelManagementStore = defineStore('channel-management', () => {
   const wsStore = useWebSocketStore()
+  const authStore = useAuthStore()
 
   const loading = ref(false)
   const saving = ref(false)
@@ -94,10 +109,12 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
   const channelsDraft = ref<Record<string, ChannelConfig>>({})
   const plugins = ref<PluginPackage[]>([])
   const pluginInstalledMap = ref<Record<string, boolean>>({})
+  const hasPluginInventory = ref(false)
   const pluginRpcSupported = ref(true)
   const pluginLastError = ref<string | null>(null)
   const secretUpdates = ref<Record<string, string>>({})
   const lastError = ref<string | null>(null)
+  const feishuOnboarding = ref<FeishuOnboardingSession | null>(null)
 
   function normalizePluginName(name: string): string {
     return name.trim().toLowerCase()
@@ -232,7 +249,95 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     channelsBaseline.value = channels
     channelsDraft.value = cloneChannelConfigs(channels)
     secretUpdates.value = {}
+    const pluginConfig = asRecord(config.plugins)
+    hasPluginInventory.value = Object.keys(asRecord(pluginConfig.entries)).length > 0 || asStringArray(pluginConfig.allow).length > 0
     syncPluginInstalledMap()
+  }
+
+  async function requestChannelConfig(): Promise<OpenClawConfig> {
+    const response = await fetch('/api/channels/config', {
+      headers: { Authorization: `Bearer ${authStore.getToken() || ''}` },
+    })
+    const result = await response.json().catch(() => ({})) as {
+      ok?: boolean
+      config?: OpenClawConfig
+      error?: string
+    }
+    if (!response.ok || !result.ok || !result.config) {
+      throw new Error(result.error || byLocale('频道配置暂时无法读取', 'Channel configuration is unavailable', getActiveLocale()))
+    }
+    return result.config
+  }
+
+  async function persistChannelPatches(patches: ConfigPatch[]): Promise<void> {
+    const response = await fetch('/api/channels/config', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authStore.getToken() || ''}`,
+      },
+      body: JSON.stringify({ patches }),
+    })
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string }
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || byLocale('频道配置保存失败', 'Failed to save channel configuration', getActiveLocale()))
+    }
+  }
+
+  async function startFeishuOnboarding(input: {
+    appName?: string
+  }): Promise<FeishuOnboardingSession> {
+    const response = await fetch('/api/channels/feishu/onboarding', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authStore.getToken() || ''}`,
+      },
+      body: JSON.stringify(input),
+    })
+    const result = await response.json().catch(() => ({})) as {
+      ok?: boolean
+      session?: FeishuOnboardingSession
+      error?: string
+    }
+    if (!response.ok || !result.ok || !result.session) {
+      throw new Error(result.error || byLocale('飞书扫码开通暂时无法启动', 'Feishu onboarding could not be started', getActiveLocale()))
+    }
+    feishuOnboarding.value = result.session
+    return result.session
+  }
+
+  async function refreshFeishuOnboarding(): Promise<FeishuOnboardingSession | null> {
+    const sessionId = feishuOnboarding.value?.id
+    if (!sessionId) return null
+    const response = await fetch(`/api/channels/feishu/onboarding/${encodeURIComponent(sessionId)}`, {
+      headers: { Authorization: `Bearer ${authStore.getToken() || ''}` },
+    })
+    const result = await response.json().catch(() => ({})) as {
+      ok?: boolean
+      session?: FeishuOnboardingSession
+      error?: string
+    }
+    if (!response.ok || !result.ok || !result.session) {
+      if (response.status === 404) feishuOnboarding.value = null
+      throw new Error(result.error || byLocale('飞书扫码开通状态暂时无法读取', 'Feishu onboarding status is unavailable', getActiveLocale()))
+    }
+    feishuOnboarding.value = result.session
+    return result.session
+  }
+
+  async function cancelFeishuOnboarding(): Promise<void> {
+    const sessionId = feishuOnboarding.value?.id
+    if (!sessionId) return
+    const response = await fetch(`/api/channels/feishu/onboarding/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${authStore.getToken() || ''}` },
+    })
+    const result = await response.json().catch(() => ({})) as { ok?: boolean; error?: string }
+    if (!response.ok || !result.ok) {
+      throw new Error(result.error || byLocale('飞书扫码开通无法取消', 'Feishu onboarding could not be cancelled', getActiveLocale()))
+    }
+    feishuOnboarding.value = null
   }
 
   async function refreshRuntimeChannels(): Promise<void> {
@@ -246,7 +351,7 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     try {
       const [runtime, config] = await Promise.all([
         wsStore.rpc.listChannels(),
-        wsStore.rpc.getConfig(),
+        requestChannelConfig(),
       ])
       runtimeChannels.value = runtime
       resetDraftFromConfig(config)
@@ -365,29 +470,15 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     )
   }
 
-  async function installChannelPlugin(pluginNames: string[]): Promise<string> {
-    if (pluginNames.length === 0) {
-      throw new Error(byLocale('未提供可安装插件', 'No installable plugin provided', getActiveLocale()))
-    }
-
-    let lastInstallError: unknown
-    for (const pluginName of pluginNames) {
-      try {
-        await wsStore.rpc.installPlugin(pluginName)
-        await refreshPlugins()
-        return pluginName
-      } catch (error) {
-        lastInstallError = error
-      }
-    }
-
-    throw lastInstallError instanceof Error
-      ? lastInstallError
-      : new Error(byLocale('远程安装失败', 'Remote install failed', getActiveLocale()))
-  }
-
   function buildPersistedChannelsDraft(): Record<string, ChannelConfig> {
     const draft = cloneChannelConfigs(channelsDraft.value)
+
+    // 飞书、钉钉、企业微信成员准入由各自应用后台的可见范围负责；Gateway 不重复维护名单或配对。
+    for (const [channelKey, channelConfig] of Object.entries(draft)) {
+      if (['feishu', 'dingtalk', 'wecom'].includes(resolveChannelTemplate(channelKey)?.key || '')) {
+        ;(channelConfig as Record<string, unknown>).dmPolicy = 'open'
+      }
+    }
 
     for (const [rawKey, value] of Object.entries(secretUpdates.value)) {
       const scope = splitSecretScopeKey(rawKey)
@@ -438,6 +529,49 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     }
   }
 
+  async function saveChannel(channelKey: string): Promise<ConfigPatch[]> {
+    saving.value = true
+    lastError.value = null
+    try {
+      const nextChannels = buildPersistedChannelsDraft()
+      const baseline = channelsBaseline.value[channelKey]
+      const next = nextChannels[channelKey]
+      const patches = buildChannelPatches(
+        baseline ? { [channelKey]: baseline } : {},
+        next ? { [channelKey]: next } : {},
+      )
+      if (patches.length === 0) {
+        return []
+      }
+
+      await persistChannelPatches(patches)
+      const latestConfig = await requestChannelConfig()
+      const latest = latestConfig.channels?.[channelKey]
+      configSnapshot.value = latestConfig
+      if (latest) {
+        const refreshed = cloneChannelConfigs({ [channelKey]: latest })[channelKey]
+        if (refreshed) {
+          channelsBaseline.value[channelKey] = refreshed
+          channelsDraft.value[channelKey] = cloneChannelConfigs({ [channelKey]: refreshed })[channelKey]!
+        }
+      } else {
+        delete channelsBaseline.value[channelKey]
+        delete channelsDraft.value[channelKey]
+      }
+      for (const key of Object.keys(secretUpdates.value)) {
+        if (key.startsWith(`${channelKey}|`)) delete secretUpdates.value[key]
+      }
+      syncPluginInstalledMap()
+      await refreshRuntimeChannels()
+      return patches
+    } catch (error) {
+      lastError.value = error instanceof Error ? error.message : String(error)
+      throw error
+    } finally {
+      saving.value = false
+    }
+  }
+
   async function saveChannels(options?: { apply?: boolean }): Promise<ConfigPatch[]> {
     saving.value = true
     lastError.value = null
@@ -448,8 +582,8 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
         return []
       }
 
-      await wsStore.rpc.patchConfig(patches)
-      const latestConfig = await wsStore.rpc.getConfig()
+      await persistChannelPatches(patches)
+      const latestConfig = await requestChannelConfig()
       resetDraftFromConfig(latestConfig)
       await refreshRuntimeChannels()
 
@@ -495,10 +629,12 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     channelsDraft,
     plugins,
     pluginInstalledMap,
+    hasPluginInventory,
     pluginRpcSupported,
     pluginLastError,
     secretUpdates,
     lastError,
+    feishuOnboarding,
     allChannelKeys,
     runtimeByChannel,
     refreshAll,
@@ -514,9 +650,12 @@ export const useChannelManagementStore = defineStore('channel-management', () =>
     setSecretUpdate,
     getSecretUpdate,
     hasSecretUpdate,
+    startFeishuOnboarding,
+    refreshFeishuOnboarding,
+    cancelFeishuOnboarding,
     refreshPlugins,
     isPluginInstalled,
-    installChannelPlugin,
+    saveChannel,
     saveChannels,
     applyConfigAndRefresh,
     authChannel,

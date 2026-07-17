@@ -17,6 +17,9 @@ const KNOWN_CHANNEL_KEYS = new Set([
   'groupAllowFrom',
   'groups',
   'appId',
+  'clientId',
+  'corpId',
+  'agentId',
   'markdownSupport',
   'accounts',
   'secretFields',
@@ -52,7 +55,7 @@ export const CHANNEL_TEMPLATES: ChannelTemplate[] = [
   },
   {
     key: 'dingtalk',
-    aliases: ['ding'],
+    aliases: ['ding', 'dingtalk-connector'],
     label: '钉钉',
     channelSecretFields: ['clientSecret'],
     accountSecretFields: ['clientSecret'],
@@ -64,7 +67,7 @@ export const CHANNEL_TEMPLATES: ChannelTemplate[] = [
     label: '企业微信',
     channelSecretFields: ['secret'],
     accountSecretFields: ['secret', 'token', 'encodingAesKey', 'corpSecret'],
-    accountFields: ['corpId', 'agentId'],
+    accountFields: ['botId', 'corpId', 'agentId'],
   },
   {
     key: 'wechat',

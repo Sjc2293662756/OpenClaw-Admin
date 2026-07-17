@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import {
   NAlert,
   NButton,
@@ -11,6 +11,7 @@ import {
   NIcon,
   NInput,
   NInputGroup,
+  NSelect,
   NSpace,
   NSpin,
   NSwitch,
@@ -19,14 +20,12 @@ import {
   useMessage,
 } from 'naive-ui'
 import {
-  AddOutline,
   PlayOutline,
   RefreshOutline,
   SaveOutline,
 } from '@vicons/ionicons5'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
-import { faQq } from '@fortawesome/free-brands-svg-icons'
 import { useI18n } from 'vue-i18n'
 import {
   faBuilding,
@@ -42,7 +41,8 @@ import { maskSecretValue } from '@/utils/secret-mask'
 import { usePermissions } from '@/composables/usePermissions'
 
 interface ChinaChannelMeta {
-  key: 'qqbot' | 'feishu' | 'dingtalk' | 'wecom'
+  key: 'feishu' | 'dingtalk' | 'wecom'
+  configKey: string
   icon: IconDefinition
   pluginPackages: string[]
   pluginIds: string[]
@@ -60,38 +60,42 @@ interface ChannelCard extends ChinaChannelMeta {
 
 const CHINA_CHANNELS: ChinaChannelMeta[] = [
   {
-    key: 'qqbot',
-    icon: faQq,
-    pluginPackages: ['@openclaw-china/qqbot'],
-    pluginIds: ['qqbot'],
-  },
-  {
     key: 'feishu',
+    configKey: 'feishu',
     icon: faPaperPlane,
-    pluginPackages: ['@openclaw-china/feishu-china', '@openclaw/feishu'],
-    pluginIds: ['feishu', 'feishu-china'],
+    pluginPackages: ['@larksuite/openclaw-lark'],
+    pluginIds: ['feishu', 'openclaw-lark', 'lark'],
   },
   {
     key: 'dingtalk',
+    configKey: 'dingtalk-connector',
     icon: faComments,
-    pluginPackages: ['@openclaw-china/dingtalk'],
-    pluginIds: ['dingtalk'],
+    pluginPackages: ['@dingtalk-real-ai/dingtalk-connector'],
+    pluginIds: ['dingtalk', 'dingtalk-connector'],
   },
   {
     key: 'wecom',
+    configKey: 'wecom',
     icon: faBuilding,
-    pluginPackages: ['@openclaw-china/wecom', '@openclaw-china/wecom-app'],
-    pluginIds: ['wecom', 'wecom-app'],
+    pluginPackages: ['@wecom/wecom-openclaw-plugin'],
+    pluginIds: ['wecom', 'wecom-app', 'wecom-openclaw-plugin'],
   },
 ]
 
 const channelStore = useChannelManagementStore()
-const { canEditConfiguration, readOnlyHint } = usePermissions()
+const { canManageSecurity, readOnlyHint } = usePermissions()
 const message = useMessage()
 const { t } = useI18n()
 
 const expandedChannelKeys = ref<string[]>([])
-const installLoading = ref<Record<string, boolean>>({})
+const feishuAppName = ref('GAIOP 智能助手')
+let feishuOnboardingTimer: ReturnType<typeof setInterval> | null = null
+const dmPolicyOptions = computed(() => [
+  { label: t('pages.channels.dmPolicies.pairing'), value: 'pairing' },
+  { label: t('pages.channels.dmPolicies.allowlist'), value: 'allowlist' },
+  { label: t('pages.channels.dmPolicies.open'), value: 'open' },
+  { label: t('pages.channels.dmPolicies.disabled'), value: 'disabled' },
+])
 
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
@@ -102,10 +106,6 @@ function readString(value: unknown): string {
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
   return ''
-}
-
-function readBoolean(value: unknown, fallback = false): boolean {
-  return typeof value === 'boolean' ? value : fallback
 }
 
 function shouldKeepStringValue(raw: string): string | undefined {
@@ -127,18 +127,18 @@ function pluginStatusLabel(card: { pluginStatusKnown: boolean; pluginInstalled: 
   return card.pluginInstalled ? t('pages.channels.pluginStatus.assumedInstalled') : t('pages.channels.pluginStatus.unknown')
 }
 
-function resolveManagedChannelKey(focusKey: ChinaChannelMeta['key']): string {
+function resolveManagedChannelKey(meta: ChinaChannelMeta): string {
   const draftKey = Object.keys(channelStore.channelsDraft).find(
-    (key) => resolveChannelTemplate(key)?.key === focusKey
+    (key) => resolveChannelTemplate(key)?.key === meta.key
   )
   if (draftKey) return draftKey
 
   const runtimeKey = Object.keys(channelStore.runtimeByChannel).find(
-    (key) => resolveChannelTemplate(key)?.key === focusKey
+    (key) => resolveChannelTemplate(key)?.key === meta.key
   )
   if (runtimeKey) return runtimeKey
 
-  return focusKey
+  return meta.configKey
 }
 
 function readChannelConfig(channelKey: string): Record<string, unknown> {
@@ -146,12 +146,12 @@ function readChannelConfig(channelKey: string): Record<string, unknown> {
 }
 
 const channelCards = computed(() => {
-  const installStatusKnown = channelStore.pluginRpcSupported || channelStore.runtimeChannels.length > 0
+  const installStatusKnown = channelStore.pluginRpcSupported || channelStore.hasPluginInventory || channelStore.runtimeChannels.length > 0
 
   return CHINA_CHANNELS.map((meta) => {
     const label = t(`pages.channels.channels.${meta.key}.label`)
     const description = t(`pages.channels.channels.${meta.key}.description`)
-    const channelKey = resolveManagedChannelKey(meta.key)
+    const channelKey = resolveManagedChannelKey(meta)
     const pluginInstalled = channelStore.isPluginInstalled(meta.pluginPackages, {
       channelKey,
       pluginIds: meta.pluginIds,
@@ -161,7 +161,7 @@ const channelCards = computed(() => {
     const template = resolveChannelTemplate(meta.key)
     const detectedSecretKeys = collectSecretFieldKeys(channelConfig, template?.channelSecretFields || [])
     const visibleSecretKeys =
-      meta.key === 'qqbot' || meta.key === 'dingtalk'
+      meta.key === 'dingtalk'
         ? ['clientSecret']
         : detectedSecretKeys
 
@@ -187,28 +187,35 @@ function updateChannelEnabled(channelKey: string, value: boolean): void {
   channelStore.setChannelField(channelKey, 'enabled', value)
 }
 
-function channelAppId(channelKey: string): string {
-  return readString(readChannelConfig(channelKey).appId)
+function channelDmPolicy(channelKey: string): string {
+  const value = channelTextField(channelKey, 'dmPolicy')
+  return ['pairing', 'allowlist', 'open', 'disabled'].includes(value) ? value : 'pairing'
 }
 
-function updateChannelAppId(channelKey: string, value: string): void {
-  channelStore.setChannelField(channelKey, 'appId', shouldKeepStringValue(value))
+function updateChannelDmPolicy(channelKey: string, value: string): void {
+  channelStore.setChannelField(channelKey, 'dmPolicy', value)
 }
 
-function channelClientId(channelKey: string): string {
-  return readString(readChannelConfig(channelKey).clientId)
+function channelAllowFrom(channelKey: string): string {
+  const value = readChannelConfig(channelKey).allowFrom
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string').join('\n')
+    : ''
 }
 
-function updateChannelClientId(channelKey: string, value: string): void {
-  channelStore.setChannelField(channelKey, 'clientId', shouldKeepStringValue(value))
+function updateChannelAllowFrom(channelKey: string, value: string): void {
+  const users = Array.from(new Set(
+    value.split(/[\n,]/).map((item) => item.trim()).filter(Boolean)
+  ))
+  channelStore.setChannelField(channelKey, 'allowFrom', users.length > 0 ? users : undefined)
 }
 
-function channelMarkdownSupport(channelKey: string): boolean {
-  return readBoolean(readChannelConfig(channelKey).markdownSupport, true)
+function channelTextField(channelKey: string, field: string): string {
+  return readString(readChannelConfig(channelKey)[field])
 }
 
-function updateChannelMarkdownSupport(channelKey: string, value: boolean): void {
-  channelStore.setChannelField(channelKey, 'markdownSupport', value)
+function updateChannelTextField(channelKey: string, field: string, value: string): void {
+  channelStore.setChannelField(channelKey, field, shouldKeepStringValue(value))
 }
 
 function channelSecretValue(channelKey: string, field: string): string {
@@ -232,37 +239,69 @@ function refreshExpandedPanels(): void {
   expandedChannelKeys.value = channelCards.value.map((card) => card.channelKey)
 }
 
-async function installChannel(meta: ChannelCard): Promise<void> {
-  const channelKey = meta.channelKey || resolveManagedChannelKey(meta.key)
-  installLoading.value[channelKey] = true
+function stopFeishuOnboardingPolling(): void {
+  if (feishuOnboardingTimer) clearInterval(feishuOnboardingTimer)
+  feishuOnboardingTimer = null
+}
+
+async function handleFeishuOnboardingUpdate(): Promise<void> {
   try {
-    let installedPluginName = ''
-    if (!channelStore.isPluginInstalled(meta.pluginPackages, { channelKey, pluginIds: meta.pluginIds })) {
-      installedPluginName = await channelStore.installChannelPlugin(meta.pluginPackages)
-    }
+    const session = await channelStore.refreshFeishuOnboarding()
+    if (!session || ['starting', 'waiting_for_scan', 'configuring'].includes(session.status)) return
+    stopFeishuOnboardingPolling()
 
-    channelStore.ensureDraftChannel(channelKey)
-    channelStore.setChannelField(channelKey, 'enabled', true)
-    if (meta.key === 'qqbot') {
-      channelStore.setChannelField(channelKey, 'markdownSupport', true)
+    if (session.status === 'configured') {
+      await channelStore.refreshAll()
+      refreshExpandedPanels()
+      message.success(t('pages.channels.feishuOnboarding.configured'))
+      return
     }
-    refreshExpandedPanels()
-
-    if (installedPluginName) {
-      message.success(t('pages.channels.installSuccessWithPlugin', { channel: meta.label || meta.key, plugin: installedPluginName }))
-    } else {
-      message.success(t('pages.channels.installSuccess', { channel: meta.label || meta.key }))
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : t('pages.channels.installFailed')
-    if (/unknown method/i.test(errorMessage) || /method not found/i.test(errorMessage)) {
-      message.error(t('pages.channels.remoteInstallUnsupported', { channel: meta.label || meta.key }))
-    } else {
-      message.error(t('pages.channels.remoteInstallFailed', { channel: meta.label || meta.key, error: errorMessage }))
-    }
-  } finally {
-    installLoading.value[channelKey] = false
+    if (session.status === 'expired') message.warning(t('pages.channels.feishuOnboarding.expired'))
+    else if (session.status === 'failed') message.error(t('pages.channels.feishuOnboarding.failed'))
+  } catch {
+    stopFeishuOnboardingPolling()
+    message.error(t('pages.channels.feishuOnboarding.statusFailed'))
   }
+}
+
+function startFeishuOnboardingPolling(): void {
+  stopFeishuOnboardingPolling()
+  feishuOnboardingTimer = setInterval(() => { void handleFeishuOnboardingUpdate() }, 2_000)
+}
+
+async function handleStartFeishuOnboarding(): Promise<void> {
+  try {
+    const session = await channelStore.startFeishuOnboarding({
+      appName: feishuAppName.value,
+    })
+    if (session.status === 'configured') {
+      await handleFeishuOnboardingUpdate()
+      return
+    }
+    startFeishuOnboardingPolling()
+  } catch {
+    message.error(t('pages.channels.feishuOnboarding.startFailed'))
+  }
+}
+
+async function handleCancelFeishuOnboarding(): Promise<void> {
+  try {
+    await channelStore.cancelFeishuOnboarding()
+    stopFeishuOnboardingPolling()
+    message.info(t('pages.channels.feishuOnboarding.cancelled'))
+  } catch {
+    message.error(t('pages.channels.feishuOnboarding.cancelFailed'))
+  }
+}
+
+function createChannelConfig(meta: ChannelCard): void {
+  const channelKey = meta.channelKey || resolveManagedChannelKey(meta)
+  channelStore.ensureDraftChannel(channelKey)
+  // 新建草稿默认停用，避免凭据尚未补齐时保存并应用后触发运行时错误。
+  channelStore.setChannelField(channelKey, 'enabled', false)
+  if (['feishu', 'dingtalk', 'wecom'].includes(meta.key)) channelStore.setChannelField(channelKey, 'dmPolicy', 'open')
+  refreshExpandedPanels()
+  message.success(t('pages.channels.configDraftCreated', { channel: meta.label || meta.key }))
 }
 
 async function handleRefresh(): Promise<void> {
@@ -287,8 +326,25 @@ async function handleSave(applyAfterSave = false): Promise<void> {
   }
 }
 
+async function handleSaveChannel(card: ChannelCard): Promise<void> {
+  try {
+    const patches = await channelStore.saveChannel(card.channelKey)
+    if (patches.length === 0) {
+      message.info(t('pages.channels.noChanges'))
+      return
+    }
+    message.success(t('pages.channels.channelSaved', { channel: card.label }))
+  } catch {
+    message.error(t('common.saveFailed'))
+  }
+}
+
 onMounted(() => {
   handleRefresh()
+})
+
+onUnmounted(() => {
+  stopFeishuOnboardingPolling()
 })
 </script>
 
@@ -303,23 +359,11 @@ onMounted(() => {
           </NButton>
           <NButton
             size="small"
-            type="primary"
-            class="toolbar-btn toolbar-btn--save"
-            :loading="channelStore.saving"
-            :disabled="channelStore.applying || !canEditConfiguration"
-            :title="!canEditConfiguration ? readOnlyHint : undefined"
-            @click="handleSave(false)"
-          >
-            <template #icon><NIcon :component="SaveOutline" /></template>
-            {{ t('common.save') }}
-          </NButton>
-          <NButton
-            size="small"
             type="warning"
             class="toolbar-btn toolbar-btn--apply"
             :loading="channelStore.saving || channelStore.applying"
-            :disabled="!canEditConfiguration"
-            :title="!canEditConfiguration ? readOnlyHint : undefined"
+            :disabled="!canManageSecurity"
+            :title="!canManageSecurity ? readOnlyHint : undefined"
             @click="handleSave(true)"
           >
             <template #icon><NIcon :component="PlayOutline" /></template>
@@ -369,53 +413,109 @@ onMounted(() => {
                   <span>{{ card.description }}</span>
                 </div>
 
-                <NCard
-                  v-if="!card.pluginInstalled || !card.configured"
-                  size="small"
-                  embedded
-                  :title="t('pages.channels.installCardTitle')"
+                <NAlert
+                  v-if="!card.pluginInstalled"
+                  type="warning"
+                  :bordered="false"
                 >
+                  {{
+                    card.pluginStatusKnown
+                      ? t('pages.channels.componentHint.missing', { channel: card.label })
+                      : t('pages.channels.componentHint.unknown', { channel: card.label })
+                  }}
+                </NAlert>
+
+                <NCard v-if="!card.configured" size="small" embedded :title="t('pages.channels.configurationCardTitle')">
                   <NSpace justify="space-between" align="center" class="channel-install-row">
-                    <NText depth="3">
-                      {{
-                        !card.pluginInstalled
-                          ? (
-                              card.pluginStatusKnown
-                                ? t('pages.channels.installHint.known', { channel: card.label })
-                                : t('pages.channels.installHint.unknown', { channel: card.label })
-                            )
-                          : t('pages.channels.installHint.installed', { channel: card.label })
-                      }}
-                    </NText>
+                    <NText depth="3">{{ t('pages.channels.configurationHint', { channel: card.label }) }}</NText>
                     <NButton
                       type="primary"
-                      :loading="installLoading[card.channelKey]"
-                      :disabled="!canEditConfiguration"
-                      :title="!canEditConfiguration ? readOnlyHint : undefined"
-                      @click="installChannel(card)"
+                      :disabled="!canManageSecurity"
+                      :title="!canManageSecurity ? readOnlyHint : undefined"
+                      @click="createChannelConfig(card)"
                     >
-                      <template #icon><NIcon :component="AddOutline" /></template>
-                      {{
-                        card.pluginInstalled
-                          ? t('pages.channels.installActions.generateConfig')
-                          : (card.pluginStatusKnown
-                              ? t('pages.channels.installActions.installAndConfig')
-                              : t('pages.channels.installActions.tryInstallAndConfig'))
-                      }}
+                      {{ t('pages.channels.startConfiguration') }}
                     </NButton>
                   </NSpace>
+                </NCard>
 
-                  <NAlert
-                    v-if="!card.pluginStatusKnown"
-                    type="warning"
-                    :bordered="false"
-                    style="margin-top: 10px;"
-                  >
-                    当前平台无法确认通道组件状态，请联系平台管理员在服务器完成通道组件安装后再刷新本页。
-                  </NAlert>
+                <NCard
+                  v-if="card.key === 'feishu' && !card.configured"
+                  size="small"
+                  embedded
+                  :title="t('pages.channels.feishuOnboarding.title')"
+                >
+                  <NSpace vertical :size="12">
+                    <NAlert type="info" :bordered="false">
+                      {{ t('pages.channels.feishuOnboarding.intro') }}
+                    </NAlert>
+                    <template v-if="!channelStore.feishuOnboarding">
+                      <NForm label-placement="left" label-width="140" class="channel-config-form">
+                        <NFormItem :label="t('pages.channels.feishuOnboarding.appName')">
+                          <NInput v-model:value="feishuAppName" :maxlength="64" />
+                        </NFormItem>
+                      </NForm>
+                      <NButton
+                        type="primary"
+                        :disabled="!canManageSecurity"
+                        :title="!canManageSecurity ? readOnlyHint : undefined"
+                        @click="handleStartFeishuOnboarding"
+                      >
+                        {{ t('pages.channels.feishuOnboarding.start') }}
+                      </NButton>
+                    </template>
+                    <template v-else>
+                      <NAlert
+                        :type="channelStore.feishuOnboarding.status === 'configured' ? 'success' : 'info'"
+                        :bordered="false"
+                      >
+                        {{ t(`pages.channels.feishuOnboarding.status.${channelStore.feishuOnboarding.status}`) }}
+                      </NAlert>
+                      <img
+                        v-if="channelStore.feishuOnboarding.qrDataUrl && ['waiting_for_scan', 'configuring'].includes(channelStore.feishuOnboarding.status)"
+                        class="feishu-onboarding-qr"
+                        :src="channelStore.feishuOnboarding.qrDataUrl"
+                        :alt="t('pages.channels.feishuOnboarding.qrAlt')"
+                      />
+                      <a
+                        v-if="channelStore.feishuOnboarding.verificationUrl && ['waiting_for_scan', 'configuring'].includes(channelStore.feishuOnboarding.status)"
+                        :href="channelStore.feishuOnboarding.verificationUrl"
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        {{ t('pages.channels.feishuOnboarding.openScanPage') }}
+                      </a>
+                      <NText
+                        v-if="channelStore.feishuOnboarding.expiresAt && ['waiting_for_scan', 'configuring'].includes(channelStore.feishuOnboarding.status)"
+                        depth="3"
+                      >
+                        {{ t('pages.channels.feishuOnboarding.expiresAt', { time: new Date(channelStore.feishuOnboarding.expiresAt).toLocaleTimeString() }) }}
+                      </NText>
+                      <NButton
+                        v-if="['starting', 'waiting_for_scan', 'configuring'].includes(channelStore.feishuOnboarding.status)"
+                        :disabled="!canManageSecurity"
+                        @click="handleCancelFeishuOnboarding"
+                      >
+                        {{ t('common.cancel') }}
+                      </NButton>
+                    </template>
+                  </NSpace>
                 </NCard>
 
                 <NCard v-if="card.configured" size="small" :title="t('pages.channels.basicConfigTitle')" embedded>
+                  <template #header-extra>
+                    <NButton
+                      size="small"
+                      type="primary"
+                      :loading="channelStore.saving"
+                      :disabled="channelStore.applying || !canManageSecurity"
+                      :title="!canManageSecurity ? readOnlyHint : undefined"
+                      @click="handleSaveChannel(card)"
+                    >
+                      <template #icon><NIcon :component="SaveOutline" /></template>
+                      {{ t('common.save') }}
+                    </NButton>
+                  </template>
                   <NForm label-placement="left" label-width="140" class="channel-config-form">
                     <NFormItem :label="t('pages.channels.labels.enabled')">
                       <NSwitch
@@ -423,27 +523,59 @@ onMounted(() => {
                         @update:value="(value) => updateChannelEnabled(card.channelKey, value)"
                       />
                     </NFormItem>
-                    <NFormItem v-if="card.key === 'qqbot'" :label="t('pages.channels.labels.appId')">
+                    <NFormItem v-if="!['feishu', 'dingtalk', 'wecom'].includes(card.key)" :label="t('pages.channels.labels.dmPolicy')">
+                      <NSelect
+                        :value="channelDmPolicy(card.channelKey)"
+                        :options="dmPolicyOptions"
+                        @update:value="(value) => updateChannelDmPolicy(card.channelKey, String(value))"
+                      />
+                    </NFormItem>
+                    <NFormItem
+                      v-if="!['feishu', 'dingtalk', 'wecom'].includes(card.key) && channelDmPolicy(card.channelKey) === 'allowlist'"
+                      :label="t('pages.channels.labels.allowFrom')"
+                    >
                       <NInput
-                        :value="channelAppId(card.channelKey)"
-                        :placeholder="t('pages.channels.placeholders.qqAppId')"
-                        @update:value="(value) => updateChannelAppId(card.channelKey, value)"
+                        type="textarea"
+                        :value="channelAllowFrom(card.channelKey)"
+                        :placeholder="t('pages.channels.placeholders.allowFrom')"
+                        :autosize="{ minRows: 2, maxRows: 5 }"
+                        @update:value="(value) => updateChannelAllowFrom(card.channelKey, value)"
+                      />
+                    </NFormItem>
+                    <NFormItem v-if="card.key === 'feishu'" :label="t('pages.channels.labels.appId')">
+                      <NInput
+                        :value="channelTextField(card.channelKey, 'appId')"
+                        :placeholder="t('pages.channels.placeholders.feishuAppId')"
+                        @update:value="(value) => updateChannelTextField(card.channelKey, 'appId', value)"
                       />
                     </NFormItem>
                     <NFormItem v-if="card.key === 'dingtalk'" :label="t('pages.channels.labels.clientId')">
                       <NInput
-                        :value="channelClientId(card.channelKey)"
+                        :value="channelTextField(card.channelKey, 'clientId')"
                         :placeholder="t('pages.channels.placeholders.dingtalkClientId')"
-                        @update:value="(value) => updateChannelClientId(card.channelKey, value)"
+                        @update:value="(value) => updateChannelTextField(card.channelKey, 'clientId', value)"
                       />
                     </NFormItem>
-                    <NFormItem v-if="card.key === 'qqbot'" :label="t('pages.channels.labels.markdownSupport')">
-                      <NSwitch
-                        :value="channelMarkdownSupport(card.channelKey)"
-                        @update:value="(value) => updateChannelMarkdownSupport(card.channelKey, value)"
+                    <NFormItem v-if="card.key === 'wecom'" :label="t('pages.channels.labels.botId')">
+                      <NInput
+                        :value="channelTextField(card.channelKey, 'botId')"
+                        :placeholder="t('pages.channels.placeholders.wecomBotId')"
+                        @update:value="(value) => updateChannelTextField(card.channelKey, 'botId', value)"
                       />
                     </NFormItem>
                   </NForm>
+                  <NAlert v-if="['feishu', 'dingtalk', 'wecom'].includes(card.key)" type="info" :bordered="false">
+                    {{ t('pages.channels.platformScopeHint', { channel: card.label }) }}
+                  </NAlert>
+                  <NAlert v-if="['feishu', 'dingtalk', 'wecom'].includes(card.key) && channelDmPolicy(card.channelKey) !== 'open'" type="warning" :bordered="false">
+                    {{ t('pages.channels.platformPolicyMigrationHint', { channel: card.label }) }}
+                  </NAlert>
+                  <NAlert v-else-if="!['feishu', 'dingtalk', 'wecom'].includes(card.key) && channelDmPolicy(card.channelKey) === 'pairing'" type="info" :bordered="false">
+                    {{ t('pages.channels.pairingHint') }}
+                  </NAlert>
+                  <NAlert v-else-if="!['feishu', 'dingtalk', 'wecom'].includes(card.key) && channelDmPolicy(card.channelKey) === 'open'" type="warning" :bordered="false">
+                    {{ t('pages.channels.openAccessHint') }}
+                  </NAlert>
                 </NCard>
 
                 <NCard v-if="card.configured" size="small" :title="t('pages.channels.credentialsTitle')" embedded>
@@ -839,6 +971,16 @@ onMounted(() => {
 :deep(.channel-config-form .n-form-item:last-child),
 :deep(.channel-secret-form .n-form-item:last-child) {
   margin-bottom: 0;
+}
+
+.feishu-onboarding-qr {
+  display: block;
+  width: 280px;
+  max-width: 100%;
+  border: 1px solid var(--channel-card-border);
+  border-radius: 8px;
+  background: white;
+  padding: 8px;
 }
 
 @media (max-width: 900px) {

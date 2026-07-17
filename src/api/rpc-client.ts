@@ -2291,19 +2291,6 @@ export class RPCClient {
     ).then((payload) => this.normalizePluginList(payload))
   }
 
-  installPlugin(name: string): Promise<void> {
-    return this.callWithMethodAndParamsFallback(
-      ['plugins.install', 'plugin.install'],
-      [
-        { name },
-        { package: name },
-        { plugin: name },
-        { id: name },
-      ],
-      180000
-    )
-  }
-
   // --- Skills ---
   listSkills(): Promise<Skill[]> {
     return this.callWithFallback<unknown>(['skills.status', 'skills.list'], {}).then((payload) =>
