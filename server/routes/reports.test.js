@@ -46,28 +46,33 @@ async function createReportsApp(resolveUser) {
 test('formal report archive imports only a matched audit pair and isolates the owner', async () => {
   const previousRoot = process.env.GAIOP_REPORTS_DIR
   const reportRoot = mkdtempSync(join(tmpdir(), 'gaiop-report-root-'))
-  const reportDirectory = join(reportRoot, 'user-a', 'quick_report')
+  const reportDirectory = join(reportRoot, 'user_a', 'quick_report')
   mkdirSync(reportDirectory, { recursive: true })
   writeFileSync(join(reportDirectory, 'report-1.docx'), 'report')
   writeFileSync(join(reportDirectory, 'report-1.json'), JSON.stringify({
     reportId: 'report-1',
     title: '正式归档测试报告',
-    reportType: 'quick_report',
-    sourceUserId: 'user-a',
+    reportType: 'quick report',
+    sourceUserId: 'user a',
     sourceSessionId: 'session-a',
     dataSourceId: 'data-source-a',
     generatedAt: new Date().toISOString(),
-    relativeFilePath: 'user-a/quick_report/report-1.docx',
-    relativeAuditPath: 'user-a/quick_report/report-1.json',
+    relativeFilePath: 'user_a/quick_report/report-1.docx',
+    relativeAuditPath: 'user_a/quick_report/report-1.json',
   }))
   // A nested audit which does not point to itself must never be registered.
   writeFileSync(join(reportDirectory, 'spoofed.json'), JSON.stringify({
-    reportId: 'spoofed', relativeFilePath: 'user-a/quick_report/report-1.docx', relativeAuditPath: 'user-a/quick_report/other.json', sourceUserId: 'user-a',
+    reportId: 'spoofed', relativeFilePath: 'user_a/quick_report/report-1.docx', relativeAuditPath: 'user_a/quick_report/other.json', sourceUserId: 'user a',
+  }))
+  writeFileSync(join(reportDirectory, 'wrong-type.docx'), 'report')
+  writeFileSync(join(reportDirectory, 'wrong-type.json'), JSON.stringify({
+    reportId: 'wrong-type', reportType: 'diagnostic report', sourceUserId: 'user a',
+    relativeFilePath: 'user_a/quick_report/wrong-type.docx', relativeAuditPath: 'user_a/quick_report/wrong-type.json',
   }))
   process.env.GAIOP_REPORTS_DIR = reportRoot
 
   const server = (await createReportsApp((req) => (
-    req.get('x-test-user') === 'user-b' ? { id: 'user-b', role: 'user' } : { id: 'user-a', role: 'user' }
+    req.get('x-test-user') === 'user-b' ? { id: 'user-b', role: 'user' } : { id: 'user a', role: 'user' }
   ))).listen(0, '127.0.0.1')
   await once(server, 'listening')
   try {
@@ -76,7 +81,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.equal(response.status, 200)
     assert.equal(payload.reports.length, 1)
     assert.deepEqual(payload.reports[0], {
-      id: 'report-1', name: '正式归档测试报告', reportType: 'quick_report', sourceSessionId: 'session-a', sourceUserId: 'user-a', dataSourceId: 'data-source-a', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
+      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceUserId: 'user a', dataSourceId: 'data-source-a', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
     })
     const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
     const otherUserPayload = await otherUserResponse.json()

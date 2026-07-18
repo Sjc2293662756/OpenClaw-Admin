@@ -57,6 +57,15 @@ function safeText(value) {
   return text || null
 }
 
+// Keep this derivation aligned with GAIOP ReportStorageService. The value is
+// used only to verify a controlled archive directory; the database continues
+// to retain the original trusted source ID for access control.
+function archiveDirectorySegment(value, fallback) {
+  const segment = String(value || '').trim()
+  if (!segment || segment === '.' || segment === '..' || /[\\/\x00-\x1f]/.test(segment)) return fallback
+  return segment.replace(/[^\p{L}\p{N}._-]/gu, '_').slice(0, 160) || fallback
+}
+
 function canReadReport(user, row) {
   if (!user || user.role === 'admin') return true
   const userId = safeText(user.id)
@@ -122,7 +131,8 @@ function syncGeneratedReports(db) {
       if (dirname(storedName) !== auditDirectory) continue
       const sourceUserId = safeText(audit.sourceUserId)
       const storedSegments = storedName.split('/')
-      if (auditDirectory !== '.' && storedSegments[0] !== (sourceUserId || '_unattributed')) continue
+      if (auditDirectory !== '.' && storedSegments[0] !== archiveDirectorySegment(sourceUserId, '_unattributed')) continue
+      if (auditDirectory !== '.' && storedSegments[1] !== archiveDirectorySegment(audit.reportType, 'report')) continue
 
       const exists = existsSync(reportPath)
       const createdAt = Date.parse(audit.generatedAt || '') || statSync(auditPath).mtimeMs || Date.now()
@@ -277,4 +287,4 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
   return router
 }
 
-export const __test__ = { canReadReport, inferMimeType, readExactFilter, resolveStoredReportPath, syncGeneratedReports }
+export const __test__ = { archiveDirectorySegment, canReadReport, inferMimeType, readExactFilter, resolveStoredReportPath, syncGeneratedReports }
