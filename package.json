@@ -9,7 +9,7 @@
     "dev:server": "node --env-file=.env server/index.js",
     "dev:all": "concurrently -n \"frontend,backend\" -c \"blue,green\" \"vite\" \"node --env-file=.env server/index.js\"",
     "build": "vue-tsc -b && vite build",
-    "test:node": "node --test server/gateway.test.js server/report-provenance-service.test.js server/lib/sensitive-data.test.js server/lib/syslog-alerts.test.js server/lib/alert-export.test.js server/lib/gaiop-alert-source.test.js server/lib/feishu-app-onboarding.test.js server/routes/gaiop-service.test.js server/routes/alert-ingestion.test.js server/routes/alerts.test.js server/routes/channels.test.js server/routes/report-storage.test.js",
+    "test:node": "node --test server/gateway.test.js server/report-provenance-service.test.js server/lib/sensitive-data.test.js server/lib/syslog-alerts.test.js server/lib/alert-export.test.js server/lib/gaiop-alert-source.test.js server/lib/feishu-app-onboarding.test.js server/routes/gaiop-service.test.js server/routes/alert-ingestion.test.js server/routes/alerts.test.js server/routes/channels.test.js server/routes/reports.test.js server/routes/report-storage.test.js server/routes/system-upgrade.test.js",
     "test:vitest": "vitest run server/lib/gateway-session-settings.test.js server/lib/session-ownership-service.test.js",
     "test": "npm run test:node && npm run test:vitest",
     "preview": "vite preview",

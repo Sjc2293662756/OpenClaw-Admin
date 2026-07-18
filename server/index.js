@@ -29,6 +29,7 @@ import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
 import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
 import { createAlertIngestionRouter } from './routes/alert-ingestion.js'
 import { createChannelsRouter } from './routes/channels.js'
+import { createSystemUpgradeRouter } from './routes/system-upgrade.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -71,6 +72,8 @@ function loadEnvConfig() {
       HERMES_HOME: '',
       GAIOP_REPORT_PROVENANCE_ENABLED: 'false',
       GAIOP_REPORT_PROVENANCE_SIGNING_KEY: '',
+      GAIOP_UPGRADE_SERVICE_URL: '',
+      GAIOP_UPGRADE_INTERNAL_TOKEN: '',
     }
   }
   const content = readFileSync(envPath, 'utf-8')
@@ -92,6 +95,8 @@ function loadEnvConfig() {
     HERMES_HOME: parsed.HERMES_HOME || '',
     GAIOP_REPORT_PROVENANCE_ENABLED: parsed.GAIOP_REPORT_PROVENANCE_ENABLED || 'false',
     GAIOP_REPORT_PROVENANCE_SIGNING_KEY: parsed.GAIOP_REPORT_PROVENANCE_SIGNING_KEY || '',
+    GAIOP_UPGRADE_SERVICE_URL: parsed.GAIOP_UPGRADE_SERVICE_URL || '',
+    GAIOP_UPGRADE_INTERNAL_TOKEN: parsed.GAIOP_UPGRADE_INTERNAL_TOKEN || '',
   }
 }
 
@@ -527,6 +532,14 @@ app.use('/api/system-config/gaiop-service', createGAIOPServiceRouter({
   saveServiceConfig: saveGAIOPServiceConfig,
 }))
 app.use('/api/system-config/alert-ingestion', createAlertIngestionRouter({ db, adminMiddleware, recordAudit }))
+app.use('/api/system-upgrade', createSystemUpgradeRouter({
+  adminMiddleware,
+  recordAudit,
+  getUpgradeConfig: () => ({
+    serviceUrl: envConfig.GAIOP_UPGRADE_SERVICE_URL,
+    internalToken: envConfig.GAIOP_UPGRADE_INTERNAL_TOKEN,
+  }),
+}))
 app.use('/api/channels', createChannelsRouter({
   authMiddleware,
   adminMiddleware,
