@@ -31,13 +31,26 @@ const rules: FormRules = {
 
 function headers() { return { 'Content-Type': 'application/json', Authorization: `Bearer ${authStore.getToken()}` } }
 
+function returnToSystemConfiguration() {
+  router.push({ name: 'SystemConfiguration', hash: '#data-sources' })
+}
+
+function unwrapApiData<T extends Record<string, unknown>>(payload: T) {
+  return payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+    ? payload.data as T
+    : payload
+}
+
 async function loadExisting() {
   if (!editingId.value) return
   loading.value = true
   try {
     const response = await fetch('/api/data-sources', { headers: { Authorization: `Bearer ${authStore.getToken()}` } })
     const data = await response.json()
-    const source = data.dataSources?.find((item: { id: string }) => item.id === editingId.value)
+    const payload = unwrapApiData(data)
+    const source = Array.isArray(payload.dataSources)
+      ? payload.dataSources.find((item: { id: string }) => item.id === editingId.value)
+      : null
     if (!response.ok || !data.ok || !source) throw new Error(data.error || '数据源不存在')
     form.ip = source.ip
     form.description = source.description || ''
@@ -46,7 +59,7 @@ async function loadExisting() {
     form.status = source.status === 'disabled' ? 'disabled' : 'untested'
   } catch (error) {
     message.error(error instanceof Error ? error.message : '获取数据源失败')
-    router.push({ name: 'DataSourceManagement' })
+    returnToSystemConfiguration()
   } finally {
     loading.value = false
   }
@@ -63,7 +76,7 @@ async function submit() {
     const data = await response.json()
     if (!response.ok || !data.ok) throw new Error(data.error || '保存数据源失败')
     message.success(editingId.value ? '数据源已更新' : '数据源已添加')
-    router.push({ name: 'DataSourceManagement' })
+    returnToSystemConfiguration()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '保存数据源失败')
   } finally {
@@ -86,7 +99,7 @@ loadExisting()
       <NFormItem label="账号" path="username" required><NInput v-model:value="form.username" placeholder="请输入 NAPM 访问账号" /></NFormItem>
       <NFormItem label="密码" path="password" :required="!editingId"><NInput v-model:value="form.password" type="password" show-password-on="click" :placeholder="editingId ? '留空表示不修改' : '请输入 NAPM 访问密码'" /></NFormItem>
       <NFormItem label="状态"><NRadioGroup v-model:value="form.status"><NSpace><NRadio value="untested">未测试</NRadio><NRadio value="disabled">停用</NRadio></NSpace></NRadioGroup></NFormItem>
-      <NFormItem label=""><NSpace><NButton :disabled="loading" @click="router.push({ name: 'DataSourceManagement' })">返回</NButton><NButton type="primary" :loading="loading" @click="submit">提交</NButton></NSpace></NFormItem>
+      <NFormItem label=""><NSpace><NButton :disabled="loading" @click="returnToSystemConfiguration">返回系统配置</NButton><NButton type="primary" :loading="loading" @click="submit">提交</NButton></NSpace></NFormItem>
     </NForm>
   </NCard>
 </template>

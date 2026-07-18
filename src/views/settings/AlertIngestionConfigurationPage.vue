@@ -33,6 +33,7 @@ interface Runtime {
 }
 
 const router = useRouter()
+defineProps<{ embedded?: boolean }>()
 const authStore = useAuthStore()
 const message = useMessage()
 const loading = ref(false)
@@ -107,10 +108,10 @@ onMounted(() => { void loadConfiguration() })
 
 <template>
   <section class="alert-ingestion-page">
-    <NButton quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← 返回系统配置</NButton>
+    <NButton v-if="!embedded" quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← 返回系统配置</NButton>
 
     <NSpin :show="loading">
-      <NCard class="app-card ingestion-hero">
+      <NCard v-if="!embedded" class="app-card ingestion-hero">
         <div class="ingestion-hero__header">
           <div>
             <NTag type="error" round :bordered="false">告警接入配置</NTag>

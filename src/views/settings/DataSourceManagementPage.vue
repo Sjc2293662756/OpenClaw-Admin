@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NSpace, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
-import { AddOutline, CreateOutline, FlashOutline, PlayCircleOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
+import { NAlert, NButton, NCard, NDataTable, NDropdown, NEmpty, NIcon, NSpace, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
+import { AddOutline, CreateOutline, EllipsisHorizontalOutline, PlayCircleOutline, RefreshOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { dataSourceStatusText, dataSourceTypeText, type DataSourceDraft, type DataSourceStatus } from './dataSources'
 
@@ -13,6 +13,7 @@ type RuntimeBridgeStatus = {
 }
 
 const router = useRouter()
+const props = defineProps<{ embedded?: boolean }>()
 const authStore = useAuthStore()
 const dialog = useDialog()
 const message = useMessage()
@@ -30,6 +31,15 @@ const runtimeNotice = computed(() => {
   return { type: 'success' as const, message: `当前运行数据源为 ${activeDataSource.value.ip}。运行时桥接已生成，后续 GAIOP Skills 将读取该数据源。` }
 })
 
+const runtimeSummary = computed(() => {
+  const runtime = runtimeBridge.value
+  if (!runtime) return '正在读取运行状态。'
+  if (!runtime.ready) return '运行时桥接未配置，暂不能启用数据源。'
+  if (!activeDataSource.value) return '尚未启用运行数据源。'
+  if (!runtime.generated) return `已选择 ${activeDataSource.value.ip}，运行时配置尚未生成。`
+  return `当前运行数据源：${activeDataSource.value.ip}`
+})
+
 const statusType: Record<DataSourceStatus, 'success' | 'error' | 'warning' | 'default'> = {
   success: 'success', failed: 'error', untested: 'warning', disabled: 'default',
 }
@@ -43,14 +53,21 @@ function formatTime(timestamp?: number) {
 
 function headers() { return { Authorization: `Bearer ${authStore.getToken()}` } }
 
+function unwrapApiData<T extends Record<string, unknown>>(payload: T) {
+  return payload.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
+    ? payload.data as T
+    : payload
+}
+
 async function refresh(showMessage = true) {
   loading.value = true
   try {
     const response = await fetch('/api/data-sources', { headers: headers() })
     const data = await response.json()
     if (!response.ok || !data.ok) throw new Error(data.error || '获取数据源失败')
-    dataSources.value = data.dataSources
-    runtimeBridge.value = data.runtime || null
+    const payload = unwrapApiData(data)
+    dataSources.value = Array.isArray(payload.dataSources) ? payload.dataSources as DataSourceDraft[] : []
+    runtimeBridge.value = (payload.runtime as RuntimeBridgeStatus | undefined) || null
     if (showMessage) message.success('数据源已刷新')
   } catch (error) {
     message.error(error instanceof Error ? error.message : '获取数据源失败')
@@ -68,7 +85,8 @@ async function testConnection(item: DataSourceDraft) {
     const response = await fetch(`/api/data-sources/${item.id}/test`, { method: 'POST', headers: headers() })
     const data = await response.json()
     if (!response.ok || !data.ok) throw new Error(data.error || '连接测试失败')
-    message.success(data.result?.message || '连接测试成功')
+    const payload = unwrapApiData(data)
+    message.success((payload.result as { message?: string } | undefined)?.message || '连接测试成功')
     await refresh(false)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '连接测试失败')
@@ -117,33 +135,27 @@ function remove(item: DataSourceDraft) {
   })
 }
 
-const columns: DataTableColumns<DataSourceDraft> = [
-  { title: '状态', key: 'status', width: 105, render: row => h(NTag, { type: statusType[row.status], bordered: false }, { default: () => dataSourceStatusText[row.status] }) },
-  { title: '运行状态', key: 'isActive', width: 106, render: row => h(NTag, { type: row.isActive ? 'success' : 'default', bordered: false }, { default: () => row.isActive ? '运行中' : '未启用' }) },
-  { title: 'IP', key: 'ip', minWidth: 180 },
-  { title: '描述', key: 'description', minWidth: 180, ellipsis: { tooltip: true }, render: row => row.description || '—' },
-  { title: '类型', key: 'type', width: 100, render: row => dataSourceTypeText[row.type] },
-  { title: '账号', key: 'username', minWidth: 130 },
-  { title: '添加时间', key: 'createdAt', width: 180, render: row => formatTime(row.createdAt) },
-  { title: '最近测试', key: 'lastTestedAt', width: 180, render: row => formatTime(row.lastTestedAt) },
-  { title: '操作', key: 'actions', width: 326, fixed: 'right', render: row => h(NSpace, { size: 'small', wrap: false }, { default: () => [
-    h(NButton, { size: 'small', type: row.isActive ? 'success' : 'primary', secondary: !row.isActive, disabled: !isAdmin.value || !!row.isActive, onClick: () => activate(row) }, { icon: () => h(NIcon, null, { default: () => h(PlayCircleOutline) }), default: () => row.isActive ? '运行中' : '启用' }),
-    h(NButton, { size: 'small', disabled: !isAdmin.value, onClick: () => edit(row) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => '编辑' }),
-    h(NButton, { size: 'small', type: 'info', secondary: true, disabled: !isAdmin.value, onClick: () => testConnection(row) }, { icon: () => h(NIcon, null, { default: () => h(FlashOutline) }), default: () => '测试' }),
-    h(NButton, { size: 'small', type: 'error', ghost: true, disabled: !isAdmin.value, onClick: () => remove(row) }, { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }), default: () => '删除' }),
-  ] }) },
-]
+const columns = computed<DataTableColumns<DataSourceDraft>>(() => [
+  { title: '状态', key: 'status', width: 92, render: row => h(NTag, { type: statusType[row.status], bordered: false }, { default: () => dataSourceStatusText[row.status] }) },
+  { title: '运行', key: 'isActive', width: 92, render: row => h(NTag, { type: row.isActive ? 'success' : 'default', bordered: false }, { default: () => row.isActive ? '运行中' : '未启用' }) },
+  { title: '数据源', key: 'ip', minWidth: 180, render: row => h('div', [h('strong', row.ip), h('div', { class: 'data-source-meta' }, `${dataSourceTypeText[row.type]} · ${row.description || '未填写说明'}`)] ) },
+  { title: '最近测试', key: 'lastTestedAt', width: 168, render: row => formatTime(row.lastTestedAt) },
+  {
+    title: '操作', key: 'actions', width: 214, fixed: 'right', render: row => h(NSpace, { size: 'small', wrap: false }, { default: () => [
+      h(NButton, { size: 'small', disabled: !isAdmin.value, onClick: () => edit(row) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => '详情' }),
+      h(NButton, { size: 'small', type: row.isActive ? 'success' : 'primary', secondary: !row.isActive, disabled: !isAdmin.value || !!row.isActive, onClick: () => activate(row) }, { icon: () => h(NIcon, null, { default: () => h(PlayCircleOutline) }), default: () => row.isActive ? '运行中' : '启用' }),
+      h(NDropdown, { trigger: 'click', options: [{ label: '测试连接', key: 'test' }, { label: '删除数据源', key: 'remove', disabled: !isAdmin.value }], onSelect: (key: string) => key === 'test' ? testConnection(row) : remove(row) }, { default: () => h(NButton, { size: 'small', quaternary: true, 'aria-label': '更多操作' }, { icon: () => h(NIcon, null, { default: () => h(EllipsisHorizontalOutline) }) }) }),
+    ] })
+  },
+])
 
 onMounted(() => { refresh(false) })
 </script>
 
 <template>
   <section class="data-source-page">
-    <NAlert type="info" :bordered="false" class="stage-note">
-      管理员可维护 NAPM 数据源。密码仅加密保存在服务端，连接测试由 GAIOP 服务端发起，不会经过浏览器。当前只允许一个“运行中”数据源；启用后，后续 GAIOP 分析会优先读取该数据源。
-    </NAlert>
     <NAlert :type="runtimeNotice.type" :bordered="false" class="runtime-note">
-      {{ runtimeNotice.message }}
+      {{ props.embedded ? runtimeSummary : runtimeNotice.message }}
     </NAlert>
     <NCard title="已添加数据源列表" :bordered="false" class="data-source-card">
       <template #header-extra>
@@ -156,7 +168,7 @@ onMounted(() => { refresh(false) })
           </NButton>
         </NSpace>
       </template>
-      <NDataTable :columns="columns" :data="dataSources" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1350" :pagination="{ pageSize: 10 }">
+      <NDataTable :columns="columns" :data="dataSources" :loading="loading" :bordered="false" :single-line="false" :scroll-x="760" :pagination="{ pageSize: 10 }">
         <template #empty><NEmpty description="尚未添加数据源" /></template>
       </NDataTable>
     </NCard>
@@ -164,8 +176,8 @@ onMounted(() => { refresh(false) })
 </template>
 
 <style scoped>
-.data-source-page { display: grid; gap: 16px; }
-.stage-note { line-height: 1.65; }
+.data-source-page { display: grid; min-width: 0; gap: 14px; }
 .runtime-note { line-height: 1.65; }
-.data-source-card { min-height: 420px; }
+.data-source-card { min-width: 0; min-height: 360px; }
+.data-source-meta { margin-top: 3px; color: #7b8e83; font-size: 12px; line-height: 1.4; }
 </style>

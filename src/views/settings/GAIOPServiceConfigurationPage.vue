@@ -27,6 +27,7 @@ interface ServiceConfig {
 }
 
 const router = useRouter()
+defineProps<{ embedded?: boolean }>()
 const authStore = useAuthStore()
 const message = useMessage()
 const loading = ref(false)
@@ -90,10 +91,10 @@ onMounted(() => { void loadService() })
 
 <template>
   <section class="gaiop-service-page">
-    <NButton quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← 返回系统配置</NButton>
+    <NButton v-if="!embedded" quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← 返回系统配置</NButton>
 
     <NSpin :show="loading">
-      <NCard class="app-card service-hero">
+      <NCard v-if="!embedded" class="app-card service-hero">
         <div class="service-hero__header">
           <div>
             <NTag type="success" round :bordered="false">GAIOP 服务配置</NTag>
