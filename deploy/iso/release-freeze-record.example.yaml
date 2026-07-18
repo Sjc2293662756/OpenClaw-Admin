@@ -1,0 +1,96 @@
+# GAIOP ISO release freeze record (example)
+#
+# Complete one immutable copy for every candidate ISO. Values marked REPLACE_
+# are release metadata, never credentials. Store the completed record with the
+# delivery evidence, not in a source-controlled environment file.
+schemaVersion: gaiop-iso-release-freeze-record/v1
+
+release:
+  id: REPLACE_WITH_RELEASE_ID
+  candidateBuiltAt: REPLACE_WITH_ISO_BUILD_TIMESTAMP_UTC
+  approvalStatus: pending
+  scope: Initial GAIOP ISO delivery
+  sourceBaseline: 237-derived-system-image
+
+sourceRevisions:
+  admin:
+    repository: GAIOP-Admin
+    branch: dev-yangshuo
+    commit: REPLACE_WITH_IMMUTABLE_GIT_COMMIT
+    worktreeClean: REPLACE_WITH_TRUE_OR_FALSE
+  gateway:
+    repository: GAIOP-latest
+    branch: dev-yangshuo
+    commit: REPLACE_WITH_IMMUTABLE_GIT_COMMIT
+    worktreeClean: REPLACE_WITH_TRUE_OR_FALSE
+  referenceOnly:
+    repository: GAIOP
+    purpose: Read-only historical reference; never copied over the release source
+
+buildEvidence:
+  adminProductionBuild:
+    command: npm run build
+    result: pending
+    executedAt: null
+  adminNodeTests:
+    command: npm run test:node
+    result: pending
+    executedAt: null
+  manifestValidation:
+    input: deploy/iso/release-manifest.example.yaml
+    result: pending
+  linuxTargetValidation:
+    required:
+      - bash -n gaiop-preflight.sh
+      - systemd-analyze verify for all GAIOP units
+      - nginx -t
+    result: pending
+
+artifacts:
+  isoFileName: REPLACE_WITH_ISO_FILE_NAME
+  isoSha256: REPLACE_WITH_SHA256
+  releaseManifest: deploy/iso/release-manifest.example.yaml
+  deploymentInputs:
+    - GAIOP-Admin/deploy/iso
+    - GAIOP-latest/deploy/iso
+    - GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-syslog-receiver.service
+
+securityAndDataBoundary:
+  secretInjectionVerified: false
+  secretsExcludedFromSourceAndEvidence: false
+  persistentDataExcludedFromGoldenImage: false
+  environmentFiles:
+    - /etc/gaiop/admin.env
+    - /etc/gaiop/gateway.env
+    - /etc/gaiop/alert-receiver.env
+  persistentDirectories:
+    - /var/lib/gaiop/admin
+    - /var/lib/gaiop/alerts
+    - /var/lib/gaiop/reports
+    - /var/lib/gaiop/runtime
+    - /var/log/gaiop
+
+acceptance:
+  local:
+    permissionsAndApi: pending
+    reportArchive: pending
+    alertReceiverContract: pending
+    channels: pending
+  targetEnvironment:
+    firstBootAndRestart: pending
+    httpsAndSse: pending
+    syslogEndToEnd: pending
+    reportEndToEnd: pending
+    backupRestore: pending
+    fourRoleAcceptance: pending
+
+exceptions: []
+
+signoff:
+  buildOperator: REPLACE_WITH_NAME_OR_ID
+  deploymentReviewer: REPLACE_WITH_NAME_OR_ID
+  customerAcceptanceContact: REPLACE_WITH_NAME_OR_ID_OR_NA
+  approvedAt: null
+  notes: >-
+    Record only non-sensitive evidence references here. Do not put usernames,
+    passwords, tokens, private URLs, certificates, or customer business data.

@@ -1,0 +1,112 @@
+# GAIOP ISO release manifest (example)
+#
+# This is a build-time inventory, not an installer or a production config.
+# Replace release placeholders in the ISO build pipeline.  Never place real
+# credentials, certificates, private keys, webhook URLs, or customer data here.
+schemaVersion: gaiop-iso-release-manifest/v1
+
+release:
+  id: REPLACE_WITH_RELEASE_ID
+  builtFrom: 237-derived-baseline-image
+  notes: >-
+    The ISO build must pin the exact Admin and Gateway source revisions in its
+    build record. This manifest deliberately does not name a developer machine.
+
+serviceAccount:
+  user: gaiop
+  group: gaiop
+
+components:
+  admin:
+    sourceRepository: GAIOP-Admin
+    targetDirectory: /opt/gaiop/admin
+    requiredPaths:
+      - server/index.js
+      - dist/index.html
+    serviceUnit: gaiop-admin.service
+  gateway:
+    sourceRepository: GAIOP-latest
+    targetDirectory: /opt/gaiop/gateway
+    requiredPaths:
+      - package.json
+      - skills/openclaw-napm-report
+      - skills/openclaw-napm-syslog-receiver
+    serviceUnit: gaiop-gateway.service
+  syslogReceiver:
+    sourceRepository: GAIOP-latest
+    targetDirectory: /opt/gaiop/gateway/skills/openclaw-napm-syslog-receiver
+    serviceUnit: gaiop-syslog-receiver.service
+  reverseProxy:
+    configurationTemplate: GAIOP-Admin/deploy/iso/nginx/gaiop.conf
+    validationCommand: nginx -t
+
+controlledFiles:
+  environmentExamples:
+    - source: GAIOP-Admin/deploy/iso/env/admin.env.example
+      target: /etc/gaiop/admin.env
+    - source: GAIOP-latest/deploy/iso/env/gateway.env.example
+      target: /etc/gaiop/gateway.env
+    - source: GAIOP-latest/deploy/iso/env/alert-receiver.env.example
+      target: /etc/gaiop/alert-receiver.env
+  serviceUnits:
+    - source: GAIOP-Admin/deploy/iso/systemd/gaiop-admin.service
+      target: /etc/systemd/system/gaiop-admin.service
+    - source: GAIOP-latest/deploy/iso/systemd/gaiop-gateway.service
+      target: /etc/systemd/system/gaiop-gateway.service
+    - source: GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-syslog-receiver.service
+      target: /etc/systemd/system/gaiop-syslog-receiver.service
+  preflight:
+    source: GAIOP-Admin/deploy/iso/scripts/gaiop-preflight.sh
+    purpose: Read-only post-install validation
+
+persistentData:
+  - path: /var/lib/gaiop/admin
+    purpose: Admin SQLite, configuration, audit, and session state
+    backup: required
+  - path: /var/lib/gaiop/alerts
+    purpose: Normalized Syslog events and receiver state
+    backup: required
+  - path: /var/lib/gaiop/reports
+    purpose: Formal DOCX reports and paired audit JSON files
+    backup: required
+  - path: /var/lib/gaiop/runtime
+    purpose: Runtime data-source bridge; may contain protected credentials
+    backup: required
+  - path: /var/log/gaiop
+    purpose: Application logs
+    backup: retention-policy
+
+firstBoot:
+  requiredSecretFiles:
+    - /etc/gaiop/admin.env
+    - /etc/gaiop/gateway.env
+    - /etc/gaiop/alert-receiver.env
+  generatedOnTarget:
+    - Linux-target Node.js dependencies and production frontend build, unless the ISO pipeline provides target-compatible artifacts
+    - TLS certificate/key material and reverse-proxy activation
+  operatorActions:
+    - Inject secrets through the approved deployment secret process
+    - Verify ownership and restrictive permissions for /etc/gaiop/*.env
+    - Run the read-only preflight, then systemd and Nginx validation
+    - Perform the ISO acceptance matrix before production handover
+
+networkBoundary:
+  external:
+    - HTTPS 443 through the reverse proxy
+    - Syslog UDP listener defined by the ISO rsyslog configuration
+  loopbackOnly:
+    - GAIOP Admin BFF
+    - GAIOP Gateway 18789
+    - GAIOP Syslog receiver 19090
+
+excludedFromIsoRepository:
+  - Real environment files, secrets, certificates, and private keys
+  - Customer reports, alert events, SQLite state, runtime bridge state, and logs
+  - Developer-machine node_modules or absolute developer-machine paths
+  - SSH tunnel configuration and historical SSH alert-reading settings
+
+deferredDecisions:
+  - Exact operating-system, Node.js, and package-version lock
+  - TLS certificate issuance and renewal design
+  - Syslog retention, backup frequency, media, encryption, and restore target
+  - Final rsyslog listen address and firewall scope

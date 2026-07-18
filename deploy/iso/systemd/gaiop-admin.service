@@ -1,0 +1,24 @@
+[Unit]
+Description=GAIOP Admin BFF and Web Application
+After=network-online.target gaiop-gateway.service gaiop-syslog-receiver.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gaiop
+Group=gaiop
+WorkingDirectory=/opt/gaiop/admin
+EnvironmentFile=/etc/gaiop/admin.env
+ExecStart=/usr/local/bin/node --env-file=/etc/gaiop/admin.env server/index.js
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=full
+ReadWritePaths=/var/lib/gaiop/admin /var/lib/gaiop/reports /var/lib/gaiop/runtime /var/log/gaiop
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
