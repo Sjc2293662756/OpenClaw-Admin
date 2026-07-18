@@ -102,6 +102,11 @@ function syncGeneratedReports(db) {
       const audit = JSON.parse(readFileSync(auditPath, 'utf8'))
       const reportId = safeText(audit.reportId)
       const auditDirectory = dirname(auditName)
+      const declaredAuditName = safeText(audit.relativeAuditPath)
+      // New formal archives must self-identify the exact paired audit file.
+      // Root-level historical imports did not have this field, so retain only
+      // that narrow compatibility path.
+      if (auditDirectory !== '.' && (!declaredAuditName || declaredAuditName.replace(/\\/g, '/') !== auditName)) continue
       const declaredName = safeText(audit.relativeFilePath) || safeText(audit.fileName)
       let storedName = declaredName && resolveStoredReportPath(declaredName) ? declaredName.replace(/\\/g, '/') : null
       if (!storedName) {

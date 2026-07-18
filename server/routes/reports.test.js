@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { once } from 'node:events'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import express from 'express'
+
+function createMemoryDb() {
+  const rows = new Map()
+  return {
+    prepare(sql) {
+      if (sql.includes('INSERT INTO report_files')) {
+        return {
+          run(...values) {
+            const [id, storedName, auditName, originalName, reportType, sourceSessionId, sourceUserId, dataSourceId, mimeType, size, status, createdAt, updatedAt] = values
+            rows.set(storedName, { id, stored_name: storedName, audit_name: auditName, original_name: originalName, report_type: reportType, source_session_id: sourceSessionId, source_user_id: sourceUserId, data_source_id: dataSourceId, mime_type: mimeType, size, status, created_at: createdAt, updated_at: updatedAt })
+          },
+        }
+      }
+      if (sql.startsWith('SELECT * FROM report_files') && sql.includes('ORDER BY')) {
+        return {
+          all(...values) {
+            const sourceUserId = sql.includes('source_user_id = ?') ? values[0] : null
+            return [...rows.values()].filter((row) => !sourceUserId || row.source_user_id === sourceUserId)
+          },
+        }
+      }
+      throw new Error(`Unexpected test query: ${sql}`)
+    },
+  }
+}
+
+async function createReportsApp(resolveUser) {
+  const { createReportsRouter } = await import(`./reports.js?report-root-test=${Date.now()}-${Math.random()}`)
+  const app = express()
+  app.use('/reports', createReportsRouter({
+    db: createMemoryDb(),
+    authMiddleware: (req, _res, next) => { req.user = resolveUser(req); next() },
+    adminMiddleware: (req, _res, next) => { req.user = resolveUser(req); next() },
+    recordAudit: () => {},
+  }))
+  return app
+}
+
+test('formal report archive imports only a matched audit pair and isolates the owner', async () => {
+  const previousRoot = process.env.GAIOP_REPORTS_DIR
+  const reportRoot = mkdtempSync(join(tmpdir(), 'gaiop-report-root-'))
+  const reportDirectory = join(reportRoot, 'user-a', 'quick_report')
+  mkdirSync(reportDirectory, { recursive: true })
+  writeFileSync(join(reportDirectory, 'report-1.docx'), 'report')
+  writeFileSync(join(reportDirectory, 'report-1.json'), JSON.stringify({
+    reportId: 'report-1',
+    title: '正式归档测试报告',
+    reportType: 'quick_report',
+    sourceUserId: 'user-a',
+    sourceSessionId: 'session-a',
+    dataSourceId: 'data-source-a',
+    generatedAt: new Date().toISOString(),
+    relativeFilePath: 'user-a/quick_report/report-1.docx',
+    relativeAuditPath: 'user-a/quick_report/report-1.json',
+  }))
+  // A nested audit which does not point to itself must never be registered.
+  writeFileSync(join(reportDirectory, 'spoofed.json'), JSON.stringify({
+    reportId: 'spoofed', relativeFilePath: 'user-a/quick_report/report-1.docx', relativeAuditPath: 'user-a/quick_report/other.json', sourceUserId: 'user-a',
+  }))
+  process.env.GAIOP_REPORTS_DIR = reportRoot
+
+  const server = (await createReportsApp((req) => (
+    req.get('x-test-user') === 'user-b' ? { id: 'user-b', role: 'user' } : { id: 'user-a', role: 'user' }
+  ))).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/reports`)
+    const payload = await response.json()
+    assert.equal(response.status, 200)
+    assert.equal(payload.reports.length, 1)
+    assert.deepEqual(payload.reports[0], {
+      id: 'report-1', name: '正式归档测试报告', reportType: 'quick_report', sourceSessionId: 'session-a', sourceUserId: 'user-a', dataSourceId: 'data-source-a', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
+    })
+    const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
+    const otherUserPayload = await otherUserResponse.json()
+    assert.equal(otherUserResponse.status, 200)
+    assert.deepEqual(otherUserPayload.reports, [])
+  } finally {
+    server.close()
+    if (previousRoot === undefined) delete process.env.GAIOP_REPORTS_DIR
+    else process.env.GAIOP_REPORTS_DIR = previousRoot
+  }
+})
