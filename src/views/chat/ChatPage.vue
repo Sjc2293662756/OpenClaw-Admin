@@ -27,7 +27,6 @@ import { CopyOutline, RefreshOutline, SendOutline, StopCircleOutline, ChevronBac
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
-import { useAuthStore } from '@/stores/auth'
 import { useConfigStore } from '@/stores/config'
 import { useSessionStore } from '@/stores/session'
 import { useSkillStore } from '@/stores/skill'
@@ -48,7 +47,6 @@ const workspaceMode = computed(() => props.workspace)
 const message = useMessage()
 const route = useRoute()
 const router = useRouter()
-const authStore = useAuthStore()
 const chatStore = useChatStore()
 const configStore = useConfigStore()
 const sessionStore = useSessionStore()
@@ -2704,22 +2702,6 @@ async function handleRefreshChatData() {
   await loadHistoryForKey(ensureSessionKey(), { force: true })
 }
 
-async function createWorkspaceSession(): Promise<string> {
-  const response = await fetch('/api/workspace/sessions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${authStore.getToken() || ''}`,
-    },
-  })
-  const data = await response.json()
-  const sessionKey = typeof data?.sessionKey === 'string' ? data.sessionKey.trim() : ''
-  if (!response.ok || !data?.ok || !sessionKey) {
-    throw new Error(data?.error?.message || data?.error || '创建工作台会话失败')
-  }
-  return sessionKey
-}
-
 async function handleSend() {
   const content = draft.value.trim()
   if (!content) return
@@ -2728,7 +2710,7 @@ async function handleSend() {
   try {
     if (workspaceMode.value && !sessionKeyInput.value.trim()) {
       // 不发送 /new 命令，首次正式需求即建立会话，避免用户看到底层系统提示。
-      const key = await createWorkspaceSession()
+      const key = await sessionStore.createWorkspaceSession()
       sessionKeyInput.value = key
       await router.replace({
         name: 'ChatWorkspace',

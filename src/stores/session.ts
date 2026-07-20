@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useWebSocketStore } from './websocket'
+import { useAuthStore } from './auth'
 import type { Session, SessionDetail, SessionExport } from '@/api/types'
 
 export const useSessionStore = defineStore('session', () => {
@@ -9,6 +10,23 @@ export const useSessionStore = defineStore('session', () => {
   const loading = ref(false)
 
   const wsStore = useWebSocketStore()
+  const authStore = useAuthStore()
+
+  async function createWorkspaceSession(): Promise<string> {
+    const response = await fetch('/api/workspace/sessions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authStore.getToken() || ''}`,
+      },
+    })
+    const data = await response.json()
+    const sessionKey = typeof data?.sessionKey === 'string' ? data.sessionKey.trim() : ''
+    if (!response.ok || !data?.ok || !sessionKey) {
+      throw new Error(data?.error?.message || data?.error || '创建工作台会话失败')
+    }
+    return sessionKey
+  }
 
   function parseUsageNumber(value: unknown): number | undefined {
     if (typeof value === 'number' && Number.isFinite(value)) {
@@ -216,10 +234,9 @@ export const useSessionStore = defineStore('session', () => {
     peer?: string
     label?: string
   }): Promise<string> {
-    const agentId = params.agentId || 'main'
-    const channel = params.channel || 'main'
-    const peer = params.peer || `webchat-${Date.now()}`
-    const sessionKey = `agent:${agentId}:${channel}:dm:${peer}`
+    // Gateway 会话键只能由 Admin BFF 签发并登记归属。保留旧页面传入的
+    // agent/channel/peer 字段，仅兼容其表单调用；它们不再参与会话键拼接。
+    const sessionKey = await createWorkspaceSession()
     const idempotencyKey = `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 
     await wsStore.rpc.sendChatMessage({
@@ -257,6 +274,7 @@ export const useSessionStore = defineStore('session', () => {
     deleteSession,
     deleteSessions,
     spawnSession,
+    createWorkspaceSession,
     createSession,
     patchSessionLabel,
     exportSession,
