@@ -3,9 +3,9 @@
 | 属性 | 内容 |
 |---|---|
 | 创建日期 | 2026-07-16 |
-| 状态 | 告警接收器基础实现、237 兼容健康验证和 Admin 正式查询替换已完成；NAPM 发送端与浏览器端到端联调待完成 |
+| 状态 | 报告正式归档与告警接收基础已实现；237 告警页面和三频道正向链路已验证；ISO 部署、来源签名和保留治理待完成 |
 | Admin 基线 | `dev-yangshuo` 的当前工作树；浏览器仅调用 Admin BFF |
-| GAIOP 基线 | `GAIOP-latest`，`8fe0cbe`（`origin/main`） |
+| GAIOP 基线 | `GAIOP-latest` 的 `dev-yangshuo`；具体提交以交接时 `git log -1` 为准 |
 | 不在范围 | 服务器网络、域名、DNS、网关、NTP、时区、真实环境凭据和部署操作 |
 
 ## 1. 目的与原则
@@ -22,17 +22,17 @@
 
 | 领域 | 已确认实现 | 尚未冻结或尚未完成 |
 |---|---|---|
-| 报告 | GAIOP 报告 Skill 会生成报告与同名审计 JSON；Admin 可安全扫描、下载、管理员删除并按来源字段隔离 | 当前 GAIOP 审计生成链未写入 `sourceUserId`、`sourceSessionId`、`dataSourceId`；当前只写根目录，不支持用户/类型分层 |
-| 告警 | GAIOP 已有 NAPM Alert Query 与 Syslog watcher；新增独立接收器可规范化持久化事件并提供健康/配置/分页接口；Admin BFF 已适配正式接口且浏览器仍只调用 BFF | 237 已完成兼容接收器健康、持久化分页和 BFF 隧道适配；NAPM 新告警、浏览器端到端、保留策略和多用户审计待完成 |
+| 报告 | GAIOP 按用户/报告类型写入实体与审计 JSON；Admin 安全递归扫描、来源隔离、下载和管理员删除；快速报告轻量 DOCX 已完成本地真实文件验证 | 真实 Gateway metadata 透传、来源签名密钥、共享卷部署、保留策略待完成；`comparative_report`/`operation_report` 渲染器待确认 |
+| 告警 | 独立接收器规范化并追加持久化事件，提供健康/配置/分页接口；Admin BFF 已切换正式接口，用户已确认浏览器能看到最新告警 | JSONL 保留期、容量、备份/清理、数据库选择和多用户审计待完成 |
 | 会话 | Admin BFF 已有会话归属、Gateway `config.get/config.patch` 适配和基础测试 | Web 路由字段、真实 Gateway 版本兼容和生效回显尚未验收 |
 | 数据源 | Admin 已实现加密存储、单一激活源和受控运行时桥接 | 该桥接消费能力目前在原 GAIOP 本地未提交工作树中，不能假定已进入 `8fe0cbe` 最新基线；需后端确认合并方式 |
-| 频道 | Admin 已移除网页远程安装能力，保留四频道组件检测、配置草稿、启停、凭据更新和保存/应用；频道专用 BFF 接口对所有浏览器角色脱敏旧凭据 | ISO 适配器包/版本/配置模式、真实收发、重启恢复及外部频道会话归属待冻结和部署联调 |
+| 频道 | Admin 已移除网页远程安装能力；飞书、钉钉、企业微信配置和 237 适配完成，三频道真实消息均可正常回复；频道专用 BFF 接口不回显旧凭据 | ISO 版本冻结、冷启动/断网重连、外部频道会话隔离及插件升级事务待完成 |
 
 ### 2.1 已发现的文档差异
 
-- `ReportGenerationService` 的实际白名单包含 `quick_report`、`diagnostic_report`、`comparative_report`、`operation_report`、`inspection_report`、`summary_report`；旧 `report-workflow-contract.md` 仍只列出前四种。正式契约以实现与测试为准，后端需更新旧说明。
+- `ReportGenerationService` 的类型白名单仍包含 `comparative_report`、`operation_report`，但两者没有已验证渲染器；当前不得对外宣称可导出。`quick_report`、巡检、综述和诊断按各自已验证路径执行。
 - 报告 Skill 当前输出含绝对 `filePath/auditPath`，而 Admin 正式消费不应依赖或回显绝对路径。v0.1 要求新增安全相对路径字段，并逐步停止把绝对路径当作跨端字段。
-- Syslog watcher 的默认用途是实时推送，尚未提供告警入库、查询、分页或状态 API；这些能力须作为 GAIOP 正式告警模块实现，不能由页面推断。
+- Syslog watcher 继续负责既有实时推送语义；独立 Syslog 接收器负责规范化持久化和查询，两者职责不能混称。当前事件存储为持续追加 JSONL，尚无自动保留清理。
 
 ## 3. 通用约定
 
