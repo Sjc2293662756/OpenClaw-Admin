@@ -132,15 +132,16 @@ export class OpenClawGateway extends EventEmitter {
   }
 
   async buildConnectParams() {
+    const trustedLoopbackBackend = this.isTrustedLoopbackBackend()
     const params = {
       minProtocol: 3,
       maxProtocol: 3,
       client: {
-        id: 'cli',
+        id: trustedLoopbackBackend ? 'gateway-client' : 'cli',
         displayName: 'OpenClaw Web Backend',
         version: APP_VERSION,
         platform: process.platform,
-        mode: 'cli',
+        mode: trustedLoopbackBackend ? 'backend' : 'cli',
       },
       role: 'operator',
       scopes: ['operator.read', 'operator.write', 'operator.admin'],
@@ -155,10 +156,10 @@ export class OpenClawGateway extends EventEmitter {
       userAgent: `OpenClaw-Web-Backend/${APP_VERSION}`,
     }
 
+    if (trustedLoopbackBackend) return params
+
     try {
-      if (!this.deviceIdentity) {
-        this.deviceIdentity = await this.loadOrCreateDeviceIdentity()
-      }
+      if (!this.deviceIdentity) this.deviceIdentity = await this.loadOrCreateDeviceIdentity()
 
       const signedAtMs = Date.now()
       const payload = this.buildDeviceAuthPayload({
@@ -189,6 +190,16 @@ export class OpenClawGateway extends EventEmitter {
     }
 
     return params
+  }
+
+  isTrustedLoopbackBackend() {
+    if (!this.authToken && !this.authPassword) return false
+    try {
+      const host = new URL(this.url).hostname.toLowerCase()
+      return host === '127.0.0.1' || host === '::1' || host === 'localhost'
+    } catch {
+      return false
+    }
   }
 
   async generateDeviceIdentity() {

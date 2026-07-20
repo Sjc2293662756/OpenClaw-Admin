@@ -25,3 +25,17 @@ test('manual disconnect closes the socket without scheduling a reconnect', () =>
   assert.equal(gateway.shouldReconnect, false)
   assert.equal(gateway.reconnectTimer, null)
 })
+
+test('loopback Gateway with shared auth uses the trusted backend handshake path', async () => {
+  const gateway = new OpenClawGateway('ws://127.0.0.1:18789', 'test-token')
+  const params = await gateway.buildConnectParams()
+
+  assert.equal(params.client.id, 'gateway-client')
+  assert.equal(params.client.mode, 'backend')
+  assert.equal(params.device, undefined)
+})
+
+test('non-loopback Gateway retains the device identity handshake path', () => {
+  const gateway = new OpenClawGateway('ws://gateway.example.test:18789', 'test-token')
+  assert.equal(gateway.isTrustedLoopbackBackend(), false)
+})

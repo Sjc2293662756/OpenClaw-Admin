@@ -54,53 +54,37 @@ const __dirname = dirname(__filename)
 const envPath = join(__dirname, '../.env')
 
 function loadEnvConfig() {
-  if (!existsSync(envPath)) {
-    return {
-      PORT: 3001,
-      OPENCLAW_WS_URL: 'ws://localhost:18789',
-      OPENCLAW_AUTH_TOKEN: '',
-      OPENCLAW_AUTH_PASSWORD: '',
-      DEV_FRONTEND_URL: 'http://localhost:3000',
-      AUTH_USERNAME: '',
-      AUTH_PASSWORD: '',
-      MEDIA_DIR: '',
-      LOG_LEVEL: 'INFO',
-      HERMES_WEB_URL: '',
-      HERMES_API_URL: '',
-      HERMES_API_KEY: '',
-      HERMES_CLI_PATH: '',
-      HERMES_HOME: '',
-      GAIOP_REPORT_PROVENANCE_ENABLED: 'false',
-      GAIOP_REPORT_PROVENANCE_SIGNING_KEY: '',
-      GAIOP_UPGRADE_SERVICE_URL: '',
-      GAIOP_UPGRADE_INTERNAL_TOKEN: '',
-    }
-  }
-  const content = readFileSync(envPath, 'utf-8')
-  const parsed = parse(content)
+  const parsed = existsSync(envPath) ? parse(readFileSync(envPath, 'utf-8')) : {}
+  const value = (name, fallback = '') => process.env[name] || parsed[name] || fallback
   return {
-    PORT: parsed.PORT || 3001,
-    OPENCLAW_WS_URL: parsed.OPENCLAW_WS_URL || 'ws://localhost:18789',
-    OPENCLAW_AUTH_TOKEN: parsed.OPENCLAW_AUTH_TOKEN || '',
-    OPENCLAW_AUTH_PASSWORD: parsed.OPENCLAW_AUTH_PASSWORD || '',
-    DEV_FRONTEND_URL: parsed.DEV_FRONTEND_URL || 'http://localhost:3000',
-    AUTH_USERNAME: parsed.AUTH_USERNAME || '',
-    AUTH_PASSWORD: parsed.AUTH_PASSWORD || '',
-    MEDIA_DIR: parsed.MEDIA_DIR || '',
-    LOG_LEVEL: parsed.LOG_LEVEL || 'INFO',
-    HERMES_WEB_URL: parsed.HERMES_WEB_URL || '',
-    HERMES_API_URL: parsed.HERMES_API_URL || '',
-    HERMES_API_KEY: parsed.HERMES_API_KEY || '',
-    HERMES_CLI_PATH: parsed.HERMES_CLI_PATH || '',
-    HERMES_HOME: parsed.HERMES_HOME || '',
-    GAIOP_REPORT_PROVENANCE_ENABLED: parsed.GAIOP_REPORT_PROVENANCE_ENABLED || 'false',
-    GAIOP_REPORT_PROVENANCE_SIGNING_KEY: parsed.GAIOP_REPORT_PROVENANCE_SIGNING_KEY || '',
-    GAIOP_UPGRADE_SERVICE_URL: parsed.GAIOP_UPGRADE_SERVICE_URL || '',
-    GAIOP_UPGRADE_INTERNAL_TOKEN: parsed.GAIOP_UPGRADE_INTERNAL_TOKEN || '',
+    PORT: value('PORT', '3001'),
+    GAIOP_BIND_HOST: value('GAIOP_BIND_HOST', '127.0.0.1'),
+    OPENCLAW_WS_URL: value('OPENCLAW_WS_URL', 'ws://localhost:18789'),
+    OPENCLAW_AUTH_TOKEN: value('OPENCLAW_AUTH_TOKEN'),
+    OPENCLAW_AUTH_PASSWORD: value('OPENCLAW_AUTH_PASSWORD'),
+    DEV_FRONTEND_URL: value('DEV_FRONTEND_URL', 'http://localhost:3000'),
+    AUTH_USERNAME: value('AUTH_USERNAME'),
+    AUTH_PASSWORD: value('AUTH_PASSWORD'),
+    MEDIA_DIR: value('MEDIA_DIR'),
+    LOG_LEVEL: value('LOG_LEVEL', 'INFO'),
+    HERMES_WEB_URL: value('HERMES_WEB_URL'),
+    HERMES_API_URL: value('HERMES_API_URL'),
+    HERMES_API_KEY: value('HERMES_API_KEY'),
+    HERMES_CLI_PATH: value('HERMES_CLI_PATH'),
+    HERMES_HOME: value('HERMES_HOME'),
+    GAIOP_REPORT_PROVENANCE_ENABLED: value('GAIOP_REPORT_PROVENANCE_ENABLED', 'false'),
+    GAIOP_REPORT_PROVENANCE_SIGNING_KEY: value('GAIOP_REPORT_PROVENANCE_SIGNING_KEY'),
+    GAIOP_UPGRADE_SERVICE_URL: value('GAIOP_UPGRADE_SERVICE_URL'),
+    GAIOP_UPGRADE_INTERNAL_TOKEN: value('GAIOP_UPGRADE_INTERNAL_TOKEN'),
   }
 }
 
 let envConfig = loadEnvConfig()
+
+const allowedBindHosts = new Set(['127.0.0.1', '::1'])
+if (!allowedBindHosts.has(envConfig.GAIOP_BIND_HOST)) {
+  throw new Error('GAIOP_BIND_HOST must be a loopback address.')
+}
 
 const isDebug = envConfig.LOG_LEVEL === 'DEBUG'
 
@@ -3405,9 +3389,9 @@ import archiver from 'archiver'
 import unzipper from 'unzipper'
 import AdmZip from 'adm-zip'
 
-const BACKUP_DIR = join(__dirname, '../backups')
-const DATA_DIR = join(__dirname, '../data')
 const PROJECT_ROOT = join(__dirname, '..')
+const DATA_DIR = process.env.GAIOP_ADMIN_DATA_DIR || join(PROJECT_ROOT, 'data')
+const BACKUP_DIR = process.env.GAIOP_ADMIN_BACKUP_DIR || join(PROJECT_ROOT, 'backups')
 const WIZARD_DB_PATH = join(DATA_DIR, 'wizard.db')
 const ENV_PATH = join(PROJECT_ROOT, '.env')
 
@@ -4502,8 +4486,8 @@ if (hasDist) {
   })
 }
 
-server.listen(envConfig.PORT, () => {
-  console.log(`Server running on http://localhost:${envConfig.PORT}`)
+server.listen(envConfig.PORT, envConfig.GAIOP_BIND_HOST, () => {
+  console.log(`Server running on http://${envConfig.GAIOP_BIND_HOST}:${envConfig.PORT}`)
   console.log(`OpenClaw Gateway: ${envConfig.OPENCLAW_WS_URL}`)
   if (isAuthEnabled()) {
     console.log(`Auth enabled: user "${envConfig.AUTH_USERNAME}"`)
