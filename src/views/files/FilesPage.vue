@@ -13,6 +13,12 @@ type ReportFile = {
   reportType: string
   sourceUserId?: string | null
   sourceSessionId?: string | null
+  sourceSessionTitle?: string | null
+  sourceChannel?: string | null
+  sourceChannelUserId?: string | null
+  sourceChannelUserName?: string | null
+  sourceMessageId?: string | null
+  sourceMessagePreview?: string | null
   dataSourceId?: string | null
   mimeType: string
   size: number
@@ -60,6 +66,16 @@ const reportTypeMap: Record<string, string> = {
   summary: '汇总报告',
   scheduled: '定时报表',
 }
+const channelLabelMap: Record<string, string> = {
+  web: 'webchat',
+  feishu: '飞书',
+  lark: '飞书',
+  'openclaw-lark': '飞书',
+  dingtalk: '钉钉',
+  'dingtalk-connector': '钉钉',
+  wecom: '企业微信',
+  'wecom-openclaw-plugin': '企业微信',
+}
 const supportedReportTypes = [
   { label: '快速报告', value: 'quick_report' },
   { label: '故障分析报告', value: 'diagnostic_report' },
@@ -93,6 +109,15 @@ function headers() {
   return { Authorization: `Bearer ${authStore.getToken()}` }
 }
 
+async function readJsonResponse(response: Response, fallbackMessage: string) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase()
+  if (!contentType.includes('application/json')) {
+    const status = response.status ? `（HTTP ${response.status}）` : ''
+    throw new Error(`${fallbackMessage}${status}：服务返回了非预期响应，请刷新页面；若仍持续，请联系管理员查看 BFF 日志。`)
+  }
+  return response.json()
+}
+
 function pad(value: number) { return String(value).padStart(2, '0') }
 function formatRangeTime(value: number) {
   const date = new Date(value)
@@ -107,6 +132,24 @@ function formatSize(size?: number) {
   const units = ['B', 'KB', 'MB', 'GB']
   const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1)
   return `${(bytes / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+}
+function formatChannel(channel?: string | null) {
+  const value = String(channel || '').trim().toLowerCase()
+  return channelLabelMap[value] || channel || '未记录'
+}
+function formatSourceUser(report: ReportFile) {
+  const user = report.sourceChannelUserName || report.sourceChannelUserId || report.sourceUserId
+  if (!user) return '未记录'
+  if (String(report.sourceChannel || '').trim().toLowerCase() === 'feishu' && /^ou_[a-z0-9_-]+$/i.test(user)) {
+    return `飞书用户（${user}）`
+  }
+  return user
+}
+function formatSourceSession(report: ReportFile) {
+  const savedTitle = String(report.sourceSessionTitle || '').trim()
+  if (savedTitle) return savedTitle
+  if (String(report.sourceChannel || '').trim().toLowerCase() === 'web') return '历史 webchat 会话'
+  return report.sourceSessionId ? `${formatChannel(report.sourceChannel)} 会话` : '未记录'
 }
 function rangeForPreset(preset: Exclude<TimePreset, 'custom'>, now = serverNow.value): [number, number] {
   const date = new Date(now)
@@ -137,7 +180,7 @@ async function refresh(showMessage = true) {
   loading.value = true
   try {
     const response = await fetch('/api/reports', { headers: headers() })
-    const data = await response.json()
+    const data = await readJsonResponse(response, '获取报告列表失败')
     if (!response.ok || !data.ok) throw new Error(data.error || '获取报告列表失败')
     const responseTime = Date.parse(response.headers.get('date') || '')
     if (Number.isFinite(responseTime)) serverNow.value = responseTime
@@ -240,8 +283,10 @@ const columns: DataTableColumns<ReportFile> = [
   { title: '报告名称', key: 'name', minWidth: 260, ellipsis: { tooltip: true } },
   { title: '类型', key: 'reportType', width: 140, render: row => reportTypeMap[row.reportType] || row.reportType },
   { title: '生成时间', key: 'createdAt', width: 180, render: row => formatTime(row.createdAt) },
-  { title: '来源用户', key: 'sourceUserId', minWidth: 140, ellipsis: { tooltip: true }, render: row => row.sourceUserId || '未记录' },
-  { title: '来源会话', key: 'sourceSessionId', minWidth: 170, ellipsis: { tooltip: true }, render: row => row.sourceSessionId || '未记录' },
+  { title: '来源渠道', key: 'sourceChannel', width: 120, render: row => formatChannel(row.sourceChannel) },
+  { title: '来源用户', key: 'sourceChannelUserName', minWidth: 150, ellipsis: { tooltip: true }, render: row => formatSourceUser(row) },
+  { title: '来源会话', key: 'sourceSessionTitle', minWidth: 190, ellipsis: { tooltip: true }, render: row => formatSourceSession(row) },
+  { title: '触发消息', key: 'sourceMessagePreview', minWidth: 260, ellipsis: { tooltip: true }, render: row => row.sourceMessagePreview || '未记录' },
   { title: '来源数据源', key: 'dataSourceId', minWidth: 150, ellipsis: { tooltip: true }, render: row => row.dataSourceId || '未记录' },
   { title: '文件大小', key: 'size', width: 110, render: row => formatSize(row.size) },
   { title: '状态', key: 'status', width: 100, render: row => h(NTag, { type: statusMap[row.status]?.type || 'default', bordered: false }, { default: () => statusMap[row.status]?.label || row.status }) },

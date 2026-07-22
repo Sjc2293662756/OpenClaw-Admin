@@ -177,5 +177,10 @@ onMounted(() => { void loadConfiguration() })
 .ingestion-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 16px; }
 .enabled-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 20px 0; }
 .enabled-row strong { display: block; margin-bottom: 6px; }
+:global([data-theme='dark'] .back-button) { color: #8fc5a6; }
+:global([data-theme='dark'] .ingestion-hero) { background: linear-gradient(118deg, #241e1e, #2b1d1d); }
+:global([data-theme='dark'] .ingestion-hero h1) { color: #f0caca; }
+:global([data-theme='dark'] .ingestion-hero p),
+:global([data-theme='dark'] .enabled-row p) { color: #bca4a4; }
 @media (max-width: 760px) { .ingestion-hero__header, .enabled-row { align-items: flex-start; flex-direction: column; } .ingestion-grid { grid-template-columns: 1fr; } }
 </style>

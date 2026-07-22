@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto'
 
 const WEB_SESSION_PREFIX = 'agent:main:main:dm:webchat-'
 const SESSION_LIST_KEYS = ['sessions', 'items', 'list', 'data']
+const WEB_CHANNELS = new Set(['main', 'web', 'webchat', 'workspace'])
 
 export const SESSION_SCOPED_READ_METHODS = new Set([
   'sessions.history', 'session.history', 'chat.history',
@@ -26,6 +27,15 @@ function normalizeSessionKey(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function normalizeSourceChannel(value) {
+  const channel = normalizeSessionKey(value).toLowerCase()
+  if (['web', 'webchat', 'workspace'].includes(channel)) return 'web'
+  if (['feishu', 'lark', 'openclaw-lark', 'feishu-china'].includes(channel)) return 'feishu'
+  if (['dingtalk', 'dingtalk-connector'].includes(channel)) return 'dingtalk'
+  if (['wecom', 'wecom-app', 'wecom-openclaw-plugin'].includes(channel)) return 'wecom'
+  return channel || 'main'
+}
+
 export function getSessionKeyFromParams(params) {
   const row = asRecord(params)
   return normalizeSessionKey(row.sessionKey || row.key || row.session)
@@ -43,6 +53,35 @@ export function isManagedWebSessionKey(value) {
   return key.startsWith(WEB_SESSION_PREFIX) && /^[a-zA-Z0-9_-]{12,128}$/.test(key.slice(WEB_SESSION_PREFIX.length))
 }
 
+/**
+ * The original GAIOP Web Chat used Gateway's default `main` key before the
+ * BFF issued user-owned WebChat keys. Gateway protects that key from physical
+ * deletion, so it is treated as a legacy shared WebChat record.
+ */
+export function isLegacySharedWebSessionKey(value) {
+  return normalizeSessionKey(value).toLowerCase() === 'main'
+}
+
+export function hideLegacySharedSession(db, user, sessionKey, now = Date.now()) {
+  const key = normalizeSessionKey(sessionKey)
+  const userId = getOwnerPrincipal(user)
+  if (!isLegacySharedWebSessionKey(key) || !userId) return false
+  db.prepare(`
+    INSERT INTO hidden_legacy_sessions (session_key, hidden_by_user_id, hidden_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(session_key) DO UPDATE SET
+      hidden_by_user_id = excluded.hidden_by_user_id,
+      hidden_at = excluded.hidden_at
+  `).run(key, userId, now)
+  return true
+}
+
+export function isLegacySessionHidden(db, sessionKey) {
+  const key = normalizeSessionKey(sessionKey)
+  if (!isLegacySharedWebSessionKey(key)) return false
+  return Boolean(db.prepare('SELECT 1 FROM hidden_legacy_sessions WHERE session_key = ?').get(key))
+}
+
 export function createWorkspaceSession(db, user, now = Date.now()) {
   const ownerUserId = getOwnerPrincipal(user)
   if (!ownerUserId) throw new Error('当前登录用户缺少稳定身份标识')
@@ -54,10 +93,69 @@ export function createWorkspaceSession(db, user, now = Date.now()) {
   return sessionKey
 }
 
+/**
+ * A WebChat title is a stable preview of the first user request, not an AI
+ * summary. This deliberately avoids an extra model call, latency, and token
+ * cost while keeping the title understandable in both the workspace and
+ * management views.
+ */
+export function deriveWorkspaceSessionTitle(value, maxLength = 24) {
+  const normalized = String(value || '').replace(/\s+/gu, ' ').trim()
+  if (!normalized) return ''
+  const characters = Array.from(normalized)
+  const safeLength = Math.max(1, Math.floor(Number(maxLength) || 24))
+  return characters.length > safeLength
+    ? `${characters.slice(0, safeLength).join('')}…`
+    : normalized
+}
+
+/**
+ * Writes a title only once. Later turns must not silently rename a user’s
+ * conversation, and non-Web/Gateway sessions never get a local title.
+ */
+export function setWorkspaceSessionTitleIfEmpty(db, sessionKey, title, now = Date.now()) {
+  const key = normalizeSessionKey(sessionKey)
+  const normalizedTitle = deriveWorkspaceSessionTitle(title)
+  if (!key || !normalizedTitle) return null
+  const result = db.prepare(`
+    UPDATE workspace_sessions
+    SET session_title = ?, updated_at = ?
+    WHERE session_key = ? AND status = 'active'
+      AND (session_title IS NULL OR TRIM(session_title) = '')
+  `).run(normalizedTitle, now, key)
+  if (result.changes !== 1) return null
+  return normalizedTitle
+}
+
+function findHistoricalWebChatTitle(db, sessionKey) {
+  const key = normalizeSessionKey(sessionKey)
+  if (!key) return ''
+  const row = db.prepare('SELECT session_title FROM historical_webchat_titles WHERE session_key = ?').get(key)
+  return normalizeSessionKey(row?.session_title)
+}
+
+export function findDisplaySessionTitle(db, sessionKey) {
+  const workspace = findWorkspaceSession(db, sessionKey)
+  const workspaceTitle = normalizeSessionKey(workspace?.session_title)
+  return workspaceTitle || findHistoricalWebChatTitle(db, sessionKey)
+}
+
+export function setHistoricalWebChatTitleIfEmpty(db, sessionKey, title, now = Date.now()) {
+  const key = normalizeSessionKey(sessionKey)
+  const normalizedTitle = deriveWorkspaceSessionTitle(title)
+  if (!key || !normalizedTitle || findDisplaySessionTitle(db, key)) return null
+  db.prepare(`
+    INSERT INTO historical_webchat_titles (session_key, session_title, title_source, created_at, updated_at)
+    VALUES (?, ?, 'first_user_message', ?, ?)
+    ON CONFLICT(session_key) DO NOTHING
+  `).run(key, normalizedTitle, now, now)
+  return findHistoricalWebChatTitle(db, key) || null
+}
+
 export function findWorkspaceSession(db, sessionKey) {
   const key = normalizeSessionKey(sessionKey)
   if (!key) return null
-  return db.prepare('SELECT session_key, owner_user_id, status FROM workspace_sessions WHERE session_key = ?').get(key) || null
+  return db.prepare('SELECT session_key, owner_user_id, session_title, status FROM workspace_sessions WHERE session_key = ?').get(key) || null
 }
 
 export function canAccessWorkspaceSession(db, user, sessionKey) {
@@ -124,6 +222,158 @@ export function filterSessionListPayload(payload, allowedKeys) {
   return { ...row, sessions: [] }
 }
 
+/** Remove locally retired legacy shared sessions from every BFF list response. */
+export function filterHiddenLegacySessions(db, payload) {
+  const isVisible = (value) => !isLegacySessionHidden(db, extractRowSessionKey(value))
+  if (Array.isArray(payload)) return payload.filter(isVisible)
+  const row = asRecord(payload)
+  for (const key of SESSION_LIST_KEYS) {
+    if (Array.isArray(row[key])) return { ...row, [key]: row[key].filter(isVisible) }
+  }
+  return payload
+}
+
+function parseSessionChannelAndPeer(row) {
+  const source = asRecord(row)
+  const key = extractRowSessionKey(source)
+  const parts = key.split(':')
+  const keyChannel = parts.length >= 3 ? normalizeSessionKey(parts[2]).toLowerCase() : ''
+  const keyPeer = parts.length >= 5 ? normalizeSessionKey(parts.slice(4).join(':')) : ''
+  const channel = normalizeSourceChannel(
+    source.channel || source.lastChannel || source.platform || source.deliveryContext?.channel || keyChannel
+  )
+  const peer = normalizeSessionKey(source.peer || source.user || source.recipient || source.subject || keyPeer)
+  return { key, channel, peer }
+}
+
+function extractSessionRows(payload) {
+  if (Array.isArray(payload)) return payload
+  const row = asRecord(payload)
+  for (const key of SESSION_LIST_KEYS) {
+    if (Array.isArray(row[key])) return row[key]
+  }
+  return []
+}
+
+export function isWebChatSessionRecord(value) {
+  const { key, channel } = parseSessionChannelAndPeer(value)
+  return isLegacySharedWebSessionKey(key)
+    || isManagedWebSessionKey(key)
+    || ['web', 'webchat', 'workspace'].includes(channel)
+}
+
+function extractMessageRows(payload) {
+  if (Array.isArray(payload)) return payload
+  const row = asRecord(payload)
+  for (const key of ['messages', 'items', 'history', 'transcript', 'data']) {
+    if (Array.isArray(row[key])) return row[key]
+  }
+  return []
+}
+
+function extractMessageText(value) {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value.map((item) => extractMessageText(item)).filter(Boolean).join(' ')
+  }
+  const row = asRecord(value)
+  return normalizeSessionKey(row.text || row.content || row.message || row.value)
+}
+
+export function deriveFirstUserMessageTitle(historyPayload) {
+  for (const item of extractMessageRows(historyPayload)) {
+    const row = asRecord(item)
+    const role = normalizeSessionKey(row.role || row.sender || row.author).toLowerCase()
+    if (role !== 'user') continue
+    const title = deriveWorkspaceSessionTitle(extractMessageText(row.content || row.text || row.message))
+    if (title) return title
+  }
+  return ''
+}
+
+/**
+ * One-shot, administrator-triggered migration. The reader receives only a
+ * session key and must return that session's Gateway history. Conversation
+ * text is transformed locally into a fixed title and is never logged or sent
+ * to a model.
+ */
+export async function backfillHistoricalWebChatTitles(db, sessionListPayload, readHistory) {
+  const result = { eligible: 0, updated: 0, alreadyTitled: 0, withoutUserMessage: 0, failed: 0 }
+  for (const session of extractSessionRows(sessionListPayload)) {
+    if (!isWebChatSessionRecord(session)) continue
+    const key = extractRowSessionKey(session)
+    if (!key) continue
+    result.eligible += 1
+    if (findDisplaySessionTitle(db, key)) {
+      result.alreadyTitled += 1
+      continue
+    }
+    try {
+      const title = deriveFirstUserMessageTitle(await readHistory(key))
+      if (!title) {
+        result.withoutUserMessage += 1
+        continue
+      }
+      if (setHistoricalWebChatTitleIfEmpty(db, key, title)) result.updated += 1
+      else result.alreadyTitled += 1
+    } catch {
+      result.failed += 1
+    }
+  }
+  return result
+}
+
+function readOwnerDisplayName(db, ownerUserId) {
+  if (!db || !ownerUserId) return ''
+  try {
+    const row = db.prepare('SELECT username FROM users WHERE id = ?').get(ownerUserId)
+    return normalizeSessionKey(row?.username)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Adds presentation-only origin fields to Gateway sessions. Web ownership is
+ * resolved from the Admin registry; external channel identities remain the
+ * peer provided by Gateway and are never guessed from a display name.
+ */
+export function enrichSessionPayload(db, payload) {
+  const enrich = (value) => {
+    const row = asRecord(value)
+    const { key, channel, peer } = parseSessionChannelAndPeer(row)
+    const workspace = key ? findWorkspaceSession(db, key) : null
+    const legacySharedWeb = isLegacySharedWebSessionKey(key)
+    const isWeb = Boolean(workspace) || legacySharedWeb || WEB_CHANNELS.has(channel)
+    const ownerUserId = normalizeSessionKey(workspace?.owner_user_id)
+    const ownerUsername = readOwnerDisplayName(db, ownerUserId)
+    const gatewayChannelUserId = normalizeSessionKey(row.channelUserId || row.senderId || row.userId || peer)
+    // Some Gateway channel adapters place the platform display name in label.
+    // It is a user display fallback for external channels, never a WebChat title.
+    const gatewayChannelUserName = normalizeSessionKey(row.channelUserName || row.senderName || row.userName || row.displayName || row.label || gatewayChannelUserId)
+    const channelUserId = isWeb ? ownerUserId : gatewayChannelUserId
+    const channelUserName = isWeb ? (ownerUsername || ownerUserId) : gatewayChannelUserName
+    return {
+      ...row,
+      channel,
+      originKind: isWeb ? 'web' : 'channel',
+      sourceChannel: isWeb ? 'web' : channel,
+      ownerUserId: ownerUserId || null,
+      ownerUsername: ownerUsername || null,
+      sessionTitle: isWeb ? (findDisplaySessionTitle(db, key) || null) : null,
+      channelUserId: channelUserId || null,
+      channelUserName: channelUserName || null,
+    }
+  }
+
+  if (Array.isArray(payload)) return payload.map(enrich)
+  const row = asRecord(payload)
+  for (const key of SESSION_LIST_KEYS) {
+    if (Array.isArray(row[key])) return { ...row, [key]: row[key].map(enrich) }
+  }
+  return enrich(row)
+}
+
 export function extractSessionKeyFromEvent(payload, depth = 0) {
   if (depth > 4 || !payload || typeof payload !== 'object') return ''
   if (Array.isArray(payload)) {
@@ -146,6 +396,18 @@ export function extractSessionKeyFromEvent(payload, depth = 0) {
 export const __test__ = {
   getOwnerPrincipal,
   isManagedWebSessionKey,
+  deriveWorkspaceSessionTitle,
+  setWorkspaceSessionTitleIfEmpty,
+  findDisplaySessionTitle,
+  setHistoricalWebChatTitleIfEmpty,
+  isWebChatSessionRecord,
+  deriveFirstUserMessageTitle,
+  backfillHistoricalWebChatTitles,
+  isLegacySharedWebSessionKey,
+  hideLegacySharedSession,
+  isLegacySessionHidden,
   filterSessionListPayload,
+  filterHiddenLegacySessions,
+  enrichSessionPayload,
   extractSessionKeyFromEvent,
 }

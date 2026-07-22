@@ -35,17 +35,18 @@ systemctl is-active --quiet gaiop-admin.service
 mark_phase 'LOOPBACK_LISTENER'
 listener_scope='other-or-none'
 for i in $(seq 1 45); do
-  listeners=$(ss -ltn '( sport = :3000 )')
-  if printf '%s\\n' "$listeners" | grep -Eq '127\\.0\\.0\\.1:3000'; then
-    listener_scope='loopback-ipv4'
-    break
-  elif printf '%s\\n' "$listeners" | grep -Eq '\[::1\]:3000'; then
-    listener_scope='loopback-ipv6'
-    break
-  elif printf '%s\\n' "$listeners" | grep -Eq '0\\.0\\.0\\.0:3000|\[::\]:3000|\\*:3000'; then
-    listener_scope='wildcard'
-    break
-  fi
+  listener_scope=$(ss -ltnH '( sport = :3000 )' | awk '
+    $4 == "0.0.0.0:3000" || $4 == "[::]:3000" || $4 == "*:3000" { wildcard=1 }
+    $4 == "127.0.0.1:3000" { ipv4=1 }
+    $4 == "[::1]:3000" { ipv6=1 }
+    END {
+      if (wildcard) print "wildcard"
+      else if (ipv4) print "loopback-ipv4"
+      else if (ipv6) print "loopback-ipv6"
+      else print "other-or-none"
+    }
+  ')
+  if [ "$listener_scope" != 'other-or-none' ]; then break; fi
   sleep 1
 done
 if [ "$listener_scope" = 'loopback-ipv4' ]; then

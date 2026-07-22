@@ -8,6 +8,13 @@ export interface Session {
   model?: string
   tokenUsage?: TokenUsage
   label?: string
+  sessionTitle?: string | null
+  originKind?: 'web' | 'channel'
+  sourceChannel?: string
+  ownerUserId?: string | null
+  ownerUsername?: string | null
+  channelUserId?: string | null
+  channelUserName?: string | null
 }
 
 export interface SessionDetail extends Session {

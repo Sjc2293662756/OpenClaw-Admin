@@ -69,6 +69,7 @@ expected_sha='${checksum}'
 created_unit=0
 created_env=0
 committed=0
+service_was_active=0
 phase='INITIAL'
 mark_phase() { phase="$1"; printf 'PHASE_%s\\n' "$phase"; }
 ensure_fixed_env() {
@@ -96,16 +97,14 @@ rollback() {
     fi
     if [ "$created_env" -eq 1 ]; then rm -f -- "$env_file"; fi
     systemctl daemon-reload || true
+    if [ "$service_was_active" -eq 1 ]; then systemctl start gaiop-admin.service || true; fi
   fi
   exit "$status"
 }
 trap rollback ERR
 
 mark_phase 'PRECHECK'
-if systemctl is-active --quiet gaiop-admin.service; then
-  printf 'BLOCK_EXISTING_ACTIVE_SERVICE\\n'
-  exit 42
-fi
+if systemctl is-active --quiet gaiop-admin.service; then service_was_active=1; fi
 if [ -e "$stage_root" ]; then
   printf 'BLOCK_STAGING_PATH_EXISTS\\n'
   exit 43
@@ -131,7 +130,13 @@ mark_phase 'DIRECTORIES'
 if ! id -u gaiop >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/gaiop --shell /usr/sbin/nologin gaiop
 fi
-install -d -o gaiop -g gaiop -m 0750 /opt/gaiop /var/lib/gaiop /var/lib/gaiop/admin /var/lib/gaiop/reports /var/lib/gaiop/runtime /var/log/gaiop
+install -d -o gaiop -g gaiop -m 0750 /opt/gaiop /var/lib/gaiop /var/lib/gaiop/admin /var/lib/gaiop/runtime /var/log/gaiop
+# The formal report archive may carry an additional Gateway ACL.  Do not run
+# install(1) with a mode on an existing archive directory: that resets the ACL
+# mask and can silently downgrade the Gateway from read-write to read-only.
+if [ ! -d /var/lib/gaiop/reports ]; then
+  install -d -o gaiop -g gaiop -m 0750 /var/lib/gaiop/reports
+fi
 install -d -o root -g gaiop -m 0750 /etc/gaiop
 install -d -o gaiop -g gaiop -m 0750 "$stage_root"
 mark_phase 'EXTRACT'
@@ -148,11 +153,8 @@ if [ -d "$final_root/node_modules" ] && cmp -s "$stage_root/package-lock.json" "
   reused_dependencies=1
 fi
 
-mark_phase 'RELEASE_SWITCH'
-if [ -e "$final_root" ]; then mv -- "$final_root" "$backup_root/preexisting-admin"; fi
-mv -- "$stage_root" "$final_root"
-cd "$final_root"
 mark_phase 'DEPENDENCIES'
+cd "$stage_root"
 if [ "$reused_dependencies" -eq 1 ] && npm ls --omit=dev --all >/dev/null 2>&1; then
   printf 'DEPENDENCIES_REUSED\\n'
 else
@@ -243,6 +245,18 @@ created_unit=1
 mark_phase 'UNIT_VALIDATE'
 systemctl daemon-reload
 systemd-analyze verify "$unit_file"
+mark_phase 'RELEASE_SWITCH'
+if [ "$service_was_active" -eq 1 ]; then
+  mark_phase 'SERVICE_STOP'
+  systemctl stop gaiop-admin.service
+  for _ in $(seq 1 30); do
+    systemctl is-active --quiet gaiop-admin.service || break
+    sleep 1
+  done
+  if systemctl is-active --quiet gaiop-admin.service; then exit 45; fi
+fi
+if [ -e "$final_root" ]; then mv -- "$final_root" "$backup_root/preexisting-admin"; fi
+mv -- "$stage_root" "$final_root"
 committed=1
 printf 'STAGE_COMPLETE\\n'
 printf 'SERVICE_NOT_STARTED\\n'

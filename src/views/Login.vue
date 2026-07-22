@@ -213,6 +213,7 @@ function handleRetry() {
 
 <style scoped>
 .login-page {
+  color-scheme: light;
   min-height: 100vh;
   overflow: hidden;
   position: relative;
@@ -331,6 +332,18 @@ function handleRetry() {
 
 .login-input :deep(.n-input-wrapper) {
   border-radius: 10px;
+}
+
+.login-input {
+  --n-color: #ffffff !important;
+  --n-color-focus: #f8fffb !important;
+  --n-text-color: #173e31 !important;
+  --n-placeholder-color: #8aa397 !important;
+  --n-caret-color: #087249 !important;
+  --n-border: 1px solid #cfe2d7 !important;
+  --n-border-hover: 1px solid #69bd8c !important;
+  --n-border-focus: 1px solid #25a56d !important;
+  --n-box-shadow-focus: 0 0 0 2px rgba(37, 165, 109, 0.14) !important;
 }
 
 .password-wrapper { position: relative; }

@@ -87,15 +87,21 @@ function syncGeneratedReports(db) {
   const insert = db.prepare(`
     INSERT INTO report_files (
       id, stored_name, audit_name, original_name, report_type,
-      source_session_id, source_user_id, data_source_id, mime_type,
-      size, status, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      source_session_id, source_user_id, source_channel, source_channel_user_id,
+      source_channel_user_name, source_message_id, source_message_preview,
+      data_source_id, mime_type, size, status, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(stored_name) DO UPDATE SET
       audit_name = excluded.audit_name,
       original_name = excluded.original_name,
       report_type = excluded.report_type,
       source_session_id = excluded.source_session_id,
       source_user_id = excluded.source_user_id,
+      source_channel = excluded.source_channel,
+      source_channel_user_id = excluded.source_channel_user_id,
+      source_channel_user_name = excluded.source_channel_user_name,
+      source_message_id = excluded.source_message_id,
+      source_message_preview = excluded.source_message_preview,
       data_source_id = excluded.data_source_id,
       mime_type = excluded.mime_type,
       size = excluded.size,
@@ -145,6 +151,11 @@ function syncGeneratedReports(db) {
         safeText(audit.reportType) || 'analysis',
         safeText(audit.sourceSessionId),
         sourceUserId,
+        safeText(audit.sourceChannel),
+        safeText(audit.sourceChannelUserId),
+        safeText(audit.sourceChannelUserName),
+        safeText(audit.sourceMessageId),
+        safeText(audit.sourceMessagePreview),
         safeText(audit.dataSourceId),
         inferMimeType(storedName),
         exists ? statSync(reportPath).size : 0,
@@ -172,7 +183,13 @@ function publicReport(row) {
     name: row.original_name,
     reportType: row.report_type,
     sourceSessionId: row.source_session_id || null,
+    sourceSessionTitle: row.source_session_title || null,
     sourceUserId: row.source_user_id || null,
+    sourceChannel: row.source_channel || null,
+    sourceChannelUserId: row.source_channel_user_id || null,
+    sourceChannelUserName: row.source_channel_user_name || null,
+    sourceMessageId: row.source_message_id || null,
+    sourceMessagePreview: row.source_message_preview || null,
     dataSourceId: row.data_source_id || null,
     mimeType: row.mime_type,
     size,
@@ -215,36 +232,49 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
   const router = Router()
 
   router.get('/', authMiddleware, (req, res) => {
-    syncGeneratedReports(db)
-    const filters = {
-      sourceUserId: readExactFilter(req.query.sourceUserId),
-      sourceSessionId: readExactFilter(req.query.sourceSessionId),
-      dataSourceId: readExactFilter(req.query.dataSourceId),
-    }
-    const filterColumns = {
-      sourceUserId: 'source_user_id',
-      sourceSessionId: 'source_session_id',
-      dataSourceId: 'data_source_id',
-    }
-    const conditions = []
-    const values = []
-    if (req.user?.role !== 'admin') {
-      const userId = safeText(req.user?.id)
-      if (!userId) {
-        conditions.push('1 = 0')
-      } else {
-        filters.sourceUserId = userId
+    try {
+      syncGeneratedReports(db)
+      const filters = {
+        sourceUserId: readExactFilter(req.query.sourceUserId),
+        sourceSessionId: readExactFilter(req.query.sourceSessionId),
+        dataSourceId: readExactFilter(req.query.dataSourceId),
       }
-    }
-    for (const [key, column] of Object.entries(filterColumns)) {
-      if (filters[key]) {
-        conditions.push(`${column} = ?`)
-        values.push(filters[key])
+      const filterColumns = {
+        sourceUserId: 'report_files.source_user_id',
+        sourceSessionId: 'report_files.source_session_id',
+        dataSourceId: 'report_files.data_source_id',
       }
+      const conditions = []
+      const values = []
+      if (req.user?.role !== 'admin') {
+        const userId = safeText(req.user?.id)
+        if (!userId) {
+          conditions.push('1 = 0')
+        } else {
+          filters.sourceUserId = userId
+        }
+      }
+      for (const [key, column] of Object.entries(filterColumns)) {
+        if (filters[key]) {
+          conditions.push(`${column} = ?`)
+          values.push(filters[key])
+        }
+      }
+      const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
+      const rows = db.prepare(`
+        SELECT report_files.*, workspace_sessions.session_title AS source_session_title
+        FROM report_files
+        LEFT JOIN workspace_sessions ON workspace_sessions.session_key = report_files.source_session_id
+        ${where}
+        ORDER BY report_files.created_at DESC
+      `).all(...values)
+      sendOk(res, { reports: rows.map(publicReport), filters, reportRootReady: true })
+    } catch (error) {
+      // Keep API failures JSON-shaped. Otherwise Express emits an HTML error
+      // page and the SPA masks the useful failure with a JSON parse exception.
+      console.error('[Reports] Failed to load report list:', error instanceof Error ? error.message : 'unknown error')
+      sendError(res, { status: 500, code: 'REPORT_LIST_FAILED', message: '报告列表暂时无法读取，请稍后刷新或联系管理员查看服务日志' })
     }
-    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
-    const rows = db.prepare(`SELECT * FROM report_files${where} ORDER BY created_at DESC`).all(...values)
-    sendOk(res, { reports: rows.map(publicReport), filters, reportRootReady: true })
   })
 
   router.get('/:id/download', authMiddleware, (req, res) => {

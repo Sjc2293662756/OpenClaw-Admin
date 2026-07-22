@@ -180,4 +180,5 @@ onMounted(() => { refresh(false) })
 .runtime-note { line-height: 1.65; }
 .data-source-card { min-width: 0; min-height: 360px; }
 .data-source-meta { margin-top: 3px; color: #7b8e83; font-size: 12px; line-height: 1.4; }
+:global([data-theme='dark'] .data-source-meta) { color: #91a79a; }
 </style>

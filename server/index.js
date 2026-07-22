@@ -1,5 +1,6 @@
 import express from 'express'
 import cors from 'cors'
+import compression from 'compression'
 import { createServer } from 'http'
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
 import { fileURLToPath } from 'url'
@@ -36,12 +37,18 @@ import {
   SESSION_SCOPED_READ_METHODS,
   SESSION_SCOPED_WRITE_METHODS,
   canAccessWorkspaceSession,
+  enrichSessionPayload,
   ensureWorkspaceSessionAccess,
   extractSessionKeyFromEvent,
+  filterHiddenLegacySessions,
   filterSessionListPayload,
   getSessionKeyFromParams,
+  hideLegacySharedSession,
+  isLegacySessionHidden,
+  isLegacySharedWebSessionKey,
   listOwnedWorkspaceSessionKeys,
   markWorkspaceSessionDeleted,
+  setWorkspaceSessionTitleIfEmpty,
 } from './lib/session-ownership-service.js'
 import { attachReportProvenance } from './report-provenance-service.js'
 import { decryptDataSourcePassword, encryptDataSourcePassword, isDataSourceEncryptionReady, testNapmDataSource, toPublicDataSource, validateDataSourceInput } from './data-source-service.js'
@@ -103,6 +110,10 @@ const hasDist = existsSync(join(distPath, 'index.html'))
 const sessions = new Map()
 
 app.use(cors())
+app.use(compression({
+  threshold: 1024,
+  filter: (req, res) => req.path !== '/api/events' && compression.filter(req, res),
+}))
 app.use(express.json())
 
 // Hermes 相关源码按产品迁移需要保留，但当前 GAIOP 正式运行态不启用该模式。
@@ -531,7 +542,12 @@ app.use('/api/channels', createChannelsRouter({
   gateway,
   getGateway: () => gateway,
 }))
-app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({ db, authMiddleware, operatorMiddleware, recordAudit }))
+app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({
+  db,
+  authMiddleware,
+  operatorMiddleware,
+  recordAudit,
+}))
 app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
 
 // 迁移保留：阶段 B 已由下方独立路由接管这些 API。保留旧实现仅用于短期回归比对，
@@ -1611,6 +1627,9 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
   const isSessionScoped = SESSION_SCOPED_READ_METHODS.has(method) || SESSION_SCOPED_WRITE_METHODS.has(method)
   const sessionKey = isSessionScoped ? getSessionKeyFromParams(params) : ''
   if (isSessionScoped) {
+    if (isLegacySessionHidden(db, sessionKey)) {
+      return sendError(res, { status: 404, code: 'SESSION_NOT_FOUND', message: '会话不存在或无权访问' })
+    }
     const access = ensureWorkspaceSessionAccess(db, req.user, sessionKey)
     if (!access.ok) {
       return sendError(res, { status: 404, code: access.code, message: access.message })
@@ -1618,9 +1637,22 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
   }
 
   try {
+    // OpenClaw protects its default `main` session from physical deletion.
+    // Retire that old shared WebChat record from GAIOP instead of bypassing
+    // Gateway safeguards or mutating its private storage.
+    if ((method === 'sessions.delete' || method === 'session.delete') && isLegacySharedWebSessionKey(sessionKey)) {
+      if (!hideLegacySharedSession(db, req.user, sessionKey)) {
+        throw new Error('历史共享会话无法移出列表')
+      }
+      recordAudit(req.user, '移出历史共享会话', sessionKey, '已从 GAIOP 会话列表隐藏；未修改 Gateway 历史')
+      return res.json({ ok: true, payload: { key: sessionKey, retired: true } })
+    }
     const activeDataSource = method === 'chat.send'
       ? db.prepare('SELECT id FROM data_sources WHERE is_active = 1 LIMIT 1').get()
       : null
+    const webSessionTitleCandidate = method === 'chat.send'
+      ? String(params?.message || params?.input || '').trim()
+      : ''
     const reportProvenance = method === 'chat.send'
       ? attachReportProvenance(params, req.user, {
         enabled: envConfig.GAIOP_REPORT_PROVENANCE_ENABLED === 'true',
@@ -1629,11 +1661,18 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
       })
       : { params, attached: false }
     const result = await gateway.call(method, reportProvenance.params)
+    // Save the first successful WebChat request as its fixed, local title.
+    // The title is never model-generated and is not sent to the Gateway.
+    if (method === 'chat.send') setWorkspaceSessionTitleIfEmpty(db, sessionKey, webSessionTitleCandidate)
     let payload = method === 'config.get' && req.user?.role !== 'admin'
       ? sanitizeGatewayConfigPayload(result)
       : result
     if (isSessionList) {
       payload = filterSessionListPayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))
+      payload = filterHiddenLegacySessions(db, payload)
+      payload = enrichSessionPayload(db, payload)
+    } else if (method === 'sessions.get' || method === 'session.get') {
+      payload = enrichSessionPayload(db, payload)
     }
     if (method === 'sessions.delete' || method === 'session.delete') {
       markWorkspaceSessionDeleted(db, sessionKey)
@@ -4464,10 +4503,15 @@ app.post('/api/backup/upload', adminMiddleware, backupUpload.single('backup'), a
 })
 
 if (hasDist) {
-  app.use(express.static(distPath))
+  app.use(express.static(distPath, {
+    immutable: true,
+    index: false,
+    maxAge: '1y',
+  }))
 
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api')) {
+      res.set('Cache-Control', 'no-cache')
       res.sendFile(join(distPath, 'index.html'))
     } else {
       next()

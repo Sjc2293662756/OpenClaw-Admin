@@ -1,10 +1,25 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NetInside 观枢 GAIOP 智能运维分析平台</title>
+    <script>
+      // 在 Vue 和样式加载前确定主题，避免首次打开受操作系统深色偏好影响或出现黑色闪屏。
+      (() => {
+        try {
+          const lightOnlyRoute = /^\/(?:login|welcome)\/?$/.test(window.location.pathname)
+          const saved = localStorage.getItem('gaiop_theme') || localStorage.getItem('openclaw_theme')
+          const theme = lightOnlyRoute ? 'light' : (saved === 'dark' ? 'dark' : 'light')
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+        } catch {
+          document.documentElement.dataset.theme = 'light'
+          document.documentElement.style.colorScheme = 'light'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>

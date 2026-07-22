@@ -46,6 +46,7 @@ function ensureLocalServers() {
   for (const tunnel of tunnels) {
     if (servers.has(tunnel.localPort)) continue
     const server = net.createServer((socket) => {
+    socket.setNoDelay(true)
     const activeConnection = connection
     if (!connectionReady || !activeConnection) {
       socket.destroy(new Error('Gateway SSH connection is temporarily unavailable.'))
@@ -102,6 +103,7 @@ function connectSsh() {
       nextConnection.end()
       return
     }
+    nextConnection.setNoDelay(true)
     connectionReady = true
     reconnectAttempts = 0
     ensureLocalServers()

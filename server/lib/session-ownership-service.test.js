@@ -2,12 +2,20 @@ import Database from 'better-sqlite3'
 import { describe, expect, it } from 'vitest'
 import {
   canAccessWorkspaceSession,
+  backfillHistoricalWebChatTitles,
   createWorkspaceSession,
+  deriveWorkspaceSessionTitle,
+  deriveFirstUserMessageTitle,
+  enrichSessionPayload,
   ensureWorkspaceSessionAccess,
   extractSessionKeyFromEvent,
+  filterHiddenLegacySessions,
   filterSessionListPayload,
+  hideLegacySharedSession,
+  isLegacySessionHidden,
   listOwnedWorkspaceSessionKeys,
   markWorkspaceSessionDeleted,
+  setWorkspaceSessionTitleIfEmpty,
 } from './session-ownership-service.js'
 
 function createTestDb() {
@@ -16,12 +24,30 @@ function createTestDb() {
     CREATE TABLE workspace_sessions (
       session_key TEXT PRIMARY KEY,
       owner_user_id TEXT NOT NULL,
+      session_title TEXT,
       status TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       deleted_at INTEGER
     );
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL
+    );
+    CREATE TABLE hidden_legacy_sessions (
+      session_key TEXT PRIMARY KEY,
+      hidden_by_user_id TEXT NOT NULL,
+      hidden_at INTEGER NOT NULL
+    );
+    CREATE TABLE historical_webchat_titles (
+      session_key TEXT PRIMARY KEY,
+      session_title TEXT NOT NULL,
+      title_source TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
   `)
+  db.prepare('INSERT INTO users (id, username) VALUES (?, ?), (?, ?)').run('user-alice', 'alice', 'user-bob', 'bob')
   return db
 }
 
@@ -66,9 +92,99 @@ describe('workspace session ownership service', () => {
     expect(listOwnedWorkspaceSessionKeys(db, alice)).toEqual(new Set())
   })
 
+  it('retires the old shared main WebChat locally without attempting Gateway storage deletion', () => {
+    const db = createTestDb()
+    expect(hideLegacySharedSession(db, admin, 'main', 5)).toBe(true)
+    expect(isLegacySessionHidden(db, 'main')).toBe(true)
+    expect(filterHiddenLegacySessions(db, { sessions: [{ key: 'main' }, { key: 'agent:main:feishu:dm:open-id-1' }] })).toEqual({
+      sessions: [{ key: 'agent:main:feishu:dm:open-id-1' }],
+    })
+    expect(hideLegacySharedSession(db, admin, 'agent:main:main:dm:webchat-123456789012', 6)).toBe(false)
+  })
+
   it('finds a nested Gateway event session key before event delivery is authorized', () => {
     expect(extractSessionKeyFromEvent({
       payload: { message: { sessionKey: 'agent:main:main:dm:webchat-123456789012' } },
     })).toBe('agent:main:main:dm:webchat-123456789012')
+  })
+
+  it('derives and persists a fixed, no-AI WebChat title only from the first request', () => {
+    const db = createTestDb()
+    const key = createWorkspaceSession(db, alice, 1)
+
+    expect(deriveWorkspaceSessionTitle('  今天业务系统的情况怎么样， 有什么报错或慢访问吗？  ')).toBe('今天业务系统的情况怎么样， 有什么报错或慢访问吗…')
+    expect(setWorkspaceSessionTitleIfEmpty(db, key, '今天业务系统的情况怎么样， 有什么报错或慢访问吗？', 2)).toBe('今天业务系统的情况怎么样， 有什么报错或慢访问吗…')
+    expect(setWorkspaceSessionTitleIfEmpty(db, key, '这条后续消息不能覆盖标题', 3)).toBeNull()
+    expect(enrichSessionPayload(db, [{ key }])[0]).toMatchObject({
+      sessionTitle: '今天业务系统的情况怎么样， 有什么报错或慢访问吗…',
+    })
+  })
+
+  it('backfills a legacy WebChat title from its first user message without reading external channels', async () => {
+    const db = createTestDb()
+    const webKey = 'agent:main:main:dm:webchat-123456789012'
+    const requestedKeys = []
+    const result = await backfillHistoricalWebChatTitles(db, {
+      sessions: [
+        { key: webKey, channel: 'main' },
+        { key: 'agent:main:feishu:dm:open-id-1', channel: 'feishu' },
+      ],
+    }, async (key) => {
+      requestedKeys.push(key)
+      return { messages: [
+        { role: 'assistant', content: '欢迎' },
+        { role: 'user', content: '  分析今天业务系统是否有报错和慢访问  ' },
+        { role: 'user', content: '后续问题不会覆盖标题' },
+      ] }
+    })
+
+    expect(requestedKeys).toEqual([webKey])
+    expect(result).toEqual({ eligible: 1, updated: 1, alreadyTitled: 0, withoutUserMessage: 0, failed: 0 })
+    expect(deriveFirstUserMessageTitle({ messages: [{ role: 'user', content: '第一条问题' }] })).toBe('第一条问题')
+    expect(enrichSessionPayload(db, { sessions: [{ key: webKey, channel: 'main' }] }).sessions[0]).toMatchObject({
+      sessionTitle: '分析今天业务系统是否有报错和慢访问',
+      channelUserId: null,
+      channelUserName: null,
+    })
+  })
+
+  it('adds a stable Web owner or external channel peer to the visible session origin', () => {
+    const db = createTestDb()
+    const webSession = createWorkspaceSession(db, alice, 1)
+    const payload = enrichSessionPayload(db, {
+      sessions: [
+        { key: 'main', channel: 'main', label: 'OpenClaw Web Backend' },
+        { key: webSession, channel: 'main', peer: 'webchat-fallback' },
+        { key: 'agent:main:feishu:dm:open-id-1', channel: 'openclaw-lark', peer: 'open-id-1' },
+        { key: 'agent:main:dingtalk-connector:dm:030856161901851437', channel: 'dingtalk-connector', label: '杨硕', peer: '030856161901851437' },
+      ],
+    })
+
+    expect(payload.sessions[0]).toMatchObject({
+      originKind: 'web',
+      sourceChannel: 'web',
+      ownerUserId: null,
+      ownerUsername: null,
+    })
+    expect(payload.sessions[1]).toMatchObject({
+      originKind: 'web',
+      sourceChannel: 'web',
+      ownerUserId: 'user-alice',
+      ownerUsername: 'alice',
+      channelUserName: 'alice',
+      sessionTitle: null,
+    })
+    expect(payload.sessions[2]).toMatchObject({
+      originKind: 'channel',
+      sourceChannel: 'feishu',
+      channelUserId: 'open-id-1',
+      channelUserName: 'open-id-1',
+    })
+    expect(payload.sessions[3]).toMatchObject({
+      originKind: 'channel',
+      sourceChannel: 'dingtalk',
+      channelUserId: '030856161901851437',
+      channelUserName: '杨硕',
+    })
   })
 })

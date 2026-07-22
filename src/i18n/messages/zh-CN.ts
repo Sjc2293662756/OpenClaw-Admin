@@ -1311,6 +1311,7 @@ export default {
         },
         activeTime: '活动时间：{time}',
         viewDetail: '查看详情',
+        continueConversation: '继续对话',
         newAction: 'New',
         confirmNew: '确认为该会话启动新会话？',
         newSuccess: '已启动新会话',

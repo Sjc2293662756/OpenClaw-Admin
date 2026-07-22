@@ -30,6 +30,7 @@ import {
   TrashOutline,
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useAgentStore } from '@/stores/agent'
 import { useConfigStore } from '@/stores/config'
@@ -47,6 +48,7 @@ type SessionRow = Session & {
 const sessionStore = useSessionStore()
 const agentStore = useAgentStore()
 const configStore = useConfigStore()
+const router = useRouter()
 const message = useMessage()
 const { t } = useI18n()
 
@@ -58,7 +60,7 @@ const showCreateModal = ref(false)
 const creating = ref(false)
 const createForm = ref({
   agentId: 'main',
-  channel: 'main',
+  channel: 'webchat',
   peer: '',
   label: '',
 })
@@ -137,13 +139,58 @@ const deliveryChannelLabelMap: Record<string, string> = {
   imessage: 'iMessage',
   qqbot: 'QQ Bot',
   qq: 'QQ',
-  webchat: 'WebChat',
-  main: 'Main',
+  webchat: 'webchat',
+  'openclaw-lark': '飞书',
+  lark: '飞书',
+  'dingtalk-connector': '钉钉',
+  'wecom-openclaw-plugin': '企业微信',
+  main: 'GAIOP Web Chat',
 }
 
 function formatChannelLabel(channelKey: string): string {
   const normalized = channelKey.trim().toLowerCase()
+  if (normalized === 'web') return 'webchat'
+  if (normalized === 'feishu' || normalized === 'lark') return '飞书'
+  if (normalized === 'dingtalk') return '钉钉'
+  if (normalized === 'wecom') return '企业微信'
   return deliveryChannelLabelMap[normalized] || channelKey
+}
+
+function isWebChatSession(session: SessionRow): boolean {
+  return session.originKind === 'web'
+    || session.sourceChannel === 'web'
+    || session.key.trim().toLowerCase() === 'main'
+    || session.key.includes(':dm:webchat-')
+}
+
+function isLegacySharedWebChatSession(session: SessionRow): boolean {
+  return session.key.trim().toLowerCase() === 'main'
+}
+
+function displaySessionTitle(session: SessionRow): string {
+  const savedTitle = session.sessionTitle?.trim()
+  if (savedTitle) return savedTitle
+  if (isLegacySharedWebChatSession(session)) return 'GAIOP Web Chat'
+  if (isWebChatSession(session)) return 'GAIOP Web Chat'
+  return `${sessionChannelLabel(session)} 会话`
+}
+
+function sessionChannelLabel(session: SessionRow): string {
+  if (isWebChatSession(session)) return 'GAIOP Web Chat'
+  return formatChannelLabel(session.sourceChannel || session.channel || session.parsed.channel || 'main')
+}
+
+function sessionChannelUser(session: SessionRow): string {
+  if (isLegacySharedWebChatSession(session)) return '历史共享会话（无账户归属）'
+  if (isWebChatSession(session)) {
+    return session.channelUserName || session.channelUserId || session.ownerUsername || '历史 webchat 用户未登记'
+  }
+  const display = session.channelUserName || session.ownerUsername || session.label || session.channelUserId || session.peer || session.parsed.peer
+  if (!display) return '-'
+  if ((session.sourceChannel || session.channel || session.parsed.channel) === 'feishu' && /^ou_[a-z0-9_-]+$/i.test(display)) {
+    return `飞书用户（${display}）`
+  }
+  return display
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -179,8 +226,7 @@ const configuredChannelConfigMap = computed<Record<string, unknown>>(() => {
 
 const channelOptionsForCreate = computed<SelectOption[]>(() => {
   const options: SelectOption[] = [
-    { label: 'Main', value: 'main' },
-    { label: 'WebChat', value: 'webchat' },
+    { label: 'GAIOP Web Chat', value: 'webchat' },
   ]
   const seen = new Set<string>(['main', 'webchat'])
   const channels = configuredChannelConfigMap.value
@@ -218,12 +264,15 @@ const sessionRows = computed<SessionRow[]>(() => {
 })
 
 const channelOptions = computed<SelectOption[]>(() => {
-  const set = new Set(sessionRows.value.map((item) => item.parsed.channel).filter(Boolean))
+  const set = new Set(sessionRows.value.map((item) => item.sourceChannel || item.parsed.channel).filter(Boolean))
   return [
     { label: t('pages.sessions.list.filters.allChannels'), value: 'all' },
     ...Array.from(set)
       .sort((a, b) => a.localeCompare(b))
-      .map((channel) => ({ label: channel, value: channel })),
+      .map((channel) => ({
+        label: channel === 'main' ? 'GAIOP Web Chat' : formatChannelLabel(channel),
+        value: channel,
+      })),
   ]
 })
 
@@ -241,7 +290,7 @@ const filteredSessions = computed<SessionRow[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
 
   let list = sessionRows.value.filter((item) => {
-    if (channelFilter.value !== 'all' && item.parsed.channel !== channelFilter.value) return false
+    if (channelFilter.value !== 'all' && (item.sourceChannel || item.parsed.channel) !== channelFilter.value) return false
     if (modelFilter.value !== 'all' && (item.model || '') !== modelFilter.value) return false
 
     if (!q) return true
@@ -250,6 +299,10 @@ const filteredSessions = computed<SessionRow[]>(() => {
       item.parsed.agent,
       item.parsed.channel,
       item.parsed.peer,
+      item.sourceChannel || '',
+      item.channelUserId || '',
+      item.channelUserName || '',
+      item.ownerUsername || '',
       item.model || '',
       item.label || '',
     ].some((field) => field.toLowerCase().includes(q))
@@ -270,7 +323,7 @@ const stats = computed(() => {
   const total = sessionRows.value.length
   const active24h = sessionRows.value.filter((item) => item.active24h).length
   const totalMessages = sessionRows.value.reduce((acc, item) => acc + (item.messageCount || 0), 0)
-  const uniqueChannels = new Set(sessionRows.value.map((item) => item.parsed.channel).filter(Boolean)).size
+  const uniqueChannels = new Set(sessionRows.value.map((item) => item.sourceChannel || item.parsed.channel).filter(Boolean)).size
   return {
     total,
     active24h,
@@ -288,22 +341,43 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
     key: 'session',
     minWidth: 320,
     render(row) {
+      const title = displaySessionTitle(row)
       return h(NSpace, { vertical: true, size: 3 }, () => [
         h(NSpace, { size: 6, align: 'center' }, () => [
           h(NTag, { size: 'small', type: 'info', bordered: false, round: true }, { default: () => row.parsed.agent }),
-          h(NTag, { size: 'small', bordered: false, round: true }, { default: () => row.parsed.channel }),
+          h(NTag, { size: 'small', bordered: false, round: true }, { default: () => sessionChannelLabel(row) }),
           row.active24h
             ? h(NTag, { size: 'small', bordered: false, type: 'success', round: true }, { default: () => t('pages.sessions.list.badges.active24h') })
             : null,
         ]),
         h(
-          NText,
-          { style: 'font-size: 13px;' },
-          { default: () => row.parsed.peer || '-' }
+          'span',
+          {
+            class: 'session-title-ellipsis',
+            title,
+            style: 'display:block; max-width:240px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;',
+          },
+          title
         ),
-        row.label
-          ? h(NText, { depth: 3, style: 'font-size: 12px; font-style: italic;' }, { default: () => row.label })
-          : null,
+        // Gateway's historical label is internal transport metadata (for
+        // example “OpenClaw Web Backend”), not a GAIOP-facing session name.
+        // External channel labels are shown only through 渠道用户 above.
+      ])
+    },
+  },
+  {
+    title: '渠道用户',
+    key: 'channelUser',
+    minWidth: 170,
+    ellipsis: { tooltip: true },
+    render(row) {
+      return h(NSpace, { vertical: true, size: 2 }, () => [
+        h(NText, { style: 'font-size: 13px;' }, { default: () => sessionChannelUser(row) }),
+        row.originKind === 'web' && row.ownerUsername
+          ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => 'GAIOP 登录用户' })
+          : row.originKind === 'channel'
+            ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => '外部频道用户' })
+            : null,
       ])
     },
   },
@@ -351,24 +425,18 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
     render(row) {
       return h(NSpace, { size: 8, wrap: false, class: 'sessions-row-actions' }, () => [
         h(
-          NPopconfirm,
-          { onPositiveClick: () => handleNew(row) },
+          NButton,
           {
-            trigger: () => h(
-              NButton,
-              {
-                size: 'small',
-                type: 'success',
-                secondary: true,
-                strong: true,
-                class: 'sessions-action-btn sessions-action-btn--new',
-              },
-              {
-                icon: () => h(NIcon, { component: RefreshOutline }),
-                default: () => t('pages.sessions.list.newAction'),
-              }
-            ),
-            default: () => t('pages.sessions.list.confirmNew'),
+            size: 'small',
+            type: 'success',
+            secondary: true,
+            strong: true,
+            class: 'sessions-action-btn sessions-action-btn--continue',
+            onClick: () => handleContinueConversation(row),
+          },
+          {
+            icon: () => h(NIcon, { component: ChatbubblesOutline }),
+            default: () => t('pages.sessions.list.continueConversation'),
           }
         ),
         h(
@@ -440,13 +508,8 @@ async function handleRefresh() {
   await sessionStore.fetchSessions()
 }
 
-async function handleNew(session: SessionRow) {
-  try {
-    await sessionStore.newSession(session.key)
-    message.success(t('pages.sessions.list.newSuccess'))
-  } catch {
-    message.error(t('pages.sessions.list.newFailed'))
-  }
+function handleContinueConversation(session: SessionRow) {
+  void router.push({ name: 'ChatWorkspace', query: { session: session.key } })
 }
 
 async function handleDelete(session: SessionRow) {
@@ -490,7 +553,7 @@ function handleSelectAll() {
 function openCreateModal() {
   createForm.value = {
     agentId: 'main',
-    channel: 'main',
+    channel: 'webchat',
     peer: '',
     label: '',
   }
@@ -502,7 +565,7 @@ async function handleCreateSession() {
   try {
     await sessionStore.createSession({
       agentId: createForm.value.agentId || 'main',
-      channel: createForm.value.channel || 'main',
+      channel: createForm.value.channel || 'webchat',
       peer: createForm.value.peer || undefined,
       label: createForm.value.label || undefined,
     })
@@ -738,6 +801,17 @@ async function handleCreateSession() {
 
 .sessions-card {
   border-radius: var(--radius-lg);
+}
+
+.session-title-ellipsis {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  color: var(--text-color-1);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sessions-row-actions {

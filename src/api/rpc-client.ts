@@ -445,7 +445,14 @@ export class RPCClient {
       lastActivity: this.asString(row.lastActivity || row.updatedAt || row.lastSeen),
       model: this.asString(row.model || row.modelName) || undefined,
       label: this.asString(row.label || row.displayName) || undefined,
+      sessionTitle: this.asString(row.sessionTitle) || null,
       tokenUsage,
+      originKind: row.originKind === 'web' || row.originKind === 'channel' ? row.originKind : undefined,
+      sourceChannel: this.asString(row.sourceChannel) || undefined,
+      ownerUserId: this.asString(row.ownerUserId) || null,
+      ownerUsername: this.asString(row.ownerUsername) || null,
+      channelUserId: this.asString(row.channelUserId) || null,
+      channelUserName: this.asString(row.channelUserName) || null,
     }
   }
 
@@ -2121,7 +2128,12 @@ export class RPCClient {
   }
 
   deleteSession(key: string): Promise<void> {
-    return this.callWithFallback(['sessions.delete', 'session.delete'], { key })
+    // Current Gateway releases archive the transcript only when explicitly
+    // requested; older releases reject the extra field and fall back to { key }.
+    return this.callWithMethodAndParamsFallback(
+      ['sessions.delete', 'session.delete'],
+      [{ key, deleteTranscript: true }, { key }]
+    )
   }
 
   spawnSession(params: {

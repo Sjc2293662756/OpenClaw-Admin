@@ -153,5 +153,9 @@ onMounted(() => { void loadService() })
 .service-hero p { margin: 0; color: #6d8b7c; line-height: 1.65; }
 .service-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 16px; }
 .service-form { max-width: 620px; }
+:global([data-theme='dark'] .back-button) { color: #8fc5a6; }
+:global([data-theme='dark'] .service-hero) { background: linear-gradient(118deg, #1d2421, #17251d); }
+:global([data-theme='dark'] .service-hero h1) { color: #d5eadc; }
+:global([data-theme='dark'] .service-hero p) { color: #91a79a; }
 @media (max-width: 760px) { .service-hero__header { flex-direction: column; } .service-grid { grid-template-columns: 1fr; } }
 </style>

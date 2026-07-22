@@ -1308,6 +1308,7 @@ export default {
         },
         activeTime: 'Last active: {time}',
         viewDetail: 'View detail',
+        continueConversation: 'Continue chat',
         newAction: 'New',
         confirmNew: 'Start a new run for this session?',
         newSuccess: 'New session started',

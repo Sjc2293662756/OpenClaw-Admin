@@ -42,7 +42,10 @@ type UsageMode = 'tokens' | 'cost'
 const router = useRouter()
 const wsStore = useWebSocketStore()
 const { t, locale } = useI18n()
-const loading = ref(true)
+const summaryLoading = ref(true)
+const usageLoading = ref(true)
+const hasSummaryData = ref(false)
+const hasUsageData = ref(false)
 const refreshing = ref(false)
 const usageError = ref<string | null>(null)
 const lastUpdatedAt = ref<number | null>(null)
@@ -449,21 +452,26 @@ async function refreshDashboard() {
   usageError.value = null
 
   try {
-    const [sessionsRes, cronsRes, modelsRes, skillsRes, configRes, usageRes, usageCostRes] = await Promise.allSettled([
+    await Promise.allSettled([
+      refreshDashboardSummary(),
+      refreshDashboardUsage(),
+    ])
+    lastUpdatedAt.value = Date.now()
+  } finally {
+    refreshing.value = false
+  }
+}
+
+async function refreshDashboardSummary() {
+  summaryLoading.value = true
+
+  try {
+    const [sessionsRes, cronsRes, modelsRes, skillsRes, configRes] = await Promise.allSettled([
       wsStore.rpc.listSessions(),
       wsStore.rpc.listCrons(),
       wsStore.rpc.listModels(),
       wsStore.rpc.listSkills(),
       wsStore.rpc.getConfig(),
-      wsStore.rpc.getSessionsUsage({
-        startDate: usageStartDate.value,
-        endDate: usageEndDate.value,
-        limit: 1000,
-      }),
-      wsStore.rpc.getUsageCost({
-        startDate: usageStartDate.value,
-        endDate: usageEndDate.value,
-      }),
     ])
 
     const sessionList = sessionsRes.status === 'fulfilled' ? sessionsRes.value : []
@@ -477,30 +485,56 @@ async function refreshDashboard() {
       modelCount: resolveConfiguredModelCount(config, modelList),
       installedSkills: skillList.filter((s: Skill) => s.installed).length,
     }
-
-    if (usageRes.status === 'fulfilled') {
-      sessionsUsageResult.value = usageRes.value
-    } else {
-      sessionsUsageResult.value = null
-      usageError.value = usageRes.reason instanceof Error ? usageRes.reason.message : String(usageRes.reason)
-    }
-
-    if (usageCostRes.status === 'fulfilled') {
-      usageCostSummary.value = usageCostRes.value
-    } else {
-      usageCostSummary.value = null
-      if (!usageError.value) {
-        usageError.value = usageCostRes.reason instanceof Error
-          ? usageCostRes.reason.message
-          : String(usageCostRes.reason)
-      }
-    }
-
-    lastUpdatedAt.value = Date.now()
+    hasSummaryData.value = true
   } finally {
-    loading.value = false
-    refreshing.value = false
+    summaryLoading.value = false
   }
+}
+
+async function refreshDashboardUsage() {
+  usageLoading.value = true
+  let sessionsUsageError: unknown = null
+  let needsCostFallback = false
+
+  try {
+    const result = await wsStore.rpc.getSessionsUsage({
+      startDate: usageStartDate.value,
+      endDate: usageEndDate.value,
+      limit: 1000,
+    })
+    sessionsUsageResult.value = result
+    hasUsageData.value = true
+    needsCostFallback = (
+      result.aggregates.daily.length === 0 ||
+      (result.totals.totalCost <= 0 && result.totals.missingCostEntries > 0)
+    )
+    if (!needsCostFallback) {
+      usageCostSummary.value = null
+      usageLoading.value = false
+      return
+    }
+  } catch (error) {
+    sessionsUsageResult.value = null
+    sessionsUsageError = error
+    needsCostFallback = true
+  }
+
+  if (needsCostFallback) {
+    try {
+      usageCostSummary.value = await wsStore.rpc.getUsageCost({
+        startDate: usageStartDate.value,
+        endDate: usageEndDate.value,
+      })
+      hasUsageData.value = true
+      if (sessionsUsageError) usageError.value = null
+    } catch (error) {
+      usageCostSummary.value = null
+      const failure = sessionsUsageError || error
+      usageError.value = failure instanceof Error ? failure.message : String(failure)
+    }
+  }
+
+  usageLoading.value = false
 }
 
 function applyRangePreset(preset: Exclude<RangePreset, 'custom'>, refresh = true) {
@@ -722,8 +756,7 @@ function viewModels() {
 </script>
 
 <template>
-  <NSpin :show="loading">
-    <div class="dashboard-page">
+  <div class="dashboard-page">
       <NCard class="dashboard-hero" :bordered="false">
         <div class="dashboard-hero-top">
           <div>
@@ -777,7 +810,8 @@ function viewModels() {
         </NAlert>
       </NCard>
 
-      <NGrid cols="1 s:2 m:3 l:5" responsive="screen" :x-gap="12" :y-gap="12">
+      <NSpin :show="summaryLoading && !hasSummaryData">
+        <NGrid cols="1 s:2 m:3 l:5" responsive="screen" :x-gap="12" :y-gap="12">
         <NGridItem>
           <StatCard :title="t('pages.dashboard.stats.sessions')" :value="stats.sessionCount" :icon="ChatbubblesOutline" color="#18a058" />
         </NGridItem>
@@ -793,9 +827,12 @@ function viewModels() {
         <NGridItem>
           <StatCard :title="t('pages.dashboard.stats.totalTokens')" :value="tokenTotalDisplay" :icon="FlashOutline" color="#d03050" />
         </NGridItem>
-      </NGrid>
+        </NGrid>
+      </NSpin>
 
-      <NCard :title="t('pages.dashboard.cards.kpis')" class="dashboard-card">
+      <NSpin :show="usageLoading && !hasUsageData">
+        <div class="dashboard-usage-content">
+          <NCard :title="t('pages.dashboard.cards.kpis')" class="dashboard-card">
         <div class="kpi-grid">
           <div v-for="kpi in usageKpis" :key="kpi.key" class="kpi-card">
             <NText depth="3">{{ kpi.label }}</NText>
@@ -803,9 +840,9 @@ function viewModels() {
             <NText depth="3" style="font-size: 12px;">{{ kpi.hint }}</NText>
           </div>
         </div>
-      </NCard>
+          </NCard>
 
-      <NGrid cols="1 l:3" responsive="screen" :x-gap="12" :y-gap="12">
+          <NGrid cols="1 l:3" responsive="screen" :x-gap="12" :y-gap="12">
         <NGridItem :span="2" class="usage-trend-item">
           <NCard :title="t('pages.dashboard.cards.trend')" class="dashboard-card usage-trend-card">
             <template #header-extra>
@@ -926,9 +963,9 @@ function viewModels() {
             </NText>
           </NCard>
         </NGridItem>
-      </NGrid>
+          </NGrid>
 
-      <NCard :title="t('pages.dashboard.cards.top')" class="dashboard-card">
+          <NCard :title="t('pages.dashboard.cards.top')" class="dashboard-card">
         <NGrid cols="1 m:3" responsive="screen" :x-gap="12" :y-gap="12">
           <NGridItem>
             <div class="top-pane-card">
@@ -993,14 +1030,20 @@ function viewModels() {
             </div>
           </NGridItem>
         </NGrid>
-      </NCard>
-
+          </NCard>
+        </div>
+      </NSpin>
     </div>
-  </NSpin>
 </template>
 
 <style scoped>
 .dashboard-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-usage-content {
   display: flex;
   flex-direction: column;
   gap: 12px;

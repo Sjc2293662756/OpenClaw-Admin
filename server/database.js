@@ -134,6 +134,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS workspace_sessions (
     session_key TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL,
+    session_title TEXT,
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'deleted')),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -143,6 +144,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_workspace_sessions_owner_active
     ON workspace_sessions(owner_user_id, status, updated_at DESC);
 
+  -- Gateway intentionally protects its legacy default main session from
+  -- destructive deletion.  Keep a local, auditable retirement marker instead
+  -- of touching Gateway's private session store.
+  CREATE TABLE IF NOT EXISTS hidden_legacy_sessions (
+    session_key TEXT PRIMARY KEY,
+    hidden_by_user_id TEXT NOT NULL,
+    hidden_at INTEGER NOT NULL
+  );
+
+  -- Display-only titles for legacy WebChat sessions which predate BFF
+  -- account ownership. They never grant access to a session.
+  CREATE TABLE IF NOT EXISTS historical_webchat_titles (
+    session_key TEXT PRIMARY KEY,
+    session_title TEXT NOT NULL,
+    title_source TEXT NOT NULL DEFAULT 'first_user_message',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS report_files (
     id TEXT PRIMARY KEY,
     stored_name TEXT NOT NULL UNIQUE,
@@ -151,6 +171,11 @@ db.exec(`
     report_type TEXT NOT NULL DEFAULT 'analysis',
     source_session_id TEXT,
     source_user_id TEXT,
+    source_channel TEXT,
+    source_channel_user_id TEXT,
+    source_channel_user_name TEXT,
+    source_message_id TEXT,
+    source_message_preview TEXT,
     data_source_id TEXT,
     mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
     size INTEGER NOT NULL DEFAULT 0,
@@ -206,6 +231,32 @@ try {
 } catch (e) {
   if (!e.message.includes('duplicate column name')) {
     console.error('[Database] Failed to add report_files.audit_name column:', e.message)
+  }
+}
+
+for (const column of [
+  'source_channel TEXT',
+  'source_channel_user_id TEXT',
+  'source_channel_user_name TEXT',
+  'source_message_id TEXT',
+  'source_message_preview TEXT',
+]) {
+  try {
+    db.exec(`ALTER TABLE report_files ADD COLUMN ${column}`)
+  } catch (e) {
+    if (!e.message.includes('duplicate column name')) {
+      console.error(`[Database] Failed to add report_files.${column.split(' ')[0]} column:`, e.message)
+    }
+  }
+}
+
+db.exec('CREATE INDEX IF NOT EXISTS idx_report_files_source_channel ON report_files(source_channel, created_at DESC)')
+
+try {
+  db.exec('ALTER TABLE workspace_sessions ADD COLUMN session_title TEXT')
+} catch (e) {
+  if (!e.message.includes('duplicate column name')) {
+    console.error('[Database] Failed to add workspace_sessions.session_title column:', e.message)
   }
 }
 

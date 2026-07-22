@@ -59,5 +59,15 @@ import AlertIngestionConfigurationPage from './AlertIngestionConfigurationPage.v
 .configuration-section__body { min-width: 0; }
 .configuration-section__body--source { overflow: hidden; }
 .configuration-section__body--source :deep(.n-card), .configuration-section__body--source :deep(.n-data-table) { max-width: 100%; }
+:global([data-theme='dark'] .configuration-intro) { background: linear-gradient(118deg, #1d2421 0%, #17211c 100%); }
+:global([data-theme='dark'] .configuration-intro h1) { color: #d5eadc; }
+:global([data-theme='dark'] .configuration-intro__hint) { color: #a8c7b5; background: #26372e; }
+:global([data-theme='dark'] .configuration-section) {
+  border-color: #385044;
+  background: #161c19;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+}
+:global([data-theme='dark'] .configuration-section__heading h2) { color: #d8e7df; }
+:global([data-theme='dark'] .configuration-section__heading p) { color: #91a79a; }
 @media (max-width: 760px) { .configuration-page { gap: 16px; } .configuration-intro__content { flex-direction: column; gap: 12px; } .configuration-section { padding: 14px; } }
 </style>

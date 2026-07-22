@@ -79,10 +79,20 @@ const historySessions = computed(() =>
     .slice(0, 50)
 )
 
-function sessionTitle(session: { key: string; label?: string; peer?: string }) {
-  const title = session.label?.trim() || session.peer?.trim() || session.key
-  // 历史会话标签来自底层服务，可能遗留旧产品名；前台统一按 GAIOP 展示。
-  return title.replace(/openclaw/gi, 'GAIOP')
+function sessionTitle(session: { key: string; sessionTitle?: string | null; label?: string; lastActivity?: string }) {
+  // The legacy default `main` key is the original shared GAIOP Web Chat.
+  // Never render old Gateway transport labels such as “OpenClaw Web Backend”.
+  const isLegacyShared = session.key.trim().toLowerCase() === 'main'
+  const title = session.sessionTitle?.trim()
+  if (isLegacyShared) return 'GAIOP Web Chat'
+  if (!title) {
+    const day = session.lastActivity ? new Date(session.lastActivity) : null
+    const suffix = day && Number.isFinite(day.getTime())
+      ? ` · ${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`
+      : ''
+    return `GAIOP Web Chat${suffix}`
+  }
+  return title
 }
 
 function openSession(key: string) {
@@ -351,6 +361,60 @@ onUnmounted(() => {
 .workspace-chat-host { min-height: 0; flex: 1; padding: 16px 24px 22px; overflow: hidden; }
 .workspace-connecting { display: grid; flex: 1; place-content: center; justify-items: center; gap: 12px; color: #638674; font-size: 14px; }
 .workspace-connecting p { margin: 0; }
+
+:global([data-theme='dark'] .workspace-page) {
+  background: #101412;
+  color: #e7f0ea;
+}
+
+:global([data-theme='dark'] .workspace-sidebar) {
+  border-right-color: #29352f;
+  background: #151b18;
+}
+
+:global([data-theme='dark'] .brand-logo) { color: #e8f1eb; }
+:global([data-theme='dark'] .brand-divider) { background: #3b4a42; }
+:global([data-theme='dark'] .workspace-brand strong) { color: #b9dec9; }
+
+:global([data-theme='dark'] .new-chat-button) {
+  --n-color: #1b2420 !important;
+  --n-color-hover: #223029 !important;
+  --n-color-pressed: #15211b !important;
+  --n-border: 1px solid #3a5044 !important;
+  --n-border-hover: 1px solid #5f9c78 !important;
+  --n-text-color: #8de0b0 !important;
+  --n-text-color-hover: #a9ecc4 !important;
+  box-shadow: none;
+}
+
+:global([data-theme='dark'] .history-heading) { color: #8da398; }
+:global([data-theme='dark'] .history-heading button) { color: #8da398; }
+:global([data-theme='dark'] .history-heading button:hover),
+:global([data-theme='dark'] .history-row:hover),
+:global([data-theme='dark'] .workspace-user-trigger:hover) { background: #223029; color: #8de0b0; }
+:global([data-theme='dark'] .history-item) { color: #b7c7be; }
+:global([data-theme='dark'] .history-row.is-active) { background: #233a2e; color: #8de0b0; }
+:global([data-theme='dark'] .history-delete) { color: #8da398; }
+:global([data-theme='dark'] .history-delete:hover) { background: #442727; color: #ff9a9a; }
+
+:global([data-theme='dark'] .workspace-user) { border-top-color: #29352f; }
+:global([data-theme='dark'] .workspace-user-trigger) { color: #b7c7be; }
+:global([data-theme='dark'] .workspace-user-menu) {
+  border-color: #33433a;
+  background: #1c2420;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, .35);
+}
+:global([data-theme='dark'] .workspace-user-menu button) { color: #c7d5cd; }
+:global([data-theme='dark'] .workspace-user-menu button:hover) { background: #26362d; color: #8de0b0; }
+:global([data-theme='dark'] .workspace-user-menu .danger:hover) { background: #442727; color: #ff9a9a; }
+
+:global([data-theme='dark'] .workspace-header) {
+  border-bottom-color: #29352f;
+  background: rgba(21, 27, 24, .94);
+}
+:global([data-theme='dark'] .workspace-caption) { color: #d6e6dc; }
+:global([data-theme='dark'] .workspace-status),
+:global([data-theme='dark'] .workspace-connecting) { color: #94aa9e; }
 
 @media (max-width: 760px) {
   .workspace-page { grid-template-columns: 1fr; }

@@ -15,11 +15,13 @@ import { useI18n } from "vue-i18n";
 import { useTheme } from "@/composables/useTheme";
 import { useLocaleStore } from "@/stores/locale";
 
-const { theme } = useTheme();
+const { theme, mode } = useTheme();
 const route = useRoute();
 const localeStore = useLocaleStore();
 const { t } = useI18n();
 const appTitle = "NetInside 观枢 GAIOP 智能运维分析平台";
+const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
+const activeTheme = computed(() => (lightOnlyRoute.value ? null : theme.value));
 
 const naiveLocale = computed(() =>
   localeStore.locale === "zh-CN" ? zhCN : enUS,
@@ -42,11 +44,22 @@ watch(
   },
   { immediate: true },
 );
+
+watch(
+  [lightOnlyRoute, mode],
+  ([forceLight, selectedMode]) => {
+    if (typeof document === "undefined") return;
+    const effectiveMode = forceLight ? "light" : selectedMode;
+    document.documentElement.setAttribute("data-theme", effectiveMode);
+    document.documentElement.style.colorScheme = effectiveMode;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
   <NConfigProvider
-    :theme="theme"
+    :theme="activeTheme"
     :locale="naiveLocale"
     :date-locale="naiveDateLocale"
   >

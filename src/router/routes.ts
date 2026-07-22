@@ -5,13 +5,13 @@ export const routes: RouteRecordRaw[] = [
     path: '/welcome',
     name: 'Welcome',
     component: () => import('@/views/EntrancePage.vue'),
-    meta: { public: true },
+    meta: { public: true, lightOnly: true },
   },
   {
     path: '/login',
     name: 'Login',
     component: () => import('@/views/Login.vue'),
-    meta: { titleKey: 'routes.login', public: true },
+    meta: { titleKey: 'routes.login', public: true, lightOnly: true },
   },
   {
     path: '/workspace',

@@ -26,6 +26,42 @@ const { t } = useI18n()
 
 const sessionKey = computed(() => decodeURIComponent(route.params.key as string))
 const parsed = computed(() => parseSessionKey(sessionKey.value))
+const isLegacySharedWebChat = computed(() => sessionKey.value.trim().toLowerCase() === 'main')
+const isWebChat = computed(() =>
+  isLegacySharedWebChat.value
+  || sessionStore.currentSession?.originKind === 'web'
+  || sessionStore.currentSession?.sourceChannel === 'web'
+  || sessionKey.value.includes(':dm:webchat-')
+)
+const sourceChannel = computed(() => sessionStore.currentSession?.sourceChannel || parsed.value.channel || 'main')
+const sourceChannelLabel = computed(() => {
+  if (isWebChat.value) return 'GAIOP Web Chat'
+  const value = sourceChannel.value.trim().toLowerCase()
+  if (value === 'web') return 'webchat'
+  if (value === 'feishu' || value === 'lark') return '飞书'
+  if (value === 'dingtalk') return '钉钉'
+  if (value === 'wecom') return '企业微信'
+  if (value === 'openclaw-lark' || value === 'lark') return '飞书'
+  if (value === 'dingtalk-connector') return '钉钉'
+  if (value === 'wecom-openclaw-plugin') return '企业微信'
+  return sourceChannel.value
+})
+const sourceChannelUser = computed(() =>
+  isLegacySharedWebChat.value
+  ? '历史共享会话（无账户归属）'
+  : sessionStore.currentSession?.channelUserName
+  || sessionStore.currentSession?.channelUserId
+  || sessionStore.currentSession?.ownerUsername
+  || parsed.value.peer
+  || '-'
+)
+const displaySessionTitle = computed(() => {
+  const saved = sessionStore.currentSession?.sessionTitle?.trim()
+  if (saved) return saved
+  return isWebChat.value
+    ? 'GAIOP Web Chat'
+    : `${sourceChannelLabel.value} 会话`
+})
 
 onMounted(() => {
   sessionStore.fetchSession(sessionKey.value)
@@ -90,9 +126,9 @@ function roleLabel(role: string): string {
           <NIcon :component="ArrowBackOutline" />
         </template>
       </NButton>
-      <NText strong style="font-size: 18px;">{{ t('pages.sessions.detail.title') }}</NText>
-      <NTag size="small" round :bordered="false">{{ parsed.channel }}</NTag>
-      <NText depth="3">{{ parsed.peer }}</NText>
+      <NText strong style="font-size: 18px;">{{ displaySessionTitle }}</NText>
+      <NTag size="small" round :bordered="false">{{ sourceChannelLabel }}</NTag>
+      <NText depth="3">渠道用户：{{ sourceChannelUser }}</NText>
     </NSpace>
 
     <NSpin :show="sessionStore.loading">

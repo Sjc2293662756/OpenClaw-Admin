@@ -101,9 +101,9 @@ const expandedToolCalls = ref(new Set<string>())
 const expandedToolResults = ref(new Set<string>())
 
 const workspacePrompts = [
-  '分析当前告警的影响范围和处置优先级',
-  '基于指定时间范围生成运维分析报告',
-  '帮我分析一段网络流量或性能异常',
+  '分析最近三小时告警情况，列出对应告警对象',
+  '生成今日系统运行综述报告',
+  '分析今日业务系统运行情况，排查报错和慢访问',
 ]
 
 function applyWorkspacePrompt(prompt: string) {
@@ -3526,21 +3526,25 @@ async function handleSend() {
 
 .workspace-prompt-list {
   display: flex;
-  max-width: 680px;
+  width: min(100%, 980px);
+  max-width: 100%;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 9px;
+  gap: clamp(9px, 0.7vw, 12px);
 }
 
 .workspace-prompt-list button {
-  padding: 8px 12px;
+  flex: 0 1 auto;
+  padding: 9px clamp(12px, 1vw, 16px);
   border: 1px solid #d7e9dd;
   border-radius: 999px;
   background: #f8fcf9;
   color: #397057;
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  font-size: clamp(12.5px, calc(11px + 0.15vw), 14px);
+  line-height: 1.35;
+  white-space: nowrap;
   transition: border-color .16s ease, background .16s ease, color .16s ease;
 }
 
@@ -3549,6 +3553,41 @@ async function handleSend() {
   background: #edf8f1;
   color: #087249;
 }
+
+@media (max-width: 900px) {
+  .workspace-prompt-list button {
+    flex: 1 1 240px;
+    padding-inline: 10px;
+    font-size: 12.5px;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 640px) {
+  .workspace-prompt-list button {
+    flex-basis: 100%;
+  }
+}
+
+:global([data-theme='dark'] .chat-page--workspace .workspace-welcome) { color: #b8c9bf; }
+:global([data-theme='dark'] .chat-page--workspace .workspace-welcome h1) { color: #d8ebe0; }
+:global([data-theme='dark'] .chat-page--workspace .workspace-welcome p) { color: #96aa9f; }
+:global([data-theme='dark'] .chat-page--workspace .workspace-prompt-list button) {
+  border-color: #37483f;
+  background: #1b2420;
+  color: #b8d9c6;
+}
+:global([data-theme='dark'] .chat-page--workspace .workspace-prompt-list button:hover) {
+  border-color: #5f9c78;
+  background: #24342b;
+  color: #8de0b0;
+}
+:global([data-theme='dark'] .chat-page--workspace .chat-transcript) {
+  background:
+    radial-gradient(circle at top right, rgba(52, 211, 153, .08), transparent 32%),
+    #151a18;
+}
+:global([data-theme='dark'] .chat-page--workspace .chat-compose-card) { background: #1b1f1d; }
 
 /* 桌面端：让聊天区尽量占满可用高度，提升 transcript 可视面积 */
 @media (min-width: 1024px) {

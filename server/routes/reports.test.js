@@ -13,12 +13,12 @@ function createMemoryDb() {
       if (sql.includes('INSERT INTO report_files')) {
         return {
           run(...values) {
-            const [id, storedName, auditName, originalName, reportType, sourceSessionId, sourceUserId, dataSourceId, mimeType, size, status, createdAt, updatedAt] = values
-            rows.set(storedName, { id, stored_name: storedName, audit_name: auditName, original_name: originalName, report_type: reportType, source_session_id: sourceSessionId, source_user_id: sourceUserId, data_source_id: dataSourceId, mime_type: mimeType, size, status, created_at: createdAt, updated_at: updatedAt })
+            const [id, storedName, auditName, originalName, reportType, sourceSessionId, sourceUserId, sourceChannel, sourceChannelUserId, sourceChannelUserName, sourceMessageId, sourceMessagePreview, dataSourceId, mimeType, size, status, createdAt, updatedAt] = values
+            rows.set(storedName, { id, stored_name: storedName, audit_name: auditName, original_name: originalName, report_type: reportType, source_session_id: sourceSessionId, source_user_id: sourceUserId, source_channel: sourceChannel, source_channel_user_id: sourceChannelUserId, source_channel_user_name: sourceChannelUserName, source_message_id: sourceMessageId, source_message_preview: sourceMessagePreview, data_source_id: dataSourceId, mime_type: mimeType, size, status, created_at: createdAt, updated_at: updatedAt })
           },
         }
       }
-      if (sql.startsWith('SELECT * FROM report_files') && sql.includes('ORDER BY')) {
+      if (sql.includes('FROM report_files') && sql.includes('ORDER BY')) {
         return {
           all(...values) {
             const sourceUserId = sql.includes('source_user_id = ?') ? values[0] : null
@@ -55,6 +55,11 @@ test('formal report archive imports only a matched audit pair and isolates the o
     reportType: 'quick report',
     sourceUserId: 'user a',
     sourceSessionId: 'session-a',
+    sourceChannel: 'web',
+    sourceChannelUserId: 'user a',
+    sourceChannelUserName: '用户A',
+    sourceMessageId: 'message-a',
+    sourceMessagePreview: '请生成今天的系统运行综述报告',
     dataSourceId: 'data-source-a',
     generatedAt: new Date().toISOString(),
     relativeFilePath: 'user_a/quick_report/report-1.docx',
@@ -81,12 +86,38 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.equal(response.status, 200)
     assert.equal(payload.reports.length, 1)
     assert.deepEqual(payload.reports[0], {
-      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceUserId: 'user a', dataSourceId: 'data-source-a', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
+      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
     })
     const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
     const otherUserPayload = await otherUserResponse.json()
     assert.equal(otherUserResponse.status, 200)
     assert.deepEqual(otherUserPayload.reports, [])
+  } finally {
+    server.close()
+    if (previousRoot === undefined) delete process.env.GAIOP_REPORTS_DIR
+    else process.env.GAIOP_REPORTS_DIR = previousRoot
+  }
+})
+
+test('report list failures remain JSON responses', async () => {
+  const previousRoot = process.env.GAIOP_REPORTS_DIR
+  process.env.GAIOP_REPORTS_DIR = mkdtempSync(join(tmpdir(), 'gaiop-report-root-failure-'))
+  const { createReportsRouter } = await import(`./reports.js?report-list-failure-test=${Date.now()}-${Math.random()}`)
+  const app = express()
+  app.use('/reports', createReportsRouter({
+    db: { prepare: () => { throw new Error('simulated database failure') } },
+    authMiddleware: (req, _res, next) => { req.user = { id: 'admin', role: 'admin' }; next() },
+    adminMiddleware: (_req, _res, next) => next(),
+    recordAudit: () => {},
+  }))
+  const server = app.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/reports`)
+    assert.match(String(response.headers.get('content-type')), /application\/json/)
+    const payload = await response.json()
+    assert.equal(response.status, 500)
+    assert.equal(payload.code, 'REPORT_LIST_FAILED')
   } finally {
     server.close()
     if (previousRoot === undefined) delete process.env.GAIOP_REPORTS_DIR
