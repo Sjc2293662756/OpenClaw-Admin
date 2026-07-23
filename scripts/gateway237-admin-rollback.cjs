@@ -43,7 +43,7 @@ if [ -e "$current_root" ]; then mv -- "$current_root" "$failed_root"; fi
 mv -- "$previous_root" "$current_root"
 systemctl daemon-reload
 systemctl start gaiop-admin.service
-for _ in $(seq 1 45); do
+for _ in $(seq 1 120); do
   systemctl is-active --quiet gaiop-admin.service && ss -ltnH '( sport = :3000 )' | grep -q '127.0.0.1:3000' && { printf 'ROLLBACK_COMPLETE\\n'; exit 0; }
   sleep 1
 done

@@ -27,14 +27,14 @@ node --env-file=/etc/gaiop/admin.env -e "const keys=['AUTH_PASSWORD','DATA_SOURC
 mark_phase 'SYSTEMD_START'
 systemctl start gaiop-admin.service
 mark_phase 'SERVICE_ACTIVE'
-for i in $(seq 1 45); do
+for i in $(seq 1 120); do
   systemctl is-active --quiet gaiop-admin.service && break
   sleep 1
 done
 systemctl is-active --quiet gaiop-admin.service
 mark_phase 'LOOPBACK_LISTENER'
 listener_scope='other-or-none'
-for i in $(seq 1 45); do
+for i in $(seq 1 120); do
   listener_scope=$(ss -ltnH '( sport = :3000 )' | awk '
     $4 == "0.0.0.0:3000" || $4 == "[::]:3000" || $4 == "*:3000" { wildcard=1 }
     $4 == "127.0.0.1:3000" { ipv4=1 }
@@ -126,7 +126,7 @@ const timeout = setTimeout(() => {
   done = true
   client.end()
   process.exitCode = 1
-}, 90_000)
+}, 330_000)
 
 client.on('ready', async () => {
   try {
