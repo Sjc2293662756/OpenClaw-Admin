@@ -231,6 +231,9 @@ EnvironmentFile=/etc/gaiop/admin.env
 ExecStart=$node_path --env-file=/etc/gaiop/admin.env server/index.js
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=20s
+KillSignal=SIGTERM
+SendSIGKILL=yes
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
@@ -248,11 +251,19 @@ systemd-analyze verify "$unit_file"
 mark_phase 'RELEASE_SWITCH'
 if [ "$service_was_active" -eq 1 ]; then
   mark_phase 'SERVICE_STOP'
-  systemctl stop gaiop-admin.service
+  systemctl stop --no-block gaiop-admin.service
   for _ in $(seq 1 30); do
     systemctl is-active --quiet gaiop-admin.service || break
     sleep 1
   done
+  if systemctl is-active --quiet gaiop-admin.service; then
+    mark_phase 'SERVICE_FORCE_STOP'
+    systemctl kill --kill-who=all --signal=KILL gaiop-admin.service || true
+    for _ in $(seq 1 10); do
+      systemctl is-active --quiet gaiop-admin.service || break
+      sleep 1
+    done
+  fi
   if systemctl is-active --quiet gaiop-admin.service; then exit 45; fi
 fi
 if [ -e "$final_root" ]; then mv -- "$final_root" "$backup_root/preexisting-admin"; fi
