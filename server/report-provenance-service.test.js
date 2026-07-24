@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHmac } from 'node:crypto'
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { attachReportProvenance, __test__ } from './report-provenance-service.js'
 
 test('report provenance v3 signs server-owned Web user, session, and source message', () => {
@@ -30,4 +33,27 @@ test('report provenance does not attach without the server signing preconditions
   const result = attachReportProvenance(params, { id: 'user-1' }, { enabled: true, signingKey: 'short' })
   assert.equal(result.attached, false)
   assert.equal(result.params, params)
+})
+
+test('report provenance persists one signed snapshot without exposing the session id in its file name', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gaiop-report-provenance-'))
+  try {
+    const result = attachReportProvenance({ sessionKey: 'agent:main:main:dm:webchat-user-1', message: '生成报告' }, { id: 'user-1', username: 'alice' }, {
+      enabled: true,
+      signingKey: '0123456789abcdef0123456789abcdef',
+      storeDirectory: directory,
+      dataSourceId: 'source-1',
+      now: 123456789,
+    })
+    const files = readdirSync(directory)
+    assert.equal(result.stored, true)
+    assert.equal(files.length, 1)
+    assert.match(files[0], /^[a-f0-9]{64}\.json$/)
+    const stored = JSON.parse(readFileSync(join(directory, files[0]), 'utf8'))
+    assert.equal(stored.sessionId, 'agent:main:main:dm:webchat-user-1')
+    assert.equal(stored.sourceChannel, 'web')
+    assert.equal(stored.dataSourceId, 'source-1')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

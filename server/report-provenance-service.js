@@ -1,4 +1,6 @@
-import { createHmac } from 'crypto'
+import { createHash, createHmac } from 'crypto'
+import { mkdirSync, renameSync, writeFileSync } from 'fs'
+import { join } from 'path'
 
 const PROVENANCE_VERSION = 'gaiop_report_provenance.v3'
 
@@ -25,6 +27,18 @@ function canonicalPayload({ userId, username, sessionId, dataSourceId, sourceCha
     messagePreview || '',
     Number(issuedAt),
   ])
+}
+
+function persistEnvelope(envelope, storeDirectory) {
+  const directory = String(storeDirectory || '').trim()
+  if (!directory || !envelope?.sessionId) return false
+  mkdirSync(directory, { recursive: true, mode: 0o750 })
+  const digest = createHash('sha256').update(envelope.sessionId, 'utf8').digest('hex')
+  const target = join(directory, `${digest}.json`)
+  const temporary = join(directory, `.${digest}.${process.pid}.${Date.now()}.tmp`)
+  writeFileSync(temporary, `${JSON.stringify(envelope)}\n`, { encoding: 'utf8', mode: 0o640 })
+  renameSync(temporary, target)
+  return true
 }
 
 /**
@@ -58,28 +72,38 @@ export function attachReportProvenance(params = {}, user = null, options = {}) {
     ? { ...params.metadata }
     : {}
 
+  const envelope = {
+    version: PROVENANCE_VERSION,
+    userId,
+    sourceChannel: 'web',
+    sourceChannelUserId: userId,
+    sourceChannelUserName: username || undefined,
+    sessionId,
+    dataSourceId: dataSourceId || undefined,
+    sourceMessageId: messageId || undefined,
+    sourceMessagePreview: messagePreview || undefined,
+    issuedAt,
+    signature,
+  }
+  let stored = false
+  try {
+    stored = persistEnvelope(envelope, options.storeDirectory)
+  } catch {
+    // Metadata remains the compatibility path. Persistence failures do not
+    // turn an otherwise valid chat.send request into a user-visible failure.
+  }
+
   return {
     attached: true,
+    stored,
     params: {
       ...params,
       metadata: {
         ...metadata,
-        gaiopReportProvenance: {
-          version: PROVENANCE_VERSION,
-          userId,
-          sourceChannel: 'web',
-          sourceChannelUserId: userId,
-          sourceChannelUserName: username || undefined,
-          sessionId,
-          dataSourceId: dataSourceId || undefined,
-          sourceMessageId: messageId || undefined,
-          sourceMessagePreview: messagePreview || undefined,
-          issuedAt,
-          signature,
-        },
+        gaiopReportProvenance: envelope,
       },
     },
   }
 }
 
-export const __test__ = { canonicalPayload, resolveSessionId, PROVENANCE_VERSION }
+export const __test__ = { canonicalPayload, resolveSessionId, persistEnvelope, PROVENANCE_VERSION }

@@ -45,7 +45,7 @@ npm run dev:all
 用户访问 `http://127.0.0.1:3002/welcome`；Admin BFF 监听 `http://127.0.0.1:3000`。如需更换保存的本机告警凭据：
 
 ```powershell
-& 'D:\杨硕文件\GAIOP\GAIOP\启动GAIOP本地开发环境.ps1' -ResetAlertCredential
+& 'D:\杨硕文件\GAIOP\GAIOP\ops\local-dev\启动GAIOP本地开发环境.ps1' -ResetAlertCredential
 ```
 
 ## 设备配对

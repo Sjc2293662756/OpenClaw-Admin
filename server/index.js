@@ -81,6 +81,7 @@ function loadEnvConfig() {
     HERMES_HOME: value('HERMES_HOME'),
     GAIOP_REPORT_PROVENANCE_ENABLED: value('GAIOP_REPORT_PROVENANCE_ENABLED', 'false'),
     GAIOP_REPORT_PROVENANCE_SIGNING_KEY: value('GAIOP_REPORT_PROVENANCE_SIGNING_KEY'),
+    GAIOP_REPORT_PROVENANCE_STORE_DIR: value('GAIOP_REPORT_PROVENANCE_STORE_DIR', '/var/lib/gaiop/runtime/report-provenance'),
     GAIOP_UPGRADE_SERVICE_URL: value('GAIOP_UPGRADE_SERVICE_URL'),
     GAIOP_UPGRADE_INTERNAL_TOKEN: value('GAIOP_UPGRADE_INTERNAL_TOKEN'),
   }
@@ -1657,6 +1658,7 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
       ? attachReportProvenance(params, req.user, {
         enabled: envConfig.GAIOP_REPORT_PROVENANCE_ENABLED === 'true',
         signingKey: envConfig.GAIOP_REPORT_PROVENANCE_SIGNING_KEY,
+        storeDirectory: envConfig.GAIOP_REPORT_PROVENANCE_STORE_DIR,
         dataSourceId: activeDataSource?.id,
       })
       : { params, attached: false }
