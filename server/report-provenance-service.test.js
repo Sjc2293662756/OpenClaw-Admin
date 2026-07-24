@@ -35,6 +35,15 @@ test('report provenance does not attach without the server signing preconditions
   assert.equal(result.params, params)
 })
 
+test('report provenance accepts the Gateway input alias for the source preview', () => {
+  const result = attachReportProvenance(
+    { sessionKey: 'session-input', input: '生成运行综述报告' },
+    { id: 'user-input', username: 'alice' },
+    { enabled: true, signingKey: '0123456789abcdef0123456789abcdef' },
+  )
+  assert.equal(result.params.metadata.gaiopReportProvenance.sourceMessagePreview, '生成运行综述报告')
+})
+
 test('report provenance persists one signed snapshot without exposing the session id in its file name', () => {
   const directory = mkdtempSync(join(tmpdir(), 'gaiop-report-provenance-'))
   try {

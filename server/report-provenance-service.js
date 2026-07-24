@@ -59,7 +59,7 @@ export function attachReportProvenance(params = {}, user = null, options = {}) {
   // signed together with the server-owned identity. It is provenance only;
   // the report Skill never treats it as a tool instruction.
   const messageId = cleanText(params.idempotencyKey || params.messageId, 160)
-  const messagePreview = cleanText(params.message, 500)
+  const messagePreview = cleanText(params.message || params.input, 500)
   if (!enabled || signingKey.length < 32 || !userId || !sessionId) {
     return { params, attached: false }
   }

@@ -191,6 +191,7 @@ function publicReport(row) {
     sourceMessageId: row.source_message_id || null,
     sourceMessagePreview: row.source_message_preview || null,
     dataSourceId: row.data_source_id || null,
+    dataSourceName: row.data_source_name || null,
     mimeType: row.mime_type,
     size,
     status,
@@ -262,9 +263,13 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
       }
       const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : ''
       const rows = db.prepare(`
-        SELECT report_files.*, workspace_sessions.session_title AS source_session_title
+        SELECT
+          report_files.*,
+          workspace_sessions.session_title AS source_session_title,
+          COALESCE(NULLIF(data_sources.description, ''), data_sources.ip) AS data_source_name
         FROM report_files
         LEFT JOIN workspace_sessions ON workspace_sessions.session_key = report_files.source_session_id
+        LEFT JOIN data_sources ON data_sources.id = report_files.data_source_id
         ${where}
         ORDER BY report_files.created_at DESC
       `).all(...values)

@@ -20,6 +20,7 @@ type ReportFile = {
   sourceMessageId?: string | null
   sourceMessagePreview?: string | null
   dataSourceId?: string | null
+  dataSourceName?: string | null
   mimeType: string
   size: number
   status: ReportStatus
@@ -68,6 +69,7 @@ const reportTypeMap: Record<string, string> = {
 }
 const channelLabelMap: Record<string, string> = {
   web: 'webchat',
+  historical_import: '历史归档',
   feishu: '飞书',
   lark: '飞书',
   'openclaw-lark': '飞书',
@@ -148,6 +150,7 @@ function formatSourceUser(report: ReportFile) {
 function formatSourceSession(report: ReportFile) {
   const savedTitle = String(report.sourceSessionTitle || '').trim()
   if (savedTitle) return savedTitle
+  if (String(report.sourceChannel || '').trim().toLowerCase() === 'historical_import') return '历史报告（原会话未保留）'
   if (String(report.sourceChannel || '').trim().toLowerCase() === 'web') return '历史 webchat 会话'
   return report.sourceSessionId ? `${formatChannel(report.sourceChannel)} 会话` : '未记录'
 }
@@ -286,7 +289,7 @@ const columns: DataTableColumns<ReportFile> = [
   { title: '来源渠道', key: 'sourceChannel', width: 120, render: row => formatChannel(row.sourceChannel) },
   { title: '来源用户', key: 'sourceChannelUserName', minWidth: 150, ellipsis: { tooltip: true }, render: row => formatSourceUser(row) },
   { title: '来源会话', key: 'sourceSessionTitle', minWidth: 190, ellipsis: { tooltip: true }, render: row => formatSourceSession(row) },
-  { title: '来源数据源', key: 'dataSourceId', minWidth: 150, ellipsis: { tooltip: true }, render: row => row.dataSourceId || '未记录' },
+  { title: '来源数据源', key: 'dataSourceName', minWidth: 180, ellipsis: { tooltip: true }, render: row => row.dataSourceName || row.dataSourceId || '未记录' },
   { title: '文件大小', key: 'size', width: 110, render: row => formatSize(row.size) },
   { title: '状态', key: 'status', width: 100, render: row => h(NTag, { type: statusMap[row.status]?.type || 'default', bordered: false }, { default: () => statusMap[row.status]?.label || row.status }) },
   {

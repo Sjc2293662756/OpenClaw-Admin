@@ -22,7 +22,12 @@ function createMemoryDb() {
         return {
           all(...values) {
             const sourceUserId = sql.includes('source_user_id = ?') ? values[0] : null
-            return [...rows.values()].filter((row) => !sourceUserId || row.source_user_id === sourceUserId)
+            return [...rows.values()]
+              .filter((row) => !sourceUserId || row.source_user_id === sourceUserId)
+              .map((row) => ({
+                ...row,
+                data_source_name: row.data_source_id === 'data-source-a' ? '101.254.114.238NAPM' : null,
+              }))
           },
         }
       }
@@ -86,7 +91,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.equal(response.status, 200)
     assert.equal(payload.reports.length, 1)
     assert.deepEqual(payload.reports[0], {
-      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
+      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
     })
     const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
     const otherUserPayload = await otherUserResponse.json()
