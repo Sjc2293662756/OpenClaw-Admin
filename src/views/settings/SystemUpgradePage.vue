@@ -167,7 +167,7 @@ function stopTaskPolling() {
   taskPollTimer = null
 }
 function isTaskActive(status?: string) {
-  return status === 'running' || status === 'rolling_back'
+  return status === 'pending' || status === 'running' || status === 'rolling_back'
 }
 function scheduleTaskPolling() {
   stopTaskPolling()
@@ -310,7 +310,7 @@ onBeforeUnmount(stopTaskPolling)
         </NGridItem>
         <NGridItem span="1">
           <NCard title="最近任务与备份">
-            <NAlert type="info" :bordered="false" class="read-only-tip">升级包校验与执行已纳入受控 BFF 流程。回滚和备份删除仍将在独立确认与审计边界完成后开放。</NAlert>
+            <NAlert type="info" :bordered="false" class="read-only-tip">升级、Skill 回滚和备份删除均通过 Admin BFF 执行，并要求独立确认和审计；当前人工回滚仅支持 Skill 备份。</NAlert>
             <NTable v-if="overview?.tasks?.length" :single-line="false" size="small">
               <thead><tr><th>任务</th><th>类型</th><th>组件</th><th>状态</th><th>创建时间</th></tr></thead>
               <tbody><tr v-for="task in overview.tasks" :key="task.id"><td>{{ task.id }}</td><td>{{ task.type }}</td><td>{{ task.component || '-' }}</td><td><NTag size="small" :bordered="false">{{ task.status }}</NTag></td><td>{{ formatTime(task.created_at) }}</td><td><NButton text type="primary" size="small" @click="loadTaskDetail(task.id)">详情</NButton></td></tr></tbody>
