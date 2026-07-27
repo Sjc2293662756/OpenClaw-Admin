@@ -17,6 +17,11 @@ import { ArrowBackOutline, RefreshOutline, TrashOutline, DownloadOutline } from 
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '@/stores/session'
 import { formatDate, parseSessionKey, downloadJSON } from '@/utils/format'
+import {
+  formatSessionChannelLabel,
+  formatSessionConversationTitle,
+  isLegacyDefaultSession,
+} from '@/utils/session-presentation'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,26 +31,19 @@ const { t } = useI18n()
 
 const sessionKey = computed(() => decodeURIComponent(route.params.key as string))
 const parsed = computed(() => parseSessionKey(sessionKey.value))
-const isLegacySharedWebChat = computed(() => sessionKey.value.trim().toLowerCase() === 'main')
-const isWebChat = computed(() =>
-  isLegacySharedWebChat.value
-  || sessionStore.currentSession?.originKind === 'web'
-  || sessionStore.currentSession?.sourceChannel === 'web'
-  || sessionKey.value.includes(':dm:webchat-')
-)
-const sourceChannel = computed(() => sessionStore.currentSession?.sourceChannel || parsed.value.channel || 'main')
-const sourceChannelLabel = computed(() => {
-  if (isWebChat.value) return 'GAIOP Web Chat'
-  const value = sourceChannel.value.trim().toLowerCase()
-  if (value === 'web') return 'webchat'
-  if (value === 'feishu' || value === 'lark') return '飞书'
-  if (value === 'dingtalk') return '钉钉'
-  if (value === 'wecom') return '企业微信'
-  if (value === 'openclaw-lark' || value === 'lark') return '飞书'
-  if (value === 'dingtalk-connector') return '钉钉'
-  if (value === 'wecom-openclaw-plugin') return '企业微信'
-  return sourceChannel.value
-})
+const presentationSession = computed(() => ({
+  key: sessionKey.value,
+  channel: sessionStore.currentSession?.channel || parsed.value.channel,
+  peer: sessionStore.currentSession?.peer || parsed.value.peer,
+  sourceChannel: sessionStore.currentSession?.sourceChannel,
+  originKind: sessionStore.currentSession?.originKind,
+  sessionTitle: sessionStore.currentSession?.sessionTitle,
+  channelUserName: sessionStore.currentSession?.channelUserName,
+  channelUserId: sessionStore.currentSession?.channelUserId,
+  ownerUsername: sessionStore.currentSession?.ownerUsername,
+}))
+const isLegacySharedWebChat = computed(() => isLegacyDefaultSession(presentationSession.value))
+const sourceChannelLabel = computed(() => formatSessionChannelLabel(presentationSession.value))
 const sourceChannelUser = computed(() =>
   isLegacySharedWebChat.value
   ? '历史共享会话（无账户归属）'
@@ -56,11 +54,7 @@ const sourceChannelUser = computed(() =>
   || '-'
 )
 const displaySessionTitle = computed(() => {
-  const saved = sessionStore.currentSession?.sessionTitle?.trim()
-  if (saved) return saved
-  return isWebChat.value
-    ? 'GAIOP Web Chat'
-    : `${sourceChannelLabel.value} 会话`
+  return formatSessionConversationTitle(presentationSession.value)
 })
 
 onMounted(() => {

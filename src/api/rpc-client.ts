@@ -436,13 +436,23 @@ export class RPCClient {
       this.normalizeTokenUsage(row.tokenUsage) ||
       this.normalizeTokenUsage(row.usage) ||
       this.normalizeTokenUsage(row.tokens)
+    const lastActivity = this.normalizeSessionActivity(
+      row.conversationLastActivity ??
+      row.lastInteractionAt ??
+      row.lastMessageAt ??
+      row.lastActivity ??
+      row.sessionStartedAt ??
+      row.createdAt
+    )
     return {
       key,
       agentId: this.asString(row.agentId || row.agent || parsed.agentId, 'main'),
       channel,
       peer: this.asString(row.peer || row.user || row.recipient || row.subject || parsed.peer),
       messageCount: this.resolveSessionMessageCount(row),
-      lastActivity: this.asString(row.lastActivity || row.updatedAt || row.lastSeen),
+      // updatedAt is intentionally excluded: delivery retries and other
+      // Gateway maintenance must not reorder conversation history.
+      lastActivity,
       model: this.asString(row.model || row.modelName) || undefined,
       label: this.asString(row.label || row.displayName) || undefined,
       sessionTitle: this.asString(row.sessionTitle) || null,
@@ -454,6 +464,24 @@ export class RPCClient {
       channelUserId: this.asString(row.channelUserId) || null,
       channelUserName: this.asString(row.channelUserName) || null,
     }
+  }
+
+  private normalizeSessionActivity(value: unknown): string {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      const milliseconds = value < 10_000_000_000 ? value * 1000 : value
+      return new Date(milliseconds).toISOString()
+    }
+    const normalized = this.asString(value).trim()
+    if (!normalized) return ''
+    if (/^\d+(?:\.\d+)?$/.test(normalized)) {
+      const numeric = Number(normalized)
+      if (Number.isFinite(numeric) && numeric > 0) {
+        const milliseconds = numeric < 10_000_000_000 ? numeric * 1000 : numeric
+        return new Date(milliseconds).toISOString()
+      }
+    }
+    const parsed = Date.parse(normalized)
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : ''
   }
 
   private normalizeChannelItem(value: unknown): Channel {

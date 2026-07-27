@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 
 const WEB_SESSION_PREFIX = 'agent:main:main:dm:webchat-'
 const SESSION_LIST_KEYS = ['sessions', 'items', 'list', 'data']
-const WEB_CHANNELS = new Set(['main', 'web', 'webchat', 'workspace'])
+const WEB_CHANNELS = new Set(['web', 'webchat', 'workspace'])
 
 export const SESSION_SCOPED_READ_METHODS = new Set([
   'sessions.history', 'session.history', 'chat.history',
@@ -34,6 +34,44 @@ function normalizeSourceChannel(value) {
   if (['dingtalk', 'dingtalk-connector'].includes(channel)) return 'dingtalk'
   if (['wecom', 'wecom-app', 'wecom-openclaw-plugin'].includes(channel)) return 'wecom'
   return channel || 'main'
+}
+
+function normalizeTimestamp(value) {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value < 10_000_000_000 ? Math.floor(value * 1000) : Math.floor(value)
+  }
+  const normalized = normalizeSessionKey(value)
+  if (!normalized) return null
+  if (/^\d+(?:\.\d+)?$/.test(normalized)) {
+    const numeric = Number(normalized)
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric < 10_000_000_000 ? Math.floor(numeric * 1000) : Math.floor(numeric)
+    }
+  }
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Conversation ordering must use user/assistant activity, not Gateway record
+ * maintenance. updatedAt can change because of delivery retries, compaction,
+ * cache accounting, or other background work.
+ */
+function resolveConversationLastActivity(value) {
+  const row = asRecord(value)
+  for (const key of [
+    'lastInteractionAt',
+    'lastMessageAt',
+    'lastUserMessageAt',
+    'lastAssistantMessageAt',
+    'lastActivity',
+    'sessionStartedAt',
+    'createdAt',
+  ]) {
+    const timestamp = normalizeTimestamp(row[key])
+    if (timestamp) return new Date(timestamp).toISOString()
+  }
+  return null
 }
 
 export function getSessionKeyFromParams(params) {
@@ -401,7 +439,7 @@ export function enrichSessionPayload(db, payload) {
     const { key, channel, peer } = parseSessionChannelAndPeer(row)
     const workspace = key ? findWorkspaceSession(db, key) : null
     const legacySharedWeb = isLegacySharedWebSessionKey(key)
-    const isWeb = Boolean(workspace) || legacySharedWeb || WEB_CHANNELS.has(channel)
+    const isWeb = Boolean(workspace) || legacySharedWeb || isManagedWebSessionKey(key) || WEB_CHANNELS.has(channel)
     const ownerUserId = normalizeSessionKey(workspace?.owner_user_id)
     const ownerUsername = readOwnerDisplayName(db, ownerUserId)
     const gatewayChannelUserId = normalizeSessionKey(row.channelUserId || row.senderId || row.userId || peer)
@@ -418,6 +456,7 @@ export function enrichSessionPayload(db, payload) {
       ownerUserId: ownerUserId || null,
       ownerUsername: ownerUsername || null,
       sessionTitle: isWeb ? (findDisplaySessionTitle(db, key) || null) : null,
+      conversationLastActivity: resolveConversationLastActivity(row),
       channelUserId: channelUserId || null,
       channelUserName: channelUserName || null,
     }
@@ -470,4 +509,5 @@ export const __test__ = {
   filterHiddenLegacySessions,
   enrichSessionPayload,
   extractSessionKeyFromEvent,
+  resolveConversationLastActivity,
 }

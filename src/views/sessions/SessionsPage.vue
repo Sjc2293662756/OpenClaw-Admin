@@ -35,6 +35,12 @@ import { useSessionStore } from '@/stores/session'
 import { useAgentStore } from '@/stores/agent'
 import { useConfigStore } from '@/stores/config'
 import { formatRelativeTime, parseSessionKey } from '@/utils/format'
+import {
+  formatSessionChannelLabel,
+  formatSessionConversationTitle,
+  isLegacyDefaultSession,
+  isWebConversation,
+} from '@/utils/session-presentation'
 import type { Session } from '@/api/types'
 
 type SortMode = 'recent' | 'messages'
@@ -157,27 +163,19 @@ function formatChannelLabel(channelKey: string): string {
 }
 
 function isWebChatSession(session: SessionRow): boolean {
-  return session.originKind === 'web'
-    || session.sourceChannel === 'web'
-    || session.key.trim().toLowerCase() === 'main'
-    || session.key.includes(':dm:webchat-')
+  return isWebConversation(session)
 }
 
 function isLegacySharedWebChatSession(session: SessionRow): boolean {
-  return session.key.trim().toLowerCase() === 'main'
+  return isLegacyDefaultSession(session)
 }
 
 function displaySessionTitle(session: SessionRow): string {
-  const savedTitle = session.sessionTitle?.trim()
-  if (savedTitle) return savedTitle
-  if (isLegacySharedWebChatSession(session)) return 'GAIOP Web Chat'
-  if (isWebChatSession(session)) return 'GAIOP Web Chat'
-  return `${sessionChannelLabel(session)} 会话`
+  return formatSessionConversationTitle(session)
 }
 
 function sessionChannelLabel(session: SessionRow): string {
-  if (isWebChatSession(session)) return 'GAIOP Web Chat'
-  return formatChannelLabel(session.sourceChannel || session.channel || session.parsed.channel || 'main')
+  return formatSessionChannelLabel(session)
 }
 
 function sessionChannelUser(session: SessionRow): string {

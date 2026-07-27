@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useWebSocketStore } from './websocket'
+import { shouldApplyRealtimeEvent } from '@/utils/session-presentation'
 import type { ChatMessage } from '@/api/types'
 import { byLocale, getActiveLocale } from '@/i18n/text'
 
@@ -595,12 +596,10 @@ export const useChatStore = defineStore('chat', () => {
     }
   ) {
     const keyInEvent = extractSessionKey(payload)
-    
-    // 即使 sessionKey 为空，也处理事件，更新全局状态
-    if (!sessionKey.value.trim() && keyInEvent) {
-      // 当 sessionKey 为空但事件中有 sessionKey 时，更新 sessionKey
-      sessionKey.value = keyInEvent
-    }
+    // Administrators receive events from every Gateway channel. Only the
+    // exact selected session may update this transcript; an external-channel
+    // event must never appear inside an open WebChat conversation.
+    if (!shouldApplyRealtimeEvent(sessionKey.value, keyInEvent)) return
 
     // 从 sessionKey 中提取 agentId
     let agentId = 'default'

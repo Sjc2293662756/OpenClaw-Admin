@@ -20,6 +20,8 @@ import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useWebSocketStore } from '@/stores/websocket'
 import { usePermissions } from '@/composables/usePermissions'
+import { formatSessionConversationTitle } from '@/utils/session-presentation'
+import type { Session } from '@/api/types'
 
 const router = useRouter()
 const route = useRoute()
@@ -79,20 +81,8 @@ const historySessions = computed(() =>
     .slice(0, 50)
 )
 
-function sessionTitle(session: { key: string; sessionTitle?: string | null; label?: string; lastActivity?: string }) {
-  // The legacy default `main` key is the original shared GAIOP Web Chat.
-  // Never render old Gateway transport labels such as “OpenClaw Web Backend”.
-  const isLegacyShared = session.key.trim().toLowerCase() === 'main'
-  const title = session.sessionTitle?.trim()
-  if (isLegacyShared) return 'GAIOP Web Chat'
-  if (!title) {
-    const day = session.lastActivity ? new Date(session.lastActivity) : null
-    const suffix = day && Number.isFinite(day.getTime())
-      ? ` · ${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`
-      : ''
-    return `GAIOP Web Chat${suffix}`
-  }
-  return title
+function sessionTitle(session: Session) {
+  return formatSessionConversationTitle(session)
 }
 
 function openSession(key: string) {

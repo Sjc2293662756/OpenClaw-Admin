@@ -17,6 +17,7 @@ import {
   isLegacySessionHidden,
   listOwnedWorkspaceSessionKeys,
   markWorkspaceSessionDeleted,
+  __test__,
   setRecoveredWebChatTitle,
   setWorkspaceSessionTitleIfEmpty,
 } from './session-ownership-service.js'
@@ -185,6 +186,12 @@ describe('workspace session ownership service', () => {
         { key: webSession, channel: 'main', peer: 'webchat-fallback' },
         { key: 'agent:main:feishu:dm:open-id-1', channel: 'openclaw-lark', peer: 'open-id-1' },
         { key: 'agent:main:dingtalk-connector:dm:030856161901851437', channel: 'dingtalk-connector', label: '杨硕', peer: '030856161901851437' },
+        {
+          key: 'agent:main:main',
+          channel: 'main',
+          updatedAt: 1785131550912,
+          lastInteractionAt: 1783584390254,
+        },
       ],
     })
 
@@ -214,5 +221,26 @@ describe('workspace session ownership service', () => {
       channelUserId: '030856161901851437',
       channelUserName: '杨硕',
     })
+    expect(payload.sessions[4]).toMatchObject({
+      originKind: 'channel',
+      sourceChannel: 'main',
+      conversationLastActivity: '2026-07-09T08:06:30.254Z',
+    })
+  })
+
+  it('never lets background Gateway updatedAt move a stale conversation to the top', () => {
+    expect(__test__.resolveConversationLastActivity({
+      lastInteractionAt: 1783584390254,
+      updatedAt: 1785131550912,
+      pendingFinalDeliveryLastAttemptAt: 1785131550912,
+    })).toBe('2026-07-09T08:06:30.254Z')
+    expect(__test__.resolveConversationLastActivity({
+      sessionStartedAt: 1785131689226,
+      updatedAt: 1785131704158,
+    })).toBe('2026-07-27T05:54:49.226Z')
+    expect(__test__.resolveConversationLastActivity({
+      updatedAt: 1785131704158,
+      pendingFinalDeliveryLastAttemptAt: 1785131704158,
+    })).toBeNull()
   })
 })
