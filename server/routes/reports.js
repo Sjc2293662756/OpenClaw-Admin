@@ -45,11 +45,20 @@ function toStoredName(filePath) {
 function listAuditPaths(directory = reportRoot) {
   const results = []
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (directory === reportRoot && entry.name === '.delivery-events') continue
     const entryPath = resolve(directory, entry.name)
     if (entry.isDirectory()) results.push(...listAuditPaths(entryPath))
     else if (entry.isFile() && extname(entry.name).toLowerCase() === '.json') results.push(entryPath)
   }
   return results
+}
+
+function listDeliveryEventPaths() {
+  const directory = resolve(reportRoot, '.delivery-events')
+  if (!existsSync(directory)) return []
+  return readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && extname(entry.name).toLowerCase() === '.json')
+    .map((entry) => resolve(directory, entry.name))
 }
 
 function safeText(value) {
@@ -75,6 +84,17 @@ function canReadReport(user, row) {
 function readExactFilter(value) {
   const text = String(value || '').trim()
   return text ? text.slice(0, 160) : null
+}
+
+function resolveReportDataSourceId(db, audit) {
+  const declared = safeText(audit?.dataSourceId)
+  if (declared) return declared
+  try {
+    const active = db.prepare('SELECT id FROM data_sources WHERE is_active = 1 ORDER BY id LIMIT 2').all()
+    return active.length === 1 ? safeText(active[0].id) : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -156,7 +176,7 @@ function syncGeneratedReports(db) {
         safeText(audit.sourceChannelUserName),
         safeText(audit.sourceMessageId),
         safeText(audit.sourceMessagePreview),
-        safeText(audit.dataSourceId),
+        resolveReportDataSourceId(db, audit),
         inferMimeType(storedName),
         exists ? statSync(reportPath).size : 0,
         exists ? 'ready' : 'missing',
@@ -169,7 +189,82 @@ function syncGeneratedReports(db) {
   }
 }
 
-function publicReport(row) {
+function readEventTimestamp(value) {
+  const timestamp = Date.parse(String(value || ''))
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+function syncReportDeliveries(db) {
+  const reportExists = db.prepare('SELECT id FROM report_files WHERE id = ?')
+  const upsert = db.prepare(`
+    INSERT INTO report_deliveries (
+      id, report_id, event_name, channel, status,
+      prepared_at, handed_off_at, confirmed_at, failed_at,
+      error_code, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      report_id = excluded.report_id,
+      event_name = excluded.event_name,
+      channel = excluded.channel,
+      status = excluded.status,
+      prepared_at = excluded.prepared_at,
+      handed_off_at = excluded.handed_off_at,
+      confirmed_at = excluded.confirmed_at,
+      failed_at = excluded.failed_at,
+      error_code = excluded.error_code,
+      updated_at = excluded.updated_at
+  `)
+  const allowedStatuses = new Set(['prepared', 'handed_off', 'confirmed', 'failed', 'expired'])
+
+  for (const eventPath of listDeliveryEventPaths()) {
+    const eventName = toStoredName(eventPath)
+    if (!eventName || !eventName.startsWith('.delivery-events/')) continue
+    try {
+      const event = JSON.parse(readFileSync(eventPath, 'utf8'))
+      if (event.schemaVersion !== 'gaiop.report-delivery.v1' || event.eventType !== 'report_delivery') continue
+      const id = safeText(event.attemptId)
+      const reportId = safeText(event.reportId)
+      const channel = safeText(event.channel)?.toLowerCase()
+      const status = safeText(event.status)?.toLowerCase()
+      if (!id || !reportId || !channel || !allowedStatuses.has(status) || !reportExists.get(reportId)) continue
+      const createdAt = readEventTimestamp(event.createdAt) || statSync(eventPath).mtimeMs || Date.now()
+      const updatedAt = readEventTimestamp(event.updatedAt) || statSync(eventPath).mtimeMs || createdAt
+      upsert.run(
+        id,
+        reportId,
+        eventName,
+        channel,
+        status,
+        readEventTimestamp(event.preparedAt),
+        readEventTimestamp(event.handedOffAt),
+        readEventTimestamp(event.confirmedAt),
+        readEventTimestamp(event.failedAt),
+        safeText(event.errorCode),
+        createdAt,
+        updatedAt,
+      )
+    } catch {
+      // Ignore malformed delivery events. They never create report records.
+    }
+  }
+}
+
+function publicDelivery(row) {
+  if (!row) return null
+  return {
+    attemptId: row.id,
+    channel: row.channel,
+    status: row.status,
+    preparedAt: row.prepared_at || null,
+    handedOffAt: row.handed_off_at || null,
+    confirmedAt: row.confirmed_at || null,
+    failedAt: row.failed_at || null,
+    errorCode: row.error_code || null,
+    updatedAt: row.updated_at,
+  }
+}
+
+function publicReport(row, delivery = null) {
   const filePath = resolveStoredReportPath(row.stored_name)
   let status = row.status
   let size = Number(row.size || 0)
@@ -195,6 +290,7 @@ function publicReport(row) {
     mimeType: row.mime_type,
     size,
     status,
+    delivery: publicDelivery(delivery),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -235,6 +331,7 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
   router.get('/', authMiddleware, (req, res) => {
     try {
       syncGeneratedReports(db)
+      syncReportDeliveries(db)
       const filters = {
         sourceUserId: readExactFilter(req.query.sourceUserId),
         sourceSessionId: readExactFilter(req.query.sourceSessionId),
@@ -273,7 +370,20 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
         ${where}
         ORDER BY report_files.created_at DESC
       `).all(...values)
-      sendOk(res, { reports: rows.map(publicReport), filters, reportRootReady: true })
+      const deliveries = db.prepare(`
+        SELECT *
+        FROM report_deliveries
+        ORDER BY updated_at DESC, created_at DESC
+      `).all()
+      const latestDeliveryByReport = new Map()
+      for (const delivery of deliveries) {
+        if (!latestDeliveryByReport.has(delivery.report_id)) latestDeliveryByReport.set(delivery.report_id, delivery)
+      }
+      sendOk(res, {
+        reports: rows.map((row) => publicReport(row, latestDeliveryByReport.get(row.id))),
+        filters,
+        reportRootReady: true,
+      })
     } catch (error) {
       // Keep API failures JSON-shaped. Otherwise Express emits an HTML error
       // page and the SPA masks the useful failure with a JSON parse exception.
@@ -311,6 +421,12 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
       if (filePath && existsSync(filePath)) unlinkSync(filePath)
       const auditPath = resolveStoredReportPath(row.audit_name)
       if (auditPath && existsSync(auditPath)) unlinkSync(auditPath)
+      const deliveryEvents = db.prepare('SELECT event_name FROM report_deliveries WHERE report_id = ?').all(row.id)
+      for (const delivery of deliveryEvents) {
+        const eventPath = resolveStoredReportPath(delivery.event_name)
+        if (eventPath && existsSync(eventPath)) unlinkSync(eventPath)
+      }
+      db.prepare('DELETE FROM report_deliveries WHERE report_id = ?').run(row.id)
       db.prepare('DELETE FROM report_files WHERE id = ?').run(row.id)
       recordAudit(req.user, '删除报告文件', row.original_name, `报告类型：${row.report_type}`)
       sendOk(res)
@@ -322,4 +438,12 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
   return router
 }
 
-export const __test__ = { archiveDirectorySegment, canReadReport, inferMimeType, readExactFilter, resolveStoredReportPath, syncGeneratedReports }
+export const __test__ = {
+  archiveDirectorySegment,
+  canReadReport,
+  inferMimeType,
+  readExactFilter,
+  resolveStoredReportPath,
+  syncGeneratedReports,
+  syncReportDeliveries,
+}

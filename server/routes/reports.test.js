@@ -8,6 +8,7 @@ import express from 'express'
 
 function createMemoryDb() {
   const rows = new Map()
+  const deliveryRows = new Map()
   return {
     prepare(sql) {
       if (sql.includes('INSERT INTO report_files')) {
@@ -15,6 +16,31 @@ function createMemoryDb() {
           run(...values) {
             const [id, storedName, auditName, originalName, reportType, sourceSessionId, sourceUserId, sourceChannel, sourceChannelUserId, sourceChannelUserName, sourceMessageId, sourceMessagePreview, dataSourceId, mimeType, size, status, createdAt, updatedAt] = values
             rows.set(storedName, { id, stored_name: storedName, audit_name: auditName, original_name: originalName, report_type: reportType, source_session_id: sourceSessionId, source_user_id: sourceUserId, source_channel: sourceChannel, source_channel_user_id: sourceChannelUserId, source_channel_user_name: sourceChannelUserName, source_message_id: sourceMessageId, source_message_preview: sourceMessagePreview, data_source_id: dataSourceId, mime_type: mimeType, size, status, created_at: createdAt, updated_at: updatedAt })
+          },
+        }
+      }
+      if (sql.includes('SELECT id FROM report_files WHERE id = ?')) {
+        return {
+          get(id) {
+            return [...rows.values()].find((row) => row.id === id) || null
+          },
+        }
+      }
+      if (sql.includes('SELECT id FROM data_sources WHERE is_active = 1')) {
+        return { all: () => [{ id: 'data-source-a' }] }
+      }
+      if (sql.includes('INSERT INTO report_deliveries')) {
+        return {
+          run(...values) {
+            const [id, reportId, eventName, channel, status, preparedAt, handedOffAt, confirmedAt, failedAt, errorCode, createdAt, updatedAt] = values
+            deliveryRows.set(id, { id, report_id: reportId, event_name: eventName, channel, status, prepared_at: preparedAt, handed_off_at: handedOffAt, confirmed_at: confirmedAt, failed_at: failedAt, error_code: errorCode, created_at: createdAt, updated_at: updatedAt })
+          },
+        }
+      }
+      if (sql.includes('FROM report_deliveries') && sql.includes('ORDER BY')) {
+        return {
+          all() {
+            return [...deliveryRows.values()].sort((left, right) => right.updated_at - left.updated_at)
           },
         }
       }
@@ -65,7 +91,6 @@ test('formal report archive imports only a matched audit pair and isolates the o
     sourceChannelUserName: '用户A',
     sourceMessageId: 'message-a',
     sourceMessagePreview: '请生成今天的系统运行综述报告',
-    dataSourceId: 'data-source-a',
     generatedAt: new Date().toISOString(),
     relativeFilePath: 'user_a/quick_report/report-1.docx',
     relativeAuditPath: 'user_a/quick_report/report-1.json',
@@ -79,6 +104,32 @@ test('formal report archive imports only a matched audit pair and isolates the o
     reportId: 'wrong-type', reportType: 'diagnostic report', sourceUserId: 'user a',
     relativeFilePath: 'user_a/quick_report/wrong-type.docx', relativeAuditPath: 'user_a/quick_report/wrong-type.json',
   }))
+  const deliveryDirectory = join(reportRoot, '.delivery-events')
+  mkdirSync(deliveryDirectory)
+  const preparedAt = new Date(Date.now() - 1000).toISOString()
+  const handedOffAt = new Date().toISOString()
+  writeFileSync(join(deliveryDirectory, 'delivery-1.json'), JSON.stringify({
+    schemaVersion: 'gaiop.report-delivery.v1',
+    eventType: 'report_delivery',
+    attemptId: 'delivery-1',
+    reportId: 'report-1',
+    channel: 'wecom',
+    status: 'handed_off',
+    preparedAt,
+    handedOffAt,
+    createdAt: preparedAt,
+    updatedAt: handedOffAt,
+  }))
+  writeFileSync(join(deliveryDirectory, 'orphan.json'), JSON.stringify({
+    schemaVersion: 'gaiop.report-delivery.v1',
+    eventType: 'report_delivery',
+    attemptId: 'orphan',
+    reportId: 'missing-report',
+    channel: 'wecom',
+    status: 'handed_off',
+    createdAt: handedOffAt,
+    updatedAt: handedOffAt,
+  }))
   process.env.GAIOP_REPORTS_DIR = reportRoot
 
   const server = (await createReportsApp((req) => (
@@ -91,7 +142,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.equal(response.status, 200)
     assert.equal(payload.reports.length, 1)
     assert.deepEqual(payload.reports[0], {
-      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
+      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
     })
     const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
     const otherUserPayload = await otherUserResponse.json()

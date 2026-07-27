@@ -187,6 +187,26 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_report_files_created_at ON report_files(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_report_files_session_id ON report_files(source_session_id);
 
+  CREATE TABLE IF NOT EXISTS report_deliveries (
+    id TEXT PRIMARY KEY,
+    report_id TEXT NOT NULL,
+    event_name TEXT NOT NULL UNIQUE,
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('prepared', 'handed_off', 'confirmed', 'failed', 'expired')),
+    prepared_at INTEGER,
+    handed_off_at INTEGER,
+    confirmed_at INTEGER,
+    failed_at INTEGER,
+    error_code TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_report_deliveries_report_id
+    ON report_deliveries(report_id, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_report_deliveries_channel
+    ON report_deliveries(channel, updated_at DESC);
+
   CREATE TABLE IF NOT EXISTS alert_ingestion_settings (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
