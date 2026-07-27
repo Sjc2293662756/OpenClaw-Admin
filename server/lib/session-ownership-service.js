@@ -100,8 +100,14 @@ export function createWorkspaceSession(db, user, now = Date.now()) {
  * management views.
  */
 export function deriveWorkspaceSessionTitle(value, maxLength = 24) {
-  const normalized = String(value || '').replace(/\s+/gu, ' ').trim()
+  const normalized = String(value || '')
+    .replace(/^\[[A-Z][a-z]{2}\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?:\s+[A-Z]{2,5}(?:[+-]\d{1,2}(?::\d{2})?)?)?\]\s*/u, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
   if (!normalized) return ''
+  // Transport/control commands are not conversation subjects. Leaving the
+  // title empty lets the first real user request become the stable title.
+  if (/^\/[a-z][\w-]*(?:\s|$)/iu.test(normalized)) return ''
   const characters = Array.from(normalized)
   const safeLength = Math.max(1, Math.floor(Number(maxLength) || 24))
   return characters.length > safeLength
@@ -137,7 +143,9 @@ function findHistoricalWebChatTitle(db, sessionKey) {
 export function findDisplaySessionTitle(db, sessionKey) {
   const workspace = findWorkspaceSession(db, sessionKey)
   const workspaceTitle = normalizeSessionKey(workspace?.session_title)
-  return workspaceTitle || findHistoricalWebChatTitle(db, sessionKey)
+  if (!isReplaceableWebChatTitle(workspaceTitle)) return workspaceTitle
+  const historicalTitle = findHistoricalWebChatTitle(db, sessionKey)
+  return isReplaceableWebChatTitle(historicalTitle) ? '' : historicalTitle
 }
 
 export function setHistoricalWebChatTitleIfEmpty(db, sessionKey, title, now = Date.now()) {
@@ -150,6 +158,55 @@ export function setHistoricalWebChatTitleIfEmpty(db, sessionKey, title, now = Da
     ON CONFLICT(session_key) DO NOTHING
   `).run(key, normalizedTitle, now, now)
   return findHistoricalWebChatTitle(db, key) || null
+}
+
+function isReplaceableWebChatTitle(value) {
+  const normalized = normalizeSessionKey(value)
+  return !normalized || /^\/[a-z][\w-]*(?:\s|$)/iu.test(normalized)
+}
+
+/**
+ * Restore a title from verified local history without overwriting a meaningful
+ * existing title. Owned WebChat sessions use workspace_sessions; older
+ * unregistered WebChat sessions use the historical side table.
+ */
+export function setRecoveredWebChatTitle(db, sessionKey, title, now = Date.now()) {
+  const key = normalizeSessionKey(sessionKey)
+  const normalizedTitle = deriveWorkspaceSessionTitle(title)
+  if (!key || !normalizedTitle) return null
+  const workspace = findWorkspaceSession(db, key)
+  if (workspace) {
+    if (!isReplaceableWebChatTitle(workspace.session_title)) return null
+    const result = db.prepare(`
+      UPDATE workspace_sessions
+      SET session_title = ?, updated_at = ?
+      WHERE session_key = ? AND status = 'active'
+    `).run(normalizedTitle, now, key)
+    return result.changes === 1 ? normalizedTitle : null
+  }
+  const existing = findHistoricalWebChatTitle(db, key)
+  if (!isReplaceableWebChatTitle(existing)) return null
+  db.prepare(`
+    INSERT INTO historical_webchat_titles (session_key, session_title, title_source, created_at, updated_at)
+    VALUES (?, ?, 'first_user_message', ?, ?)
+    ON CONFLICT(session_key) DO UPDATE SET
+      session_title = excluded.session_title,
+      title_source = excluded.title_source,
+      updated_at = excluded.updated_at
+  `).run(key, normalizedTitle, now, now)
+  return findHistoricalWebChatTitle(db, key) || null
+}
+
+export function isConversationSessionSend(method, params) {
+  const normalizedMethod = normalizeSessionKey(method)
+  if (normalizedMethod === 'chat.send') return true
+  return normalizedMethod === 'agent' && Boolean(getSessionKeyFromParams(params))
+}
+
+export function getConversationTitleCandidate(method, params) {
+  if (!isConversationSessionSend(method, params)) return ''
+  const row = asRecord(params)
+  return deriveWorkspaceSessionTitle(row.message || row.input || row.text || row.content)
 }
 
 export function findWorkspaceSession(db, sessionKey) {
@@ -304,7 +361,7 @@ export async function backfillHistoricalWebChatTitles(db, sessionListPayload, re
     const key = extractRowSessionKey(session)
     if (!key) continue
     result.eligible += 1
-    if (findDisplaySessionTitle(db, key)) {
+    if (!isReplaceableWebChatTitle(findDisplaySessionTitle(db, key))) {
       result.alreadyTitled += 1
       continue
     }
@@ -314,7 +371,7 @@ export async function backfillHistoricalWebChatTitles(db, sessionListPayload, re
         result.withoutUserMessage += 1
         continue
       }
-      if (setHistoricalWebChatTitleIfEmpty(db, key, title)) result.updated += 1
+      if (setRecoveredWebChatTitle(db, key, title)) result.updated += 1
       else result.alreadyTitled += 1
     } catch {
       result.failed += 1
@@ -400,6 +457,9 @@ export const __test__ = {
   setWorkspaceSessionTitleIfEmpty,
   findDisplaySessionTitle,
   setHistoricalWebChatTitleIfEmpty,
+  setRecoveredWebChatTitle,
+  isConversationSessionSend,
+  getConversationTitleCandidate,
   isWebChatSessionRecord,
   deriveFirstUserMessageTitle,
   backfillHistoricalWebChatTitles,

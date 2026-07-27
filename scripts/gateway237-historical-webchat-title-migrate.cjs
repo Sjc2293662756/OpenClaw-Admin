@@ -35,7 +35,7 @@ import db from '/opt/gaiop/admin/server/database.js'
 import { OpenClawGateway } from '/opt/gaiop/admin/server/gateway.js'
 import { __test__ } from '/opt/gaiop/admin/server/lib/session-ownership-service.js'
 
-const { isWebChatSessionRecord, findDisplaySessionTitle, deriveFirstUserMessageTitle, setHistoricalWebChatTitleIfEmpty } = __test__
+const { isWebChatSessionRecord, findDisplaySessionTitle, deriveFirstUserMessageTitle, setRecoveredWebChatTitle } = __test__
 const result = { eligible: 0, updated: 0, alreadyTitled: 0, withoutUserMessage: 0, failed: 0, totalTitles: 0 }
 const gateway = new OpenClawGateway(
   process.env.OPENCLAW_WS_URL,
@@ -58,6 +58,11 @@ function keyOf(value) {
   return String(value.key || value.sessionKey || value.id || '').trim()
 }
 
+function replaceableTitle(value) {
+  const normalized = String(value || '').trim()
+  return !normalized || /^\/[a-z][\w-]*(?:\s|$)/iu.test(normalized)
+}
+
 function connect(timeoutMs = 20_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('gateway-timeout')), timeoutMs)
@@ -77,7 +82,7 @@ try {
     const sessionKey = keyOf(session)
     if (!sessionKey) continue
     result.eligible += 1
-    if (findDisplaySessionTitle(db, sessionKey)) {
+    if (!replaceableTitle(findDisplaySessionTitle(db, sessionKey))) {
       result.alreadyTitled += 1
       continue
     }
@@ -92,7 +97,7 @@ try {
   }
   const writeTitles = db.transaction((items) => {
     for (const item of items) {
-      if (setHistoricalWebChatTitleIfEmpty(db, item.sessionKey, item.title)) result.updated += 1
+      if (setRecoveredWebChatTitle(db, item.sessionKey, item.title)) result.updated += 1
       else result.alreadyTitled += 1
     }
   })

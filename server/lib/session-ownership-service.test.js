@@ -11,10 +11,13 @@ import {
   extractSessionKeyFromEvent,
   filterHiddenLegacySessions,
   filterSessionListPayload,
+  getConversationTitleCandidate,
   hideLegacySharedSession,
+  isConversationSessionSend,
   isLegacySessionHidden,
   listOwnedWorkspaceSessionKeys,
   markWorkspaceSessionDeleted,
+  setRecoveredWebChatTitle,
   setWorkspaceSessionTitleIfEmpty,
 } from './session-ownership-service.js'
 
@@ -120,6 +123,30 @@ describe('workspace session ownership service', () => {
     })
   })
 
+  it('supports the Gateway agent fallback and ignores transport envelopes and control commands', () => {
+    const db = createTestDb()
+    const key = createWorkspaceSession(db, alice, 1)
+    expect(isConversationSessionSend('agent', { sessionKey: key, input: '查询业务情况' })).toBe(true)
+    expect(isConversationSessionSend('agent', { agentId: 'main', input: '普通智能体调用' })).toBe(false)
+    expect(getConversationTitleCandidate('agent', {
+      sessionKey: key,
+      input: '[Mon 2026-07-27 11:20 GMT+8] 查询最近七天的告警情况',
+    })).toBe('查询最近七天的告警情况')
+    expect(deriveWorkspaceSessionTitle('/status')).toBe('')
+    expect(setWorkspaceSessionTitleIfEmpty(db, key, '/status', 2)).toBeNull()
+    expect(setWorkspaceSessionTitleIfEmpty(db, key, '真实问题', 3)).toBe('真实问题')
+  })
+
+  it('repairs only blank or command-placeholder historical titles', () => {
+    const db = createTestDb()
+    const key = createWorkspaceSession(db, alice, 1)
+    db.prepare('UPDATE workspace_sessions SET session_title = ? WHERE session_key = ?').run('/status', key)
+    expect(enrichSessionPayload(db, [{ key }])[0].sessionTitle).toBeNull()
+    expect(setRecoveredWebChatTitle(db, key, '查询网络性能', 2)).toBe('查询网络性能')
+    expect(setRecoveredWebChatTitle(db, key, '不能覆盖已有标题', 3)).toBeNull()
+    expect(enrichSessionPayload(db, [{ key }])[0].sessionTitle).toBe('查询网络性能')
+  })
+
   it('backfills a legacy WebChat title from its first user message without reading external channels', async () => {
     const db = createTestDb()
     const webKey = 'agent:main:main:dm:webchat-123456789012'
@@ -133,7 +160,8 @@ describe('workspace session ownership service', () => {
       requestedKeys.push(key)
       return { messages: [
         { role: 'assistant', content: '欢迎' },
-        { role: 'user', content: '  分析今天业务系统是否有报错和慢访问  ' },
+        { role: 'user', content: '/status' },
+        { role: 'user', content: '[Wed 2026-07-22 13:34 GMT+8]  分析今天业务系统是否有报错和慢访问  ' },
         { role: 'user', content: '后续问题不会覆盖标题' },
       ] }
     })

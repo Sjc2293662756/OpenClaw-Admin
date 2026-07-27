@@ -42,10 +42,12 @@ import {
   extractSessionKeyFromEvent,
   filterHiddenLegacySessions,
   filterSessionListPayload,
+  getConversationTitleCandidate,
   getSessionKeyFromParams,
   hideLegacySharedSession,
   isLegacySessionHidden,
   isLegacySharedWebSessionKey,
+  isConversationSessionSend,
   listOwnedWorkspaceSessionKeys,
   markWorkspaceSessionDeleted,
   setWorkspaceSessionTitleIfEmpty,
@@ -1625,7 +1627,10 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
   }
 
   const isSessionList = SESSION_LIST_METHODS.has(method)
-  const isSessionScoped = SESSION_SCOPED_READ_METHODS.has(method) || SESSION_SCOPED_WRITE_METHODS.has(method)
+  const isConversationSend = isConversationSessionSend(method, params)
+  const isSessionScoped = SESSION_SCOPED_READ_METHODS.has(method)
+    || SESSION_SCOPED_WRITE_METHODS.has(method)
+    || (method === 'agent' && isConversationSend)
   const sessionKey = isSessionScoped ? getSessionKeyFromParams(params) : ''
   if (isSessionScoped) {
     if (isLegacySessionHidden(db, sessionKey)) {
@@ -1651,8 +1656,8 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
     const activeDataSource = method === 'chat.send'
       ? db.prepare('SELECT id FROM data_sources WHERE is_active = 1 LIMIT 1').get()
       : null
-    const webSessionTitleCandidate = method === 'chat.send'
-      ? String(params?.message || params?.input || '').trim()
+    const webSessionTitleCandidate = isConversationSend
+      ? getConversationTitleCandidate(method, params)
       : ''
     const reportProvenance = method === 'chat.send'
       ? attachReportProvenance(params, req.user, {
@@ -1665,7 +1670,7 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
     const result = await gateway.call(method, reportProvenance.params)
     // Save the first successful WebChat request as its fixed, local title.
     // The title is never model-generated and is not sent to the Gateway.
-    if (method === 'chat.send') setWorkspaceSessionTitleIfEmpty(db, sessionKey, webSessionTitleCandidate)
+    if (isConversationSend) setWorkspaceSessionTitleIfEmpty(db, sessionKey, webSessionTitleCandidate)
     let payload = method === 'config.get' && req.user?.role !== 'admin'
       ? sanitizeGatewayConfigPayload(result)
       : result
