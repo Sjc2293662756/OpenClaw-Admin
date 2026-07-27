@@ -1,16 +1,21 @@
 import { Router } from 'express'
 import { sendOk } from '../lib/api-response.js'
+import { getReportStorageRoot } from '../lib/report-storage-path.js'
 
 /**
- * The browser may learn only whether deployment configured report storage.
- * It must never receive a host path or a way to select one.
+ * Administrators may read the deployment-controlled report root. The route
+ * remains read-only and never accepts a browser-provided path.
  */
 export function createReportStorageRouter({ adminMiddleware, recordAudit }) {
   const router = Router()
 
   router.get('/', adminMiddleware, (req, res) => {
-    recordAudit(req.user, '查看报告存储状态', '系统设置', '只读查看部署配置状态')
-    sendOk(res, { reportStorageConfigured: true })
+    const reportStorageRoot = getReportStorageRoot()
+    recordAudit(req.user, '查看报告存储路径', '系统设置', '只读查看部署配置的报告根目录')
+    sendOk(res, {
+      reportStorageConfigured: true,
+      reportStorageRoot,
+    })
   })
 
   return router

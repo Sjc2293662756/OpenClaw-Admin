@@ -14,6 +14,7 @@ const themeStore = useThemeStore()
 const { t } = useI18n()
 const message = useMessage()
 const reportStorageConfigured = ref(false)
+const reportStorageRoot = ref('')
 const reportStorageLoading = ref(false)
 const reportStorageError = ref(false)
 
@@ -50,10 +51,17 @@ async function loadReportStorageStatus() {
       throw new Error('Admin BFF 尚未加载报告存储状态接口，请重启本地 Admin BFF 后重试')
     }
     const data = await response.json()
-    if (!response.ok || !data.ok || typeof data.reportStorageConfigured !== 'boolean') {
+    if (
+      !response.ok
+      || !data.ok
+      || typeof data.reportStorageConfigured !== 'boolean'
+      || typeof data.reportStorageRoot !== 'string'
+      || !data.reportStorageRoot.trim()
+    ) {
       throw new Error(data.error?.message || data.error || '读取报告存储状态失败')
     }
     reportStorageConfigured.value = data.reportStorageConfigured
+    reportStorageRoot.value = data.reportStorageRoot
   } catch (error) {
     reportStorageError.value = true
     message.error(error instanceof Error ? error.message : '读取报告存储状态失败')
@@ -78,13 +86,13 @@ onMounted(loadReportStorageStatus)
     </section>
 
     <NCard title="报告存储" class="app-card">
-      <NAlert type="info" :bordered="false">报告目录由部署配置控制，网页不会显示或修改服务器路径。报告由会话中的 GAIOP AI 自动生成；查看、筛选、下载与删除请在“报告文件管理”页面进行。</NAlert>
+      <NAlert type="info" :bordered="false">以下为正式报告的真实存储路径，由部署配置只读控制，不能在网页中修改。报告的查看、筛选、下载与删除请在“报告文件管理”页面进行。</NAlert>
       <NForm v-if="authStore.isAdmin" label-placement="left" label-width="150" style="max-width: 760px; margin-top: 16px;">
-        <NFormItem label="部署状态">
-          <NText :type="reportStorageConfigured ? 'success' : 'warning'">{{ reportStorageLoading ? '正在读取…' : (reportStorageConfigured ? '已配置' : '未配置') }}</NText>
+        <NFormItem label="真实存储路径">
+          <NText :type="reportStorageConfigured ? 'success' : 'warning'">{{ reportStorageLoading ? '正在读取…' : reportStorageRoot }}</NText>
         </NFormItem>
       </NForm>
-      <NAlert v-else type="warning" :bordered="false" style="margin-top: 16px;">仅管理员可查看报告存储部署状态。</NAlert>
+      <NAlert v-else type="warning" :bordered="false" style="margin-top: 16px;">仅管理员可查看报告真实存储路径。</NAlert>
       <NAlert v-if="reportStorageError && authStore.isAdmin" type="warning" :bordered="false" style="margin-top: 12px;">暂时无法读取报告存储状态，请确认 Admin BFF 已启动并完成部署配置。</NAlert>
     </NCard>
 
