@@ -73,9 +73,10 @@ const attached = attachReportProvenance({
   signingKey,
   storeDirectory,
   dataSourceId: sourceEnvelopes[0].dataSourceId,
+  transportMetadata: false,
 })
 console.error('PHASE_SNAPSHOT')
-if (!attached.attached || !attached.stored) throw new Error('PROVENANCE_SNAPSHOT_FAILED')
+if (attached.attached || !attached.stored || attached.params.metadata) throw new Error('PROVENANCE_SNAPSHOT_FAILED')
 
 const snapshotDigest = crypto.createHash('sha256').update(sessionKey, 'utf8').digest('hex')
 const snapshotFile = path.join(storeDirectory, snapshotDigest + '.json')

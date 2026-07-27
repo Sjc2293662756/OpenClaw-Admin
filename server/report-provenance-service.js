@@ -42,12 +42,13 @@ function persistEnvelope(envelope, storeDirectory) {
 }
 
 /**
- * Attach a server-signed provenance envelope to a chat.send request. The
- * browser cannot choose the user id or signature; GAIOP verifies this envelope
- * only after Gateway places it in its execution context.
+ * Create and persist a server-signed provenance envelope. Legacy runtimes may
+ * also transport it in chat.send metadata; production can disable that path
+ * so control-plane identity never enters the Gateway/model request.
  */
 export function attachReportProvenance(params = {}, user = null, options = {}) {
   const enabled = options.enabled === true
+  const transportMetadata = options.transportMetadata !== false
   const signingKey = String(options.signingKey || '').trim()
   const userId = cleanText(user?.id)
   const username = cleanText(user?.username, 160)
@@ -94,15 +95,17 @@ export function attachReportProvenance(params = {}, user = null, options = {}) {
   }
 
   return {
-    attached: true,
+    attached: transportMetadata,
     stored,
-    params: {
-      ...params,
-      metadata: {
-        ...metadata,
-        gaiopReportProvenance: envelope,
-      },
-    },
+    params: transportMetadata
+      ? {
+          ...params,
+          metadata: {
+            ...metadata,
+            gaiopReportProvenance: envelope,
+          },
+        }
+      : params,
   }
 }
 

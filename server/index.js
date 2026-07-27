@@ -1665,6 +1665,9 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
         signingKey: envConfig.GAIOP_REPORT_PROVENANCE_SIGNING_KEY,
         storeDirectory: envConfig.GAIOP_REPORT_PROVENANCE_STORE_DIR,
         dataSourceId: activeDataSource?.id,
+        // Keep control-plane provenance out of the user/model transport.
+        // GAIOP resolves the signed server snapshot by session/tool call.
+        transportMetadata: false,
       })
       : { params, attached: false }
     const result = await gateway.call(method, reportProvenance.params)

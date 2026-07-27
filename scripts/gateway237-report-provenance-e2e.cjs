@@ -41,9 +41,10 @@ const attached = attachReportProvenance(
     signingKey: process.env.GAIOP_REPORT_PROVENANCE_SIGNING_KEY,
     storeDirectory: process.env.GAIOP_REPORT_PROVENANCE_STORE_DIR,
     dataSourceId: 'provenance-e2e-source',
+    transportMetadata: false,
   },
 )
-if (!attached.attached || !attached.stored) process.exit(11)
+if (attached.attached || !attached.stored || attached.params.metadata) process.exit(11)
 NODE
 
 printf 'PHASE_TOOL\n'

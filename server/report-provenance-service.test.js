@@ -66,3 +66,33 @@ test('report provenance persists one signed snapshot without exposing the sessio
     rmSync(directory, { recursive: true, force: true })
   }
 })
+
+test('report provenance store-only mode leaves Gateway and model transport parameters unchanged', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'gaiop-report-provenance-store-only-'))
+  try {
+    const params = {
+      sessionKey: 'agent:main:main:dm:webchat-store-only',
+      message: '分析最近三小时告警情况',
+      idempotencyKey: 'message-store-only',
+    }
+    const result = attachReportProvenance(params, { id: 'user-store-only', username: 'alice' }, {
+      enabled: true,
+      signingKey: '0123456789abcdef0123456789abcdef',
+      storeDirectory: directory,
+      dataSourceId: 'source-store-only',
+      transportMetadata: false,
+      now: 123456789,
+    })
+    assert.equal(result.attached, false)
+    assert.equal(result.stored, true)
+    assert.equal(result.params, params)
+    assert.equal('metadata' in result.params, false)
+    const stored = JSON.parse(readFileSync(join(directory, readdirSync(directory)[0]), 'utf8'))
+    assert.equal(stored.sourceUserId, undefined)
+    assert.equal(stored.userId, 'user-store-only')
+    assert.equal(stored.sessionId, params.sessionKey)
+    assert.equal(stored.dataSourceId, 'source-store-only')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
