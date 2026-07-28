@@ -956,7 +956,16 @@ export default {
       },
       range: {
         today: 'Today',
+        last7days: 'Last 7 days',
+        last30days: 'Last 30 days',
+        thisMonth: 'This month',
+        custom: 'Custom',
         to: 'to',
+        validation: {
+          empty: 'Select both a start and end time',
+          reversed: 'Start time cannot be later than end time',
+          future: 'End time cannot be later than the current server time',
+        },
       },
       usageMode: {
         tokens: 'Tokens',
@@ -965,6 +974,9 @@ export default {
       },
       usage: {
         error: 'Failed to fetch usage: {error}',
+        errorRange: 'Failed to query {range}: {error}',
+        loadingRange: 'Calculating {range}',
+        retry: 'Retry current range',
         coverage: {
           none: 'No usage sessions in this range',
           text: 'Usage coverage {withUsage}/{total} sessions',
@@ -1029,6 +1041,11 @@ export default {
       trend: {
         empty: 'No trend data in this range',
         pointTitle: '{date} · {value} · Messages {messages} · Errors {errors}',
+        grain: {
+          day: 'Daily',
+          week: 'Natural week',
+          month: 'Natural month',
+        },
       },
       top: {
         models: 'Top Models',

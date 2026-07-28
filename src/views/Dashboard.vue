@@ -24,8 +24,19 @@ import {
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import StatCard from '@/components/common/StatCard.vue'
+import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useWebSocketStore } from '@/stores/websocket'
 import { formatRelativeTime } from '@/utils/format'
+import {
+  aggregateUsageTrend,
+  createLatestRequestTracker,
+  formatTimeRange,
+  formatYmd,
+  rangeForPreset,
+  trendGrainForRange,
+  type TimeRange,
+  type TimeRangePreset,
+} from '@/utils/time-range'
 import type {
   CostUsageSummary,
   CronJob,
@@ -36,7 +47,6 @@ import type {
   Skill,
 } from '@/api/types'
 
-type RangePreset = 'today' | '7d' | '30d' | 'custom'
 type UsageMode = 'tokens' | 'cost'
 
 const router = useRouter()
@@ -46,13 +56,23 @@ const summaryLoading = ref(true)
 const usageLoading = ref(true)
 const hasSummaryData = ref(false)
 const hasUsageData = ref(false)
-const refreshing = ref(false)
 const usageError = ref<string | null>(null)
+const usageErrorRange = ref<string | null>(null)
 const lastUpdatedAt = ref<number | null>(null)
-const rangePreset = ref<RangePreset>('7d')
+const serverNow = ref(Date.now())
+const rangePreset = ref<TimeRangePreset>('last7days')
+const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value))
+const displayedUsageRange = ref<TimeRange>([...appliedRange.value] as TimeRange)
+const pendingUsageRange = ref<TimeRange | null>(null)
 const usageMode = ref<UsageMode>('tokens')
-const usageStartDate = ref('')
-const usageEndDate = ref('')
+const usageRequestTracker = createLatestRequestTracker()
+let summaryRequestId = 0
+
+const refreshing = computed(() => summaryLoading.value || usageLoading.value)
+const pendingUsageRangeLabel = computed(() =>
+  pendingUsageRange.value ? formatTimeRange(pendingUsageRange.value) : ''
+)
+const displayedUsageRangeLabel = computed(() => formatTimeRange(displayedUsageRange.value))
 
 const stats = ref({
   sessionCount: 0,
@@ -156,7 +176,11 @@ const dailyUsage = computed(() => {
   }))
 })
 
-const dailyUsageVisible = computed(() => dailyUsage.value.slice(-14))
+const trendGrain = computed(() => trendGrainForRange(displayedUsageRange.value))
+const dailyUsageVisible = computed(() =>
+  aggregateUsageTrend(dailyUsage.value, trendGrain.value)
+)
+const trendGrainLabel = computed(() => t(`pages.dashboard.trend.grain.${trendGrain.value}`))
 
 const trendSeries = computed(() =>
   dailyUsageVisible.value.map((item) => ({
@@ -227,9 +251,9 @@ const trendAxisLabels = computed(() => {
   const mid = trendSeries.value[Math.floor((trendSeries.value.length - 1) / 2)]
   const end = trendSeries.value[trendSeries.value.length - 1]
   return {
-    start: start?.date.slice(5) || '-',
-    mid: mid?.date.slice(5) || '-',
-    end: end?.date.slice(5) || '-',
+    start: formatTrendDate(start?.date),
+    mid: formatTrendDate(mid?.date),
+    end: formatTrendDate(end?.date),
   }
 })
 
@@ -422,7 +446,9 @@ const topToolMax = computed(() =>
 )
 
 onMounted(async () => {
-  applyRangePreset('7d', false)
+  await syncServerNow()
+  appliedRange.value = rangeForPreset('last7days', serverNow.value)
+  displayedUsageRange.value = [...appliedRange.value] as TimeRange
   retryAfterFirstConnect = wsStore.state !== 'connected'
   cleanupStateChange = wsStore.subscribe('stateChange', () => {
     maybeRetryAfterConnect()
@@ -439,30 +465,20 @@ onUnmounted(() => {
 function maybeRetryAfterConnect() {
   if (!retryAfterFirstConnect) return
   if (wsStore.state !== 'connected') return
-  if (refreshing.value) return
 
   retryAfterFirstConnect = false
   void refreshDashboard()
 }
 
 async function refreshDashboard() {
-  if (refreshing.value) return
-
-  refreshing.value = true
-  usageError.value = null
-
-  try {
-    await Promise.allSettled([
-      refreshDashboardSummary(),
-      refreshDashboardUsage(),
-    ])
-    lastUpdatedAt.value = Date.now()
-  } finally {
-    refreshing.value = false
-  }
+  await Promise.allSettled([
+    refreshDashboardSummary(),
+    refreshDashboardUsage([...appliedRange.value] as TimeRange),
+  ])
 }
 
 async function refreshDashboardSummary() {
+  const requestId = ++summaryRequestId
   summaryLoading.value = true
 
   try {
@@ -479,6 +495,7 @@ async function refreshDashboardSummary() {
     const modelList = modelsRes.status === 'fulfilled' ? modelsRes.value : []
     const skillList = skillsRes.status === 'fulfilled' ? skillsRes.value : []
     const config = configRes.status === 'fulfilled' ? configRes.value : null
+    if (requestId !== summaryRequestId) return
     stats.value = {
       sessionCount: sessionList.length,
       cronCount: cronList.filter((job: CronJob) => job.enabled).length,
@@ -487,92 +504,99 @@ async function refreshDashboardSummary() {
     }
     hasSummaryData.value = true
   } finally {
-    summaryLoading.value = false
+    if (requestId === summaryRequestId) summaryLoading.value = false
   }
 }
 
-async function refreshDashboardUsage() {
+async function refreshDashboardUsage(range: TimeRange) {
+  const requestId = usageRequestTracker.begin()
   usageLoading.value = true
+  pendingUsageRange.value = [...range] as TimeRange
+  usageError.value = null
+  usageErrorRange.value = null
+
   let sessionsUsageError: unknown = null
   let needsCostFallback = false
+  let nextSessionsUsage: SessionsUsageResult | null = null
+  let nextCostSummary: CostUsageSummary | null = null
+  let sessionsSucceeded = false
+  let costSucceeded = false
+  const startDate = formatYmd(range[0])
+  const endDate = formatYmd(range[1])
 
   try {
     const result = await wsStore.rpc.getSessionsUsage({
-      startDate: usageStartDate.value,
-      endDate: usageEndDate.value,
+      startDate,
+      endDate,
       limit: 1000,
     })
-    sessionsUsageResult.value = result
-    hasUsageData.value = true
+    nextSessionsUsage = result
+    sessionsSucceeded = true
     needsCostFallback = (
       result.aggregates.daily.length === 0 ||
       (result.totals.totalCost <= 0 && result.totals.missingCostEntries > 0)
     )
-    if (!needsCostFallback) {
-      usageCostSummary.value = null
-      usageLoading.value = false
-      return
-    }
   } catch (error) {
-    sessionsUsageResult.value = null
     sessionsUsageError = error
     needsCostFallback = true
   }
 
   if (needsCostFallback) {
     try {
-      usageCostSummary.value = await wsStore.rpc.getUsageCost({
-        startDate: usageStartDate.value,
-        endDate: usageEndDate.value,
+      nextCostSummary = await wsStore.rpc.getUsageCost({
+        startDate,
+        endDate,
       })
-      hasUsageData.value = true
-      if (sessionsUsageError) usageError.value = null
+      costSucceeded = true
     } catch (error) {
-      usageCostSummary.value = null
       const failure = sessionsUsageError || error
-      usageError.value = failure instanceof Error ? failure.message : String(failure)
+      if (!sessionsSucceeded && usageRequestTracker.isCurrent(requestId)) {
+        usageError.value = failure instanceof Error ? failure.message : String(failure)
+        usageErrorRange.value = formatTimeRange(range)
+      }
     }
   }
 
+  if (!usageRequestTracker.isCurrent(requestId)) return
+
+  if (sessionsSucceeded || costSucceeded) {
+    sessionsUsageResult.value = nextSessionsUsage
+    usageCostSummary.value = needsCostFallback ? nextCostSummary : null
+    hasUsageData.value = true
+    displayedUsageRange.value = [...range] as TimeRange
+    usageError.value = null
+    usageErrorRange.value = null
+    lastUpdatedAt.value = Date.now()
+  }
+
   usageLoading.value = false
+  pendingUsageRange.value = null
 }
 
-function applyRangePreset(preset: Exclude<RangePreset, 'custom'>, refresh = true) {
+function applyTimeRange(range: TimeRange, preset: TimeRangePreset) {
+  appliedRange.value = [...range] as TimeRange
   rangePreset.value = preset
-  const today = new Date()
-  const end = formatYmd(today)
+  void refreshDashboardUsage([...range] as TimeRange)
+}
 
-  if (preset === 'today') {
-    usageStartDate.value = end
-    usageEndDate.value = end
-  } else if (preset === '7d') {
-    usageStartDate.value = formatYmd(addDays(today, -6))
-    usageEndDate.value = end
-  } else {
-    usageStartDate.value = formatYmd(addDays(today, -29))
-    usageEndDate.value = end
-  }
+function retryUsage() {
+  void refreshDashboardUsage([...appliedRange.value] as TimeRange)
+}
 
-  if (refresh) {
-    void refreshDashboard()
+async function syncServerNow() {
+  try {
+    const response = await fetch('/api/health', { cache: 'no-store' })
+    const responseTime = Date.parse(response.headers.get('date') || '')
+    if (Number.isFinite(responseTime)) serverNow.value = responseTime
+  } catch {
+    serverNow.value = Date.now()
   }
 }
 
-function handleDateRangeChanged() {
-  rangePreset.value = 'custom'
-}
-
-function addDays(base: Date, offset: number): Date {
-  const next = new Date(base)
-  next.setDate(next.getDate() + offset)
-  return next
-}
-
-function formatYmd(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
+function formatTrendDate(date?: string): string {
+  if (!date) return '-'
+  if (trendGrain.value === 'month') return date
+  return date.slice(5)
 }
 
 function toRecord(value: unknown): Record<string, unknown> | null {
@@ -773,22 +797,11 @@ function viewModels() {
         </div>
 
         <NSpace :size="8" wrap class="dashboard-filters-row">
-          <NButton size="small" :type="rangePreset === 'today' ? 'primary' : 'default'" secondary @click="applyRangePreset('today')">{{ t('pages.dashboard.range.today') }}</NButton>
-          <NButton size="small" :type="rangePreset === '7d' ? 'primary' : 'default'" secondary @click="applyRangePreset('7d')">7d</NButton>
-          <NButton size="small" :type="rangePreset === '30d' ? 'primary' : 'default'" secondary @click="applyRangePreset('30d')">30d</NButton>
-
-          <input
-            v-model="usageStartDate"
-            class="usage-date-input"
-            type="date"
-            @change="handleDateRangeChanged"
-          />
-          <span class="usage-date-sep">{{ t('pages.dashboard.range.to') }}</span>
-          <input
-            v-model="usageEndDate"
-            class="usage-date-input"
-            type="date"
-            @change="handleDateRangeChanged"
+          <TimeRangePicker
+            v-model="appliedRange"
+            :preset="rangePreset"
+            :server-now="serverNow"
+            @apply="applyTimeRange"
           />
 
           <NButton size="small" :type="usageMode === 'tokens' ? 'primary' : 'default'" secondary @click="usageMode = 'tokens'">{{ t('pages.dashboard.usageMode.tokens') }}</NButton>
@@ -806,7 +819,14 @@ function viewModels() {
         </NSpace>
 
         <NAlert v-if="usageError" type="warning" :bordered="false" style="margin-top: 10px;">
-          {{ t('pages.dashboard.usage.error', { error: usageError }) }}
+          <div class="usage-error-row">
+            <span>
+              {{ t('pages.dashboard.usage.errorRange', { range: usageErrorRange, error: usageError }) }}
+            </span>
+            <NButton size="small" secondary @click="retryUsage">
+              {{ t('pages.dashboard.usage.retry') }}
+            </NButton>
+          </div>
         </NAlert>
       </NCard>
 
@@ -831,7 +851,11 @@ function viewModels() {
       </NSpin>
 
       <NSpin :show="usageLoading && !hasUsageData">
-        <div class="dashboard-usage-content">
+        <div class="dashboard-usage-content" :class="{ 'dashboard-usage-content--loading': usageLoading && hasUsageData }">
+          <div v-if="usageLoading && hasUsageData" class="usage-loading-overlay">
+            <NSpin size="small" />
+            <span>{{ t('pages.dashboard.usage.loadingRange', { range: pendingUsageRangeLabel }) }}</span>
+          </div>
           <NCard :title="t('pages.dashboard.cards.kpis')" class="dashboard-card">
         <div class="kpi-grid">
           <div v-for="kpi in usageKpis" :key="kpi.key" class="kpi-card">
@@ -848,7 +872,10 @@ function viewModels() {
             <template #header-extra>
               <NSpace :size="8" align="center">
                 <NTag size="small" :bordered="false" round type="info">
-                  {{ usageStartDate }} ~ {{ usageEndDate }}
+                  {{ displayedUsageRangeLabel }}
+                </NTag>
+                <NTag size="small" :bordered="false" round>
+                  {{ trendGrainLabel }}
                 </NTag>
                 <NTag size="small" :bordered="false" round>
                   {{ usageMode === 'tokens' ? tokenTotalDisplay : costTotalDisplay }}
@@ -1044,8 +1071,38 @@ function viewModels() {
 }
 
 .dashboard-usage-content {
+  position: relative;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+
+.dashboard-usage-content--loading > :not(.usage-loading-overlay) {
+  opacity: 0.72;
+}
+
+.usage-loading-overlay {
+  position: sticky;
+  top: 12px;
+  z-index: 8;
+  align-self: center;
+  margin-bottom: -48px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+}
+
+.usage-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 12px;
 }
 
@@ -1085,21 +1142,6 @@ function viewModels() {
 
 .dashboard-filters-row {
   align-items: center;
-}
-
-.usage-date-input {
-  border: 1px solid var(--border-color);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border-radius: 8px;
-  height: 30px;
-  padding: 0 10px;
-  font-size: 12px;
-}
-
-.usage-date-sep {
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 
 .usage-trend-item,
@@ -1345,8 +1387,11 @@ function viewModels() {
 
 @media (max-width: 900px) {
   .dashboard-filters-row {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .dashboard-filters-row :deep(.time-range-trigger) {
+    max-width: min(100%, 360px);
   }
 
   .kpi-grid {

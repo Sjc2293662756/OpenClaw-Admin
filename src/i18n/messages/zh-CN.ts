@@ -959,7 +959,16 @@ export default {
       },
       range: {
         today: '今天',
+        last7days: '最近 7 日',
+        last30days: '最近 30 日',
+        thisMonth: '本月',
+        custom: '自定义',
         to: '到',
+        validation: {
+          empty: '请选择开始和结束时间',
+          reversed: '开始时间不能晚于结束时间',
+          future: '结束时间不能晚于服务器当前时间',
+        },
       },
       usageMode: {
         tokens: 'Tokens',
@@ -968,6 +977,9 @@ export default {
       },
       usage: {
         error: 'Usage 接口读取失败：{error}',
+        errorRange: '范围 {range} 查询失败：{error}',
+        loadingRange: '正在统计 {range}',
+        retry: '重试当前范围',
         coverage: {
           none: '当前范围暂无 usage 会话',
           text: '有 usage 数据 {withUsage}/{total} 个会话',
@@ -1032,6 +1044,11 @@ export default {
       trend: {
         empty: '当前范围暂无趋势数据',
         pointTitle: '{date} · {value} · 消息 {messages} · 错误 {errors}',
+        grain: {
+          day: '按日',
+          week: '按自然周',
+          month: '按自然月',
+        },
       },
       top: {
         models: 'Top Models',
