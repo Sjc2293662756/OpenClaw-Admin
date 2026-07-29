@@ -1,7 +1,14 @@
 import type { SessionsUsageDailyItem } from '@/api/types'
 
 export type TimeRange = [number, number]
-export type TimeRangePreset = 'today' | 'last7days' | 'last30days' | 'thisMonth' | 'custom'
+export type TimeRangePreset =
+  | 'lastHour'
+  | 'today'
+  | 'yesterday'
+  | 'last7days'
+  | 'last30days'
+  | 'thisMonth'
+  | 'custom'
 export type TrendGrain = 'day' | 'week' | 'month'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -24,7 +31,9 @@ export function rangeForPreset(
 ): TimeRange {
   const today = startOfDay(now)
 
+  if (preset === 'lastHour') return [now - 60 * 60 * 1000, now]
   if (preset === 'today') return [today, now]
+  if (preset === 'yesterday') return [addCalendarDays(today, -1), today - 1]
   if (preset === 'last7days') return [addCalendarDays(today, -6), now]
   if (preset === 'last30days') return [addCalendarDays(today, -29), now]
 

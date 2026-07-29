@@ -24,7 +24,9 @@ const i18n = createI18n({
       pages: {
         dashboard: {
           range: {
-            today: '今天',
+            lastHour: '最近 1 小时',
+            today: '今日',
+            yesterday: '昨日',
             last7days: '最近 7 日',
             last30days: '最近 30 日',
             thisMonth: '本月',
@@ -60,8 +62,19 @@ describe('TimeRangePicker', () => {
 
     await wrapper.get('.time-range-trigger').trigger('click')
     await nextTick()
+    const labels = [...document.querySelectorAll<HTMLButtonElement>('.time-range-option')]
+      .map((button) => button.textContent?.trim())
+    expect(labels).toEqual([
+      '最近 1 小时',
+      '今日',
+      '昨日',
+      '最近 7 日',
+      '最近 30 日',
+      '本月',
+      '自定义',
+    ])
     const today = [...document.querySelectorAll<HTMLButtonElement>('.time-range-option')]
-      .find((button) => button.textContent?.trim() === '今天')
+      .find((button) => button.textContent?.trim() === '今日')
     expect(today).toBeTruthy()
     today!.click()
     await nextTick()

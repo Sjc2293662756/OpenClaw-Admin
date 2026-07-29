@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NDataTable, NDatePicker, NDescriptions, NDescriptionsItem, NDrawer, NDrawerContent, NEmpty, NInput, NInputNumber, NPopover, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
-import { CalendarOutline, ChevronDownOutline, CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
+import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NDrawer, NDrawerContent, NEmpty, NInput, NInputNumber, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
+import { CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
+import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
+import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
 
 type Metric = { name: string; value: string; unit: string }
 type Alert = {
@@ -12,10 +14,9 @@ type Alert = {
   startTime: string | null; endTime: string | null; eventId: string | null; restored: boolean
 }
 type Pagination = { page: number; pageSize: number; maxResults: number; availableCount: number; hasMore: boolean; limitReached: boolean }
-type TimePreset = 'lastHour' | 'today' | 'yesterday' | 'last7days' | 'last30days' | 'thisMonth' | 'custom'
 type AlertExportRow = { occurredAt: string; severity: string; name: string; category: string; sourceHost: string; status: string }
 type AlertReturnState = {
-  severity: string; category: string; keyword: string; range: [number, number]; timePreset: TimePreset
+  severity: string; category: string; keyword: string; range: TimeRange; timePreset: TimeRangePreset
   pageSize: number; resultLimitChoice: string; customResultLimit: number | null; page: number
 }
 
@@ -31,11 +32,8 @@ const selectedAlert = ref<Alert | null>(null)
 const ALL_FILTER_VALUE = '__all__'
 const filters = ref({ severity: ALL_FILTER_VALUE, category: ALL_FILTER_VALUE, keyword: '' })
 const serverNow = ref(Date.now())
-const timePreset = ref<TimePreset>('lastHour')
-const appliedRange = ref<[number, number]>([serverNow.value - 60 * 60 * 1000, serverNow.value])
-const customRange = ref<[number, number] | null>(null)
-const timePopoverVisible = ref(false)
-const customRangeVisible = ref(false)
+const timePreset = ref<TimeRangePreset>('lastHour')
+const appliedRange = ref<TimeRange>(rangeForPreset('lastHour', serverNow.value))
 const pageSize = ref(10)
 const resultLimitChoice = ref('200')
 const customResultLimit = ref<number | null>(null)
@@ -47,34 +45,14 @@ const detailVisible = computed({ get: () => !!selectedAlert.value, set: (visible
 const isCustomLimit = computed(() => resultLimitChoice.value === 'custom')
 const activeResultLimit = computed(() => isCustomLimit.value ? Math.min(Math.max(Number(customResultLimit.value) || 200, pageSize.value), 3000) : Number(resultLimitChoice.value))
 
-const timeOptions: Array<{ label: string; value: TimePreset }> = [
-  { label: '最近 1 小时', value: 'lastHour' }, { label: '今日', value: 'today' }, { label: '昨日', value: 'yesterday' },
-  { label: '最近 7 日', value: 'last7days' }, { label: '最近 30 日', value: 'last30days' }, { label: '本月', value: 'thisMonth' }, { label: '自定义', value: 'custom' },
-]
 const pageSizeOptions = [10, 20, 50, 100].map((value) => ({ label: `${value} 条/页`, value }))
 const resultLimitOptions = [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: '自定义 TOP', value: 'custom' }])
-const dateShortcuts = computed(() => ({
-  '最近 1 小时': rangeForPreset('lastHour'),
-  '最近 24 小时': [serverNow.value - 24 * 60 * 60 * 1000, serverNow.value] as [number, number],
-  '最近 7 日': rangeForPreset('last7days'),
-}))
 
 function authHeaders() { return { Authorization: `Bearer ${authStore.getToken() || ''}` } }
 function severityType(severity: string) { return ({ '紧急': 'error', '重大': 'warning', '一般': 'info', '轻微': 'default' } as Record<string, 'error' | 'warning' | 'info' | 'default'>)[severity] || 'default' }
 function formatTime(value: string | null) { return value ? new Date(value).toLocaleString() : '未记录' }
 function pad(value: number) { return String(value).padStart(2, '0') }
 function formatRangeTime(value: number) { const date = new Date(value); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}` }
-const timeRangeLabel = computed(() => `${formatRangeTime(appliedRange.value[0])} - ${formatRangeTime(appliedRange.value[1])}`)
-function rangeForPreset(preset: Exclude<TimePreset, 'custom'>, now = serverNow.value): [number, number] {
-  const date = new Date(now)
-  const today = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  if (preset === 'lastHour') return [now - 60 * 60 * 1000, now]
-  if (preset === 'today') return [today, now]
-  if (preset === 'yesterday') return [today - 24 * 60 * 60 * 1000, today - 1]
-  if (preset === 'last7days') return [now - 7 * 24 * 60 * 60 * 1000, now]
-  if (preset === 'last30days') return [now - 30 * 24 * 60 * 60 * 1000, now]
-  return [new Date(date.getFullYear(), date.getMonth(), 1).getTime(), now]
-}
 
 async function refreshServerTime() {
   try {
@@ -148,14 +126,14 @@ function restoreAlertListState(): boolean {
     const startAt = range[0]
     const endAt = range[1]
     if (range.length !== 2 || startAt === undefined || endAt === undefined || !Number.isFinite(startAt) || !Number.isFinite(endAt) || startAt > endAt) return false
-    const allowedPresets: TimePreset[] = ['lastHour', 'today', 'yesterday', 'last7days', 'last30days', 'thisMonth', 'custom']
+    const allowedPresets: TimeRangePreset[] = ['lastHour', 'today', 'yesterday', 'last7days', 'last30days', 'thisMonth', 'custom']
     filters.value = {
       severity: typeof state.severity === 'string' ? state.severity : ALL_FILTER_VALUE,
       category: typeof state.category === 'string' ? state.category : ALL_FILTER_VALUE,
       keyword: typeof state.keyword === 'string' ? state.keyword.slice(0, 120) : '',
     }
     appliedRange.value = [startAt, endAt]
-    timePreset.value = allowedPresets.includes(state.timePreset as TimePreset) ? state.timePreset as TimePreset : 'custom'
+    timePreset.value = allowedPresets.includes(state.timePreset as TimeRangePreset) ? state.timePreset as TimeRangePreset : 'custom'
     pageSize.value = [10, 20, 50, 100].includes(Number(state.pageSize)) ? Number(state.pageSize) : 10
     resultLimitChoice.value = ['50', '100', '200', '500', '1000', 'custom'].includes(String(state.resultLimitChoice)) ? String(state.resultLimitChoice) : '200'
     customResultLimit.value = Number.isFinite(Number(state.customResultLimit)) ? Math.min(Math.max(Number(state.customResultLimit), pageSize.value), 3000) : null
@@ -253,37 +231,16 @@ async function loadAlerts() {
 }
 
 function applyFilters() { page.value = 1; loadAlerts() }
-async function selectTimePreset(preset: TimePreset) {
-  if (preset === 'custom') {
-    customRange.value = [...appliedRange.value] as [number, number]
-    customRangeVisible.value = true
-    return
-  }
-  await refreshServerTime()
+function applyTimeRange(range: TimeRange, preset: TimeRangePreset) {
   timePreset.value = preset
-  appliedRange.value = rangeForPreset(preset)
-  customRangeVisible.value = false
-  timePopoverVisible.value = false
+  appliedRange.value = range
   page.value = 1
   loadAlerts()
-}
-function confirmCustomRange() {
-  if (!customRange.value) { message.warning('请选择自定义的开始和结束时间'); return }
-  timePreset.value = 'custom'
-  appliedRange.value = [...customRange.value] as [number, number]
-  customRangeVisible.value = false
-  timePopoverVisible.value = false
-  page.value = 1
-  loadAlerts()
-}
-function cancelTimeSelection() {
-  customRange.value = null
-  customRangeVisible.value = false
-  timePopoverVisible.value = false
 }
 async function resetFilters() {
   filters.value = { severity: ALL_FILTER_VALUE, category: ALL_FILTER_VALUE, keyword: '' }
-  await selectTimePreset('lastHour')
+  await refreshServerTime()
+  applyTimeRange(rangeForPreset('lastHour', serverNow.value), 'lastHour')
 }
 function applyPageSize() { if (activeResultLimit.value < pageSize.value) resultLimitChoice.value = String(pageSize.value); page.value = 1; loadAlerts() }
 function applyResultLimit() { page.value = 1; loadAlerts() }
@@ -291,7 +248,7 @@ function changePage(next: number) { if (next < 1 || (next > page.value && !pagin
 onMounted(async () => {
   await refreshServerTime()
   const restored = restoreAlertListState()
-  if (!restored) appliedRange.value = rangeForPreset('lastHour')
+  if (!restored) appliedRange.value = rangeForPreset('lastHour', serverNow.value)
   if (route.query.restoreAlertState === '1') void router.replace({ name: 'AlertNotifications', query: {} })
   loadAlerts()
 })
@@ -302,25 +259,14 @@ onMounted(async () => {
     <NCard title="告警通知" class="app-card">
       <template #header-extra>
         <NSpace class="time-toolbar" align="center" wrap :size="8">
-          <NPopover v-model:show="timePopoverVisible" trigger="click" placement="bottom-end" :show-arrow="false" :style="{ padding: '0', borderRadius: customRangeVisible ? '0' : '8px', overflow: 'visible', '--n-border-radius': customRangeVisible ? '0px' : '8px' }">
-            <template #trigger>
-              <NButton class="time-trigger" size="small">
-                <template #icon><CalendarOutline /></template>
-                <span class="time-trigger-label">{{ timeRangeLabel }}</span>
-                <ChevronDownOutline class="time-trigger-chevron" />
-              </NButton>
-            </template>
-            <div class="time-picker-popover" :class="{ 'time-picker-popover--custom': customRangeVisible }">
-              <NDatePicker v-if="customRangeVisible" v-model:value="customRange" type="datetimerange" panel clearable :actions="[]" :shortcuts="dateShortcuts" class="custom-range-panel" />
-              <div class="time-preset-list">
-                <button v-for="option in timeOptions" :key="option.value" type="button" class="time-preset-button" :class="{ active: option.value === timePreset || (option.value === 'custom' && customRangeVisible) }" @click="selectTimePreset(option.value)">{{ option.label }}</button>
-                <div v-if="customRangeVisible" class="time-picker-actions">
-                  <NButton size="small" type="primary" @click="confirmCustomRange">确认</NButton>
-                  <NButton size="small" @click="cancelTimeSelection">取消</NButton>
-                </div>
-              </div>
-            </div>
-          </NPopover>
+          <TimeRangePicker
+            v-model="appliedRange"
+            :preset="timePreset"
+            :server-now="serverNow"
+            compact
+            placement="bottom-end"
+            @apply="applyTimeRange"
+          />
           <NButton size="small" :loading="loading" @click="loadAlerts"><template #icon><RefreshOutline /></template>刷新</NButton>
         </NSpace>
       </template>
@@ -394,16 +340,6 @@ onMounted(async () => {
 <style scoped>
 .alerts-page { display: grid; gap: 16px; }
 .time-toolbar { justify-content: flex-end; }
-.time-trigger { min-width: 270px; }
-.time-trigger-label { flex: 1; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.time-trigger-chevron { width: 14px; height: 14px; margin-left: 5px; }
-.time-picker-popover { display: flex; width: 172px; padding: 8px; gap: 10px; overflow: hidden; border-radius: 8px; }
-.time-picker-popover--custom { position: relative; z-index: 1; box-sizing: border-box; width: min(calc(100vw - 32px), 756px); align-items: flex-start; padding-bottom: 0; column-gap: 18px; border-radius: 0; outline: 6px solid var(--card-color, #fff); background: var(--card-color, #fff); box-shadow: 0 10px 26px rgba(16, 47, 34, .14); }
-.time-preset-list { display: grid; flex: 0 0 156px; gap: 6px; align-content: start; }
-.time-preset-button { width: 100%; padding: 7px 10px; border: 0; border-radius: 4px; background: var(--hover-color, #f4f6f8); color: var(--text-color-1, #1f2937); cursor: pointer; font: inherit; line-height: 1.2; text-align: left; transition: background-color .15s, color .15s; }
-.time-preset-button:hover, .time-preset-button.active { background: var(--primary-color, #18a058); color: #fff; }
-.time-picker-actions { display: flex; gap: 8px; margin-top: 4px; }
-.custom-range-panel { flex: 1 1 auto; min-width: 540px; margin-top: -10px; }
 .trigger-condition { display: block; line-height: 1.7; white-space: pre-wrap; }
 .alert-analysis-card { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 20px; padding: 14px; border: 1px solid var(--border-color, #e8edf0); border-radius: 8px; background: var(--hover-color, #f6f8f7); }
 .alert-analysis-card__instruction { display: block; max-width: 390px; overflow-wrap: anywhere; color: var(--text-color-1, #1f2937); font-size: 12px; line-height: 1.65; white-space: pre-wrap; }
@@ -415,10 +351,7 @@ onMounted(async () => {
   .display-controls { justify-content: flex-start; }
 }
 @media (max-width: 720px) {
-  .time-trigger { min-width: 220px; }
-  .time-picker-popover--custom { display: block; width: min(100vw - 24px, 540px); overflow: auto; transform: none; }
-  .custom-range-panel { min-width: 0; width: 100%; margin-top: 0; }
-  .time-preset-list { margin-top: 10px; }
+  .time-toolbar { max-width: 100%; }
   .alert-analysis-card { align-items: stretch; flex-direction: column; }
 }
 </style>

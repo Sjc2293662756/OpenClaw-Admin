@@ -15,6 +15,12 @@ describe('time range', () => {
   const now = new Date(2026, 6, 28, 15, 30).getTime()
 
   it('builds calendar-aligned presets', () => {
+    const lastHour = rangeForPreset('lastHour', now)
+    expect(lastHour).toEqual([now - 60 * 60 * 1000, now])
+    const yesterday = rangeForPreset('yesterday', now)
+    expect(formatYmd(yesterday[0])).toBe('2026-07-27')
+    expect(new Date(yesterday[0]).getHours()).toBe(0)
+    expect(yesterday[1]).toBe(new Date(2026, 6, 28).getTime() - 1)
     const sevenDays = rangeForPreset('last7days', now)
     expect(formatYmd(sevenDays[0])).toBe('2026-07-22')
     expect(sevenDays[1]).toBe(now)

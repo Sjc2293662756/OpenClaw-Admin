@@ -16,10 +16,14 @@ const props = withDefaults(defineProps<{
   preset?: TimeRangePreset
   serverNow?: number
   disabled?: boolean
+  compact?: boolean
+  placement?: 'bottom-start' | 'bottom-end'
 }>(), {
   preset: 'custom',
   serverNow: () => Date.now(),
   disabled: false,
+  compact: false,
+  placement: 'bottom-start',
 })
 
 const emit = defineEmits<{
@@ -35,7 +39,9 @@ const draftRange = ref<TimeRange | null>(null)
 const serverNowReceivedAt = ref(Date.now())
 
 const options = computed<Array<{ label: string; value: TimeRangePreset }>>(() => [
+  { label: t('pages.dashboard.range.lastHour'), value: 'lastHour' },
   { label: t('pages.dashboard.range.today'), value: 'today' },
+  { label: t('pages.dashboard.range.yesterday'), value: 'yesterday' },
   { label: t('pages.dashboard.range.last7days'), value: 'last7days' },
   { label: t('pages.dashboard.range.last30days'), value: 'last30days' },
   { label: t('pages.dashboard.range.thisMonth'), value: 'thisMonth' },
@@ -117,12 +123,17 @@ function handleDatePanelClick(event: MouseEvent) {
   <NPopover
     v-model:show="popoverVisible"
     trigger="click"
-    placement="bottom-start"
+    :placement="placement"
     :show-arrow="false"
     :style="{ padding: '0', overflow: 'visible' }"
   >
     <template #trigger>
-      <NButton :disabled="disabled" class="time-range-trigger">
+      <NButton
+        :disabled="disabled"
+        :size="compact ? 'small' : 'medium'"
+        class="time-range-trigger"
+        :class="{ 'time-range-trigger--compact': compact }"
+      >
         <template #icon><NIcon :component="CalendarOutline" /></template>
         <span class="time-range-label">{{ rangeLabel }}</span>
         <NIcon :component="ChevronDownOutline" />
@@ -165,6 +176,11 @@ function handleDatePanelClick(event: MouseEvent) {
 <style scoped>
 .time-range-trigger {
   max-width: 360px;
+}
+
+.time-range-trigger--compact {
+  width: 292px;
+  max-width: min(292px, calc(100vw - 112px));
 }
 
 .time-range-label {

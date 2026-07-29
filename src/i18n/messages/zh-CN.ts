@@ -958,7 +958,9 @@ export default {
         text: '上次同步 {time}',
       },
       range: {
-        today: '今天',
+        lastHour: '最近 1 小时',
+        today: '今日',
+        yesterday: '昨日',
         last7days: '最近 7 日',
         last30days: '最近 30 日',
         thisMonth: '本月',
