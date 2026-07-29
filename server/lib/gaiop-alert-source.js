@@ -46,12 +46,17 @@ export function mapGAIOPAlertEvent(event) {
   }
 }
 
-export async function readGAIOPAlerts(env = process.env, maxResults = 200, fetchImpl = fetch) {
+export async function readGAIOPAlerts(env = process.env, filters = {}, fetchImpl = fetch) {
   const baseUrl = readReceiverUrl(env)
-  const pageSize = Math.min(Math.max(Number(maxResults) || 200, 10), 3000)
   const url = new URL('/alerts', baseUrl)
   url.searchParams.set('page', '1')
-  url.searchParams.set('pageSize', String(pageSize))
+  url.searchParams.set('pageSize', '3000')
+  for (const key of ['severity', 'category', 'keyword', 'startAt', 'endAt']) {
+    const value = filters?.[key]
+    if (value !== null && value !== undefined && String(value).trim()) {
+      url.searchParams.set(key, String(value).trim())
+    }
+  }
   const token = String(env.GAIOP_ALERT_RECEIVER_TOKEN || '')
   let response
   try {

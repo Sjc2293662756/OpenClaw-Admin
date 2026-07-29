@@ -49,7 +49,9 @@ export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSourc
       const pageSize = readBoundedInteger(req.query.pageSize, 10, 10, 100)
       const maxResults = readBoundedInteger(req.query.maxResults, 200, pageSize, 3000)
       // 正式接收器以 newest-first 存储，BFF 统一映射后维持既有页面排序和 TOP 语义。
-      const source = await readAlertSource(process.env, maxResults)
+      // 时间和字段过滤必须先于页面 TOP 截断。接收器查询固定拉取其完整窗口，
+      // 并在支持服务端过滤的新版本上直接按同一组条件查询持久化历史。
+      const source = await readAlertSource(process.env, filters)
       const filtered = filterAlerts(source.alerts, filters)
       const capped = filtered.slice(0, maxResults)
       const startIndex = (page - 1) * pageSize
@@ -60,7 +62,14 @@ export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSourc
         alerts,
         categoryOptions: Object.entries(ALERT_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
         filters: { ...filters, page, pageSize, maxResults },
-        pagination: { page, pageSize, maxResults, availableCount: capped.length, hasMore, limitReached: filtered.length > capped.length },
+        pagination: {
+          page,
+          pageSize,
+          maxResults,
+          availableCount: capped.length,
+          hasMore,
+          limitReached: Number(source.availableCount) > maxResults || filtered.length > capped.length,
+        },
       })
     } catch {
       sendError(res, { status: 503, code: 'ALERT_SOURCE_UNAVAILABLE', message: 'GAIOP 告警接收器暂不可用，请联系管理员检查接收器服务状态' })

@@ -23,9 +23,15 @@ test('maps the formal receiver event to the established Admin alert read model',
   assert.equal('raw' in alert, false)
 })
 
-test('reads the formal receiver and restores the established chronological input order', async () => {
+test('forwards time filters, reads the full receiver window and restores chronological input order', async () => {
   const fetchCalls = []
-  const result = await readGAIOPAlerts({ GAIOP_ALERT_RECEIVER_URL: 'http://127.0.0.1:19090' }, 3000, async (url) => {
+  const result = await readGAIOPAlerts({
+    GAIOP_ALERT_RECEIVER_URL: 'http://127.0.0.1:19090',
+  }, {
+    startAt: 1_000,
+    endAt: 2_000,
+    severity: 'major',
+  }, async (url) => {
     fetchCalls.push(String(url))
     return new Response(JSON.stringify({
       ok: true,
@@ -39,6 +45,9 @@ test('reads the formal receiver and restores the established chronological input
   })
 
   assert.match(fetchCalls[0], /pageSize=3000/)
+  assert.match(fetchCalls[0], /startAt=1000/)
+  assert.match(fetchCalls[0], /endAt=2000/)
+  assert.match(fetchCalls[0], /severity=major/)
   assert.deepEqual(result.alerts.map((alert) => alert.id), ['older', 'newer'])
   assert.equal(result.availableCount, 2)
 })
