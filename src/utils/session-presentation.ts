@@ -23,6 +23,21 @@ export function isLegacyDefaultSession(session: Pick<Session, 'key'>): boolean {
   return key === 'main' || key === 'agent:main:main'
 }
 
+export function conversationActivityTimestamp(session: Pick<Session, 'lastActivity'>): number {
+  const timestamp = Date.parse(normalized(session.lastActivity))
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+export function compareSessionsByConversationActivity(
+  left: Pick<Session, 'key' | 'lastActivity'>,
+  right: Pick<Session, 'key' | 'lastActivity'>
+): number {
+  const activityDifference =
+    conversationActivityTimestamp(right) - conversationActivityTimestamp(left)
+  if (activityDifference !== 0) return activityDifference
+  return normalized(left.key).localeCompare(normalized(right.key))
+}
+
 export function isWebConversation(session: Partial<Session> & Pick<Session, 'key'>): boolean {
   return session.originKind === 'web'
     || normalized(session.sourceChannel).toLowerCase() === 'web'

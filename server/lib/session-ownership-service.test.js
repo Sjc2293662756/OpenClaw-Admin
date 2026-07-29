@@ -100,10 +100,18 @@ describe('workspace session ownership service', () => {
     const db = createTestDb()
     expect(hideLegacySharedSession(db, admin, 'main', 5)).toBe(true)
     expect(isLegacySessionHidden(db, 'main')).toBe(true)
-    expect(filterHiddenLegacySessions(db, { sessions: [{ key: 'main' }, { key: 'agent:main:feishu:dm:open-id-1' }] })).toEqual({
+    expect(hideLegacySharedSession(db, admin, 'agent:main:main', 6)).toBe(true)
+    expect(isLegacySessionHidden(db, 'agent:main:main')).toBe(true)
+    expect(filterHiddenLegacySessions(db, {
+      sessions: [
+        { key: 'main' },
+        { key: 'agent:main:main' },
+        { key: 'agent:main:feishu:dm:open-id-1' },
+      ],
+    })).toEqual({
       sessions: [{ key: 'agent:main:feishu:dm:open-id-1' }],
     })
-    expect(hideLegacySharedSession(db, admin, 'agent:main:main:dm:webchat-123456789012', 6)).toBe(false)
+    expect(hideLegacySharedSession(db, admin, 'agent:main:main:dm:webchat-123456789012', 7)).toBe(false)
   })
 
   it('finds a nested Gateway event session key before event delivery is authorized', () => {
@@ -222,8 +230,8 @@ describe('workspace session ownership service', () => {
       channelUserName: '杨硕',
     })
     expect(payload.sessions[4]).toMatchObject({
-      originKind: 'channel',
-      sourceChannel: 'main',
+      originKind: 'web',
+      sourceChannel: 'web',
       conversationLastActivity: '2026-07-09T08:06:30.254Z',
     })
   })

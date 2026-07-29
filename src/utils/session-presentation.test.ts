@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  compareSessionsByConversationActivity,
   formatSessionChannelLabel,
   formatSessionConversationTitle,
+  isLegacyDefaultSession,
   shouldApplyRealtimeEvent,
 } from './session-presentation'
 
@@ -31,6 +33,24 @@ describe('session presentation boundaries', () => {
       originKind: 'web',
       sessionTitle: '分析最近三小时告警',
     })).toBe('分析最近三小时告警')
+  })
+
+  it('recognizes both Gateway default-key forms and keeps missing activity at the bottom', () => {
+    expect(isLegacyDefaultSession({ key: 'main' })).toBe(true)
+    expect(isLegacyDefaultSession({ key: 'agent:main:main' })).toBe(true)
+    expect(isLegacyDefaultSession({ key: 'agent:main:main:dm:webchat-123456789012' })).toBe(false)
+
+    const sessions = [
+      { key: 'agent:main:main', lastActivity: '' },
+      { key: 'older', lastActivity: '2026-07-01T00:00:00.000Z' },
+      { key: 'newer', lastActivity: '2026-07-29T00:00:00.000Z' },
+    ].sort(compareSessionsByConversationActivity)
+
+    expect(sessions.map((session) => session.key)).toEqual([
+      'newer',
+      'older',
+      'agent:main:main',
+    ])
   })
 
   it('applies realtime content only to the exact selected session key', () => {

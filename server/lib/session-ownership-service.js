@@ -97,7 +97,8 @@ export function isManagedWebSessionKey(value) {
  * deletion, so it is treated as a legacy shared WebChat record.
  */
 export function isLegacySharedWebSessionKey(value) {
-  return normalizeSessionKey(value).toLowerCase() === 'main'
+  const key = normalizeSessionKey(value).toLowerCase()
+  return key === 'main' || key === 'agent:main:main'
 }
 
 export function hideLegacySharedSession(db, user, sessionKey, now = Date.now()) {

@@ -20,7 +20,11 @@ import { useChatStore } from '@/stores/chat'
 import { useSessionStore } from '@/stores/session'
 import { useWebSocketStore } from '@/stores/websocket'
 import { usePermissions } from '@/composables/usePermissions'
-import { formatSessionConversationTitle } from '@/utils/session-presentation'
+import {
+  compareSessionsByConversationActivity,
+  formatSessionConversationTitle,
+  isLegacyDefaultSession,
+} from '@/utils/session-presentation'
 import type { Session } from '@/api/types'
 
 const router = useRouter()
@@ -77,7 +81,10 @@ watch(selectedSession, () => {
 
 const historySessions = computed(() =>
   [...sessionStore.sessions]
-    .sort((left, right) => Date.parse(right.lastActivity || '') - Date.parse(left.lastActivity || ''))
+    // OpenClaw's protected default runtime session is not a user conversation.
+    // Keep it available to the runtime while excluding it from WebChat history.
+    .filter((session) => !isLegacyDefaultSession(session))
+    .sort(compareSessionsByConversationActivity)
     .slice(0, 50)
 )
 
