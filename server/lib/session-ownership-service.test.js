@@ -238,6 +238,7 @@ describe('workspace session ownership service', () => {
 
   it('never lets background Gateway updatedAt move a stale conversation to the top', () => {
     expect(__test__.resolveConversationLastActivity({
+      key: 'agent:main:main',
       lastInteractionAt: 1783584390254,
       updatedAt: 1785131550912,
       pendingFinalDeliveryLastAttemptAt: 1785131550912,
@@ -247,8 +248,17 @@ describe('workspace session ownership service', () => {
       updatedAt: 1785131704158,
     })).toBe('2026-07-27T05:54:49.226Z')
     expect(__test__.resolveConversationLastActivity({
+      key: 'agent:main:main',
       updatedAt: 1785131704158,
       pendingFinalDeliveryLastAttemptAt: 1785131704158,
     })).toBeNull()
+    expect(__test__.resolveConversationLastActivity({
+      key: 'agent:main:wecom:direct:yangs',
+      updatedAt: 1785131704158,
+    })).toBe('2026-07-27T05:55:04.158Z')
+    expect(__test__.resolveConversationLastActivity({
+      key: 'agent:main:main:dm:webchat-123456789012',
+      updatedAt: 1785131704158,
+    })).toBe('2026-07-27T05:55:04.158Z')
   })
 })

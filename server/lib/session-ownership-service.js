@@ -71,6 +71,14 @@ function resolveConversationLastActivity(value) {
     const timestamp = normalizeTimestamp(row[key])
     if (timestamp) return new Date(timestamp).toISOString()
   }
+  // Current Gateway session lists expose updatedAt as the only activity field
+  // for regular WebChat and channel conversations. Its protected default
+  // runtime session is excluded because retries/maintenance can touch that
+  // record without a real conversation.
+  if (!isLegacySharedWebSessionKey(extractRowSessionKey(row))) {
+    const updatedAt = normalizeTimestamp(row.updatedAt)
+    if (updatedAt) return new Date(updatedAt).toISOString()
+  }
   return null
 }
 
