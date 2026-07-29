@@ -79,9 +79,21 @@ export function trendGrainForRange(range: TimeRange): TrendGrain {
   return 'month'
 }
 
+export function timeRangeAxisValues(range: TimeRange): [number, number, number] {
+  return [
+    range[0],
+    range[0] + (range[1] - range[0]) / 2,
+    range[1],
+  ]
+}
+
 function parseYmd(value: string): Date {
   const [year, month, day] = value.split('-').map(Number)
   return new Date(year || 1970, (month || 1) - 1, day || 1)
+}
+
+export function trendPointTime(date: string): number {
+  return parseYmd(date.length === 7 ? `${date}-01` : date).getTime()
 }
 
 function naturalWeekStart(value: string): string {

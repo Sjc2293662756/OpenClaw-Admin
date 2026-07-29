@@ -5,6 +5,8 @@ import {
   createLatestRequestTracker,
   formatYmd,
   rangeForPreset,
+  timeRangeAxisValues,
+  trendPointTime,
   trendGrainForRange,
   validateTimeRange,
 } from './time-range'
@@ -31,6 +33,20 @@ describe('time range', () => {
     expect(trendGrainForRange([now - 30 * 86400000, now])).toBe('day')
     expect(trendGrainForRange([now - 31 * 86400000, now])).toBe('week')
     expect(trendGrainForRange([now - 181 * 86400000, now])).toBe('month')
+  })
+
+  it('builds axis labels from the selected range instead of sparse data points', () => {
+    const start = new Date(2026, 5, 3).getTime()
+    const end = new Date(2026, 6, 29).getTime()
+    const [axisStart, axisMid, axisEnd] = timeRangeAxisValues([start, end])
+    expect(formatYmd(axisStart)).toBe('2026-06-03')
+    expect(formatYmd(axisMid)).toBe('2026-07-01')
+    expect(formatYmd(axisEnd)).toBe('2026-07-29')
+  })
+
+  it('parses day, week and month bucket dates for proportional positioning', () => {
+    expect(formatYmd(trendPointTime('2026-06-08'))).toBe('2026-06-08')
+    expect(formatYmd(trendPointTime('2026-07'))).toBe('2026-07-01')
   })
 
   it('aggregates every usage metric into natural weeks', () => {

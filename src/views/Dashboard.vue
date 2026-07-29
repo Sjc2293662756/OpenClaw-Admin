@@ -30,9 +30,11 @@ import { formatRelativeTime } from '@/utils/format'
 import {
   aggregateUsageTrend,
   createLatestRequestTracker,
-  formatTimeRange,
   formatYmd,
+  formatTimeRange,
   rangeForPreset,
+  timeRangeAxisValues,
+  trendPointTime,
   trendGrainForRange,
   type TimeRange,
   type TimeRangePreset,
@@ -202,12 +204,17 @@ const trendGeometry = computed(() => {
   const usableWidth = width - left - right
   const usableHeight = height - top - bottom
   const maxValue = Math.max(...series.map((item) => item.value), 0, 1)
+  const rangeStart = displayedUsageRange.value[0]
+  const rangeEnd = displayedUsageRange.value[1]
+  const rangeDuration = Math.max(1, rangeEnd - rangeStart)
 
   const points = series.map((item, index) => {
     const x =
       series.length === 1
         ? left + usableWidth / 2
-        : left + (index / (series.length - 1)) * usableWidth
+        : left + Math.max(0, Math.min(1, (
+          trendPointTime(item.date) - rangeStart
+        ) / rangeDuration)) * usableWidth
     const y = top + usableHeight - (item.value / maxValue) * usableHeight
     return {
       ...item,
@@ -244,16 +251,11 @@ const trendGeometry = computed(() => {
 })
 
 const trendAxisLabels = computed(() => {
-  if (trendSeries.value.length === 0) {
-    return { start: '-', mid: '-', end: '-' }
-  }
-  const start = trendSeries.value[0]
-  const mid = trendSeries.value[Math.floor((trendSeries.value.length - 1) / 2)]
-  const end = trendSeries.value[trendSeries.value.length - 1]
+  const [start, mid, end] = timeRangeAxisValues(displayedUsageRange.value)
   return {
-    start: formatTrendDate(start?.date),
-    mid: formatTrendDate(mid?.date),
-    end: formatTrendDate(end?.date),
+    start: formatTrendAxisDate(start),
+    mid: formatTrendAxisDate(mid),
+    end: formatTrendAxisDate(end),
   }
 })
 
@@ -593,9 +595,9 @@ async function syncServerNow() {
   }
 }
 
-function formatTrendDate(date?: string): string {
-  if (!date) return '-'
-  if (trendGrain.value === 'month') return date
+function formatTrendAxisDate(value: number): string {
+  const date = formatYmd(value)
+  if (trendGrain.value === 'month') return date.slice(0, 7)
   return date.slice(5)
 }
 

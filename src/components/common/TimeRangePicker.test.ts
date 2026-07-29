@@ -75,4 +75,52 @@ describe('TimeRangePicker', () => {
     expect(appliedRange[1]).toBeLessThan(now + 1000)
     wrapper.unmount()
   })
+
+  it('keeps the quick jump open for a year choice and closes it after a month choice', async () => {
+    const now = new Date(2026, 6, 28, 15, 30).getTime()
+    const wrapper = mount(TimeRangePicker, {
+      attachTo: document.body,
+      props: {
+        modelValue: rangeForPreset('last7days', now),
+        preset: 'last7days',
+        serverNow: now,
+      },
+      global: { plugins: [i18n] },
+    })
+
+    await wrapper.get('.time-range-trigger').trigger('click')
+    await nextTick()
+    const custom = [...document.querySelectorAll<HTMLButtonElement>('.time-range-option')]
+      .find((button) => button.textContent?.trim() === '自定义')
+    expect(custom).toBeTruthy()
+    custom!.click()
+    await nextTick()
+
+    const headers = document.querySelectorAll<HTMLElement>('.n-date-panel-month__text')
+    expect(headers.length).toBeGreaterThan(0)
+    headers[0]!.click()
+    await nextTick()
+
+    const quickPanel = document.querySelector<HTMLElement>('.n-date-panel--month')
+    expect(quickPanel).toBeTruthy()
+    const columns = quickPanel!.querySelectorAll<HTMLElement>(
+      '.n-date-panel-month-calendar__picker-col'
+    )
+    expect(columns).toHaveLength(2)
+
+    const syntheticYear = document.createElement('div')
+    syntheticYear.setAttribute('data-n-date', 'true')
+    columns[0]!.appendChild(syntheticYear)
+    syntheticYear.click()
+    await nextTick()
+    expect(document.querySelector('.n-date-panel--month')).toBeTruthy()
+
+    const month = columns[1]!.querySelector<HTMLElement>('[data-n-date]')
+    expect(month).toBeTruthy()
+    month!.click()
+    await nextTick()
+    expect(document.querySelector('.n-date-panel--month')).toBeNull()
+    expect(document.querySelector('.n-date-panel-calendar')).toBeTruthy()
+    wrapper.unmount()
+  })
 })

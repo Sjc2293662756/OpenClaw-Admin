@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { CalendarOutline, ChevronDownOutline } from '@vicons/ionicons5'
 import { NButton, NDatePicker, NIcon, NPopover, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
@@ -89,6 +89,28 @@ function cancelCustom() {
   customVisible.value = false
   draftRange.value = null
 }
+
+function handleDatePanelClick(event: MouseEvent) {
+  const target = event.target
+  if (!(target instanceof Element)) return
+
+  const item = target.closest<HTMLElement>('[data-n-date]')
+  const quickPanel = item?.closest<HTMLElement>('.n-date-panel--month')
+  const calendar = item?.closest<HTMLElement>('.n-date-panel-month-calendar')
+  const clickedColumn = item?.closest<HTMLElement>('.n-date-panel-month-calendar__picker-col')
+  if (!item || !quickPanel || !calendar || !clickedColumn) return
+
+  const columns = [...calendar.children].filter((child) =>
+    child.classList.contains('n-date-panel-month-calendar__picker-col')
+  )
+  if (columns.indexOf(clickedColumn) !== 1) return
+
+  const quickJump = quickPanel.closest<HTMLElement>('.n-date-panel-month__month-year')
+  const activeHeader = quickJump?.querySelector<HTMLElement>('.n-date-panel-month__text--active')
+  if (!activeHeader) return
+
+  void nextTick(() => activeHeader.click())
+}
 </script>
 
 <template>
@@ -116,6 +138,7 @@ function cancelCustom() {
         clearable
         :actions="[]"
         class="time-range-panel"
+        @click.capture="handleDatePanelClick"
       />
       <div class="time-range-menu">
         <button
