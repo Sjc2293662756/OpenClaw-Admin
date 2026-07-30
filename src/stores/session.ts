@@ -15,6 +15,10 @@ export const useSessionStore = defineStore('session', () => {
   let listRequestId = 0
   let usageRequestId = 0
   let activeListRequest: Promise<void> | null = null
+  const pendingWorkspaceSessions = new Map<string, {
+    session: Session
+    expiresAt: number
+  }>()
 
   async function createWorkspaceSession(): Promise<string> {
     const response = await fetch('/api/workspace/sessions', {
@@ -165,6 +169,70 @@ export const useSessionStore = defineStore('session', () => {
     })
   }
 
+  function mergePendingWorkspaceSessions(list: Session[]): Session[] {
+    if (pendingWorkspaceSessions.size === 0) return list
+    const now = Date.now()
+    const serverKeys = new Set(list.map((session) => session.key))
+    const merged = [...list]
+
+    for (const [key, pending] of pendingWorkspaceSessions) {
+      if (serverKeys.has(key)) {
+        pendingWorkspaceSessions.delete(key)
+        continue
+      }
+      if (pending.expiresAt <= now) {
+        pendingWorkspaceSessions.delete(key)
+        continue
+      }
+      merged.push(pending.session)
+    }
+    return merged
+  }
+
+  function deriveWorkspaceSessionTitle(value: string): string {
+    const normalized = value.replace(/\s+/gu, ' ').trim()
+    if (!normalized || /^\/[a-z][\w-]*(?:\s|$)/iu.test(normalized)) return ''
+    const characters = Array.from(normalized)
+    return characters.length > 24
+      ? `${characters.slice(0, 24).join('')}…`
+      : normalized
+  }
+
+  function registerSuccessfulWorkspaceSession(
+    key: string,
+    firstMessage: string,
+    now = Date.now(),
+  ) {
+    const normalizedKey = key.trim()
+    if (!normalizedKey) return
+    const existing = sessions.value.find((session) => session.key === normalizedKey)
+    const agentId = normalizedKey.match(/^agent:([^:]+):/)?.[1] || 'main'
+    const session: Session = {
+      ...existing,
+      key: normalizedKey,
+      agentId,
+      channel: 'web',
+      peer: existing?.peer || 'webchat',
+      messageCount: Math.max(1, existing?.messageCount || 0),
+      lastActivity: new Date(now).toISOString(),
+      sessionTitle: existing?.sessionTitle || deriveWorkspaceSessionTitle(firstMessage) || null,
+      originKind: 'web',
+      sourceChannel: 'web',
+    }
+
+    // The BFF has registered the key and chat.send has succeeded, so expose
+    // the real conversation immediately. Keep it through a possibly stale
+    // Gateway list response until the server list confirms it.
+    pendingWorkspaceSessions.set(normalizedKey, {
+      session,
+      expiresAt: now + 30_000,
+    })
+    sessions.value = [
+      session,
+      ...sessions.value.filter((item) => item.key !== normalizedKey),
+    ]
+  }
+
   function shouldLoadUsage(list: Session[]): boolean {
     if (list.length === 0) return false
     const hasMessageCount = list.some((item) => item.messageCount > 0)
@@ -212,7 +280,7 @@ export const useSessionStore = defineStore('session', () => {
         const list = await wsStore.rpc.listSessions()
         if (requestId !== listRequestId) return
 
-        const visibleList = preserveExistingUsage(list)
+        const visibleList = preserveExistingUsage(mergePendingWorkspaceSessions(list))
         // First paint is driven only by sessions.list. Slow usage statistics
         // are merged progressively without holding the table or callers open.
         sessions.value = visibleList
@@ -259,6 +327,7 @@ export const useSessionStore = defineStore('session', () => {
 
   async function deleteSession(key: string) {
     await wsStore.rpc.deleteSession(key)
+    pendingWorkspaceSessions.delete(key)
     sessions.value = sessions.value.filter((s) => s.key !== key)
   }
 
@@ -270,7 +339,10 @@ export const useSessionStore = defineStore('session', () => {
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
         const key = keys[index]
-        if (key) deletedKeys.add(key)
+        if (key) {
+          deletedKeys.add(key)
+          pendingWorkspaceSessions.delete(key)
+        }
       }
     })
     sessions.value = sessions.value.filter((s) => !deletedKeys.has(s.key))
@@ -330,6 +402,7 @@ export const useSessionStore = defineStore('session', () => {
     loading,
     usageLoading,
     fetchSessions,
+    registerSuccessfulWorkspaceSession,
     fetchSession,
     resetSession,
     newSession,

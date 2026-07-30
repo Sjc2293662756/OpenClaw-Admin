@@ -11,6 +11,7 @@ import {
   LockClosedOutline,
   LogOutOutline,
   PersonOutline,
+  RefreshOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
 import ChatPage from '@/views/chat/ChatPage.vue'
@@ -38,6 +39,7 @@ const message = useMessage()
 
 const ready = ref(wsStore.state === ConnectionState.CONNECTED)
 const creatingSession = ref(false)
+const historyRefreshing = ref(false)
 const userMenuOpen = ref(false)
 let unsubscribeState: (() => void) | null = null
 
@@ -133,8 +135,14 @@ async function logout() {
   router.push({ name: 'Welcome', query: { redirect: '/workspace' } })
 }
 
-function refreshHistory() {
-  void sessionStore.fetchSessions()
+async function refreshHistory() {
+  if (historyRefreshing.value) return
+  historyRefreshing.value = true
+  try {
+    await sessionStore.fetchSessions({ force: true })
+  } finally {
+    historyRefreshing.value = false
+  }
 }
 
 function retryConnection() {
@@ -191,8 +199,14 @@ onUnmounted(() => {
       <section class="history-section">
         <div class="history-heading">
           <span>历史会话</span>
-          <button type="button" title="刷新历史会话" @click="refreshHistory">
-            <NIcon :component="ChatbubbleEllipsesOutline" />
+          <button
+            type="button"
+            title="刷新历史会话"
+            aria-label="刷新历史会话"
+            :disabled="historyRefreshing"
+            @click="refreshHistory"
+          >
+            <NIcon :component="RefreshOutline" :class="{ 'is-spinning': historyRefreshing }" />
           </button>
         </div>
 
@@ -329,6 +343,9 @@ onUnmounted(() => {
 .history-heading { display: flex; align-items: center; justify-content: space-between; padding: 0 10px 10px; color: #789184; font-size: 12px; }
 .history-heading button { display: grid; width: 25px; height: 25px; padding: 0; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #6c9180; cursor: pointer; }
 .history-heading button:hover { background: #e7f4ec; color: #0b7552; }
+.history-heading button:disabled { cursor: wait; opacity: .7; }
+.history-heading .is-spinning { animation: history-refresh-spin .8s linear infinite; }
+@keyframes history-refresh-spin { to { transform: rotate(360deg); } }
 .history-list { min-height: 0; overflow: auto; padding-right: 2px; }
 .history-row { display: flex; align-items: center; border-radius: 9px; }
 .history-item { display: flex; width: 100%; min-width: 0; align-items: center; gap: 9px; overflow: hidden; padding: 10px; border: 0; border-radius: 9px; background: transparent; color: #4b6c5c; cursor: pointer; font: inherit; font-size: 13px; text-align: left; }

@@ -49,6 +49,7 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mocks.listSessions.mockReset()
   mocks.getSessionsUsage.mockReset()
+  mocks.getSessionsUsage.mockResolvedValue({ sessions: [] })
 })
 
 describe('session list progressive loading', () => {
@@ -131,5 +132,51 @@ describe('session list progressive loading', () => {
 
     expect(store.sessions.map((item) => item.key)).toEqual(['newer'])
     expect(store.loading).toBe(false)
+  })
+
+  it('shows a newly sent workspace session immediately and keeps it through an early stale list response', async () => {
+    mocks.listSessions.mockResolvedValue([])
+    const store = useSessionStore()
+    const key = 'agent:main:main:dm:webchat-new-session'
+
+    store.registerSuccessfulWorkspaceSession(
+      key,
+      '分析新问题并给出修复建议',
+      Date.now(),
+    )
+
+    expect(store.sessions).toMatchObject([{
+      key,
+      sessionTitle: '分析新问题并给出修复建议',
+      originKind: 'web',
+      sourceChannel: 'web',
+      messageCount: 1,
+    }])
+
+    await store.fetchSessions({ force: true })
+    expect(store.sessions.map((item) => item.key)).toContain(key)
+  })
+
+  it('replaces the optimistic workspace row with the confirmed server row', async () => {
+    const store = useSessionStore()
+    const key = 'agent:main:main:dm:webchat-confirmed'
+    store.registerSuccessfulWorkspaceSession(key, '本地标题')
+    mocks.listSessions.mockResolvedValue([session(key, {
+      channel: 'web',
+      peer: 'webchat-confirmed',
+      messageCount: 2,
+      sessionTitle: '服务端固定标题',
+      originKind: 'web',
+      sourceChannel: 'web',
+    })])
+
+    await store.fetchSessions({ force: true })
+
+    expect(store.sessions).toHaveLength(1)
+    expect(store.sessions[0]).toMatchObject({
+      key,
+      sessionTitle: '服务端固定标题',
+      messageCount: 2,
+    })
   })
 })

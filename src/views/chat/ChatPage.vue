@@ -2722,6 +2722,7 @@ async function handleSend() {
   if (agentBusy.value) return
 
   try {
+    let createdWorkspaceSession = false
     if (workspaceMode.value && !sessionKeyInput.value.trim()) {
       // 不发送 /new 命令，首次正式需求即建立会话，避免用户看到底层系统提示。
       const key = await sessionStore.createWorkspaceSession()
@@ -2730,11 +2731,17 @@ async function handleSend() {
         name: 'ChatWorkspace',
         query: { session: key, ...(route.query.alertReturn === '1' ? { alertReturn: '1' } : {}) },
       })
+      createdWorkspaceSession = true
     }
     const key = ensureSessionKey()
     chatStore.setSessionKey(key)
     await chatStore.sendMessage(content)
-    if (workspaceMode.value) void sessionStore.fetchSessions()
+    if (workspaceMode.value) {
+      if (createdWorkspaceSession) {
+        sessionStore.registerSuccessfulWorkspaceSession(key, content)
+      }
+      void sessionStore.fetchSessions({ force: true })
+    }
     void fetchSessionTokenUsage(key)
     draft.value = ''
     await nextTick()
