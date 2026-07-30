@@ -26,10 +26,11 @@ import { useI18n } from 'vue-i18n'
 import StatCard from '@/components/common/StatCard.vue'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useWebSocketStore } from '@/stores/websocket'
+import { useAuthStore } from '@/stores/auth'
 import { formatRelativeTime } from '@/utils/format'
+import { createLatestTaskRunner } from '@/utils/latest-task-runner'
 import {
   aggregateUsageTrend,
-  createLatestRequestTracker,
   formatYmd,
   formatTimeRange,
   rangeForPreset,
@@ -53,6 +54,7 @@ type UsageMode = 'tokens' | 'cost'
 
 const router = useRouter()
 const wsStore = useWebSocketStore()
+const authStore = useAuthStore()
 const { t, locale } = useI18n()
 const summaryLoading = ref(true)
 const usageLoading = ref(true)
@@ -67,7 +69,6 @@ const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value)
 const displayedUsageRange = ref<TimeRange>([...appliedRange.value] as TimeRange)
 const pendingUsageRange = ref<TimeRange | null>(null)
 const usageMode = ref<UsageMode>('tokens')
-const usageRequestTracker = createLatestRequestTracker()
 let summaryRequestId = 0
 
 const refreshing = computed(() => summaryLoading.value || usageLoading.value)
@@ -88,6 +89,13 @@ const usageCostSummary = ref<CostUsageSummary | null>(null)
 
 let cleanupStateChange: (() => void) | null = null
 let retryAfterFirstConnect = false
+let dashboardReady = false
+const usageTaskRunner = createLatestTaskRunner<{
+  range: TimeRange
+  force: boolean
+}>(async (request, intentId) => {
+  await executeDashboardUsage({ ...request, intentId })
+})
 
 const ZERO_USAGE_TOTALS: SessionsUsageTotals = {
   input: 0,
@@ -448,15 +456,17 @@ const topToolMax = computed(() =>
 )
 
 onMounted(async () => {
-  await syncServerNow()
-  appliedRange.value = rangeForPreset('last7days', serverNow.value)
-  displayedUsageRange.value = [...appliedRange.value] as TimeRange
-  retryAfterFirstConnect = wsStore.state !== 'connected'
   cleanupStateChange = wsStore.subscribe('stateChange', () => {
     maybeRetryAfterConnect()
   })
-  await refreshDashboard()
-  maybeRetryAfterConnect()
+  await syncServerNow()
+  appliedRange.value = rangeForPreset('last7days', serverNow.value)
+  displayedUsageRange.value = [...appliedRange.value] as TimeRange
+  dashboardReady = true
+  retryAfterFirstConnect = wsStore.state !== 'connected'
+  if (wsStore.state === 'connected') {
+    await refreshDashboard()
+  }
 })
 
 onUnmounted(() => {
@@ -465,6 +475,7 @@ onUnmounted(() => {
 })
 
 function maybeRetryAfterConnect() {
+  if (!dashboardReady) return
   if (!retryAfterFirstConnect) return
   if (wsStore.state !== 'connected') return
 
@@ -472,10 +483,10 @@ function maybeRetryAfterConnect() {
   void refreshDashboard()
 }
 
-async function refreshDashboard() {
+async function refreshDashboard(forceUsage = false) {
   await Promise.allSettled([
     refreshDashboardSummary(),
-    refreshDashboardUsage([...appliedRange.value] as TimeRange),
+    refreshDashboardUsage([...appliedRange.value] as TimeRange, { force: forceUsage }),
   ])
 }
 
@@ -510,13 +521,30 @@ async function refreshDashboardSummary() {
   }
 }
 
-async function refreshDashboardUsage(range: TimeRange) {
-  const requestId = usageRequestTracker.begin()
+function refreshDashboardUsage(range: TimeRange, options?: { force?: boolean }): Promise<void> {
+  const task = usageTaskRunner.enqueue({
+    range: [...range] as TimeRange,
+    force: options?.force === true,
+  })
   usageLoading.value = true
   pendingUsageRange.value = [...range] as TimeRange
   usageError.value = null
   usageErrorRange.value = null
 
+  void task.done.finally(() => {
+    if (!usageTaskRunner.isCurrent(task.intentId)) return
+    usageLoading.value = false
+    pendingUsageRange.value = null
+  })
+  return task.done
+}
+
+async function executeDashboardUsage(request: {
+  range: TimeRange
+  force: boolean
+  intentId: number
+}) {
+  const range = request.range
   let sessionsUsageError: unknown = null
   let needsCostFallback = false
   let nextSessionsUsage: SessionsUsageResult | null = null
@@ -527,11 +555,19 @@ async function refreshDashboardUsage(range: TimeRange) {
   const endDate = formatYmd(range[1])
 
   try {
-    const result = await wsStore.rpc.getSessionsUsage({
-      startDate,
-      endDate,
-      limit: 1000,
+    const params = new URLSearchParams({ startDate, endDate })
+    if (request.force) params.set('force', '1')
+    const response = await fetch(`/api/dashboard/usage?${params.toString()}`, {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${authStore.getToken() || ''}`,
+      },
     })
+    const body = await response.json()
+    if (!response.ok || !body?.ok || !body?.usage) {
+      throw new Error(body?.error?.message || body?.error || '仪表盘统计请求失败')
+    }
+    const result = body.usage as SessionsUsageResult
     nextSessionsUsage = result
     sessionsSucceeded = true
     needsCostFallback = (
@@ -552,14 +588,14 @@ async function refreshDashboardUsage(range: TimeRange) {
       costSucceeded = true
     } catch (error) {
       const failure = sessionsUsageError || error
-      if (!sessionsSucceeded && usageRequestTracker.isCurrent(requestId)) {
+      if (!sessionsSucceeded && usageTaskRunner.isCurrent(request.intentId)) {
         usageError.value = failure instanceof Error ? failure.message : String(failure)
         usageErrorRange.value = formatTimeRange(range)
       }
     }
   }
 
-  if (!usageRequestTracker.isCurrent(requestId)) return
+  if (!usageTaskRunner.isCurrent(request.intentId)) return
 
   if (sessionsSucceeded || costSucceeded) {
     sessionsUsageResult.value = nextSessionsUsage
@@ -570,9 +606,6 @@ async function refreshDashboardUsage(range: TimeRange) {
     usageErrorRange.value = null
     lastUpdatedAt.value = Date.now()
   }
-
-  usageLoading.value = false
-  pendingUsageRange.value = null
 }
 
 function applyTimeRange(range: TimeRange, preset: TimeRangePreset) {
@@ -582,7 +615,7 @@ function applyTimeRange(range: TimeRange, preset: TimeRangePreset) {
 }
 
 function retryUsage() {
-  void refreshDashboardUsage([...appliedRange.value] as TimeRange)
+  void refreshDashboardUsage([...appliedRange.value] as TimeRange, { force: true })
 }
 
 async function syncServerNow() {
@@ -808,7 +841,7 @@ function viewModels() {
 
           <NButton size="small" :type="usageMode === 'tokens' ? 'primary' : 'default'" secondary @click="usageMode = 'tokens'">{{ t('pages.dashboard.usageMode.tokens') }}</NButton>
 
-          <NButton type="primary" :loading="refreshing" @click="refreshDashboard">
+          <NButton type="primary" :loading="refreshing" @click="refreshDashboard(true)">
             <template #icon><NIcon :component="RefreshOutline" /></template>
             {{ t('common.refresh') }}
           </NButton>

@@ -33,6 +33,7 @@ import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
 import { createAlertIngestionRouter } from './routes/alert-ingestion.js'
 import { createChannelsRouter } from './routes/channels.js'
 import { createSystemUpgradeRouter } from './routes/system-upgrade.js'
+import { createDashboardUsageRouter } from './routes/dashboard-usage.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -496,6 +497,10 @@ app.use('/api/system-upgrade', createSystemUpgradeRouter({
     serviceUrl: envConfig.GAIOP_UPGRADE_SERVICE_URL,
     internalToken: envConfig.GAIOP_UPGRADE_INTERNAL_TOKEN,
   }),
+}))
+app.use('/api/dashboard/usage', createDashboardUsageRouter({
+  authMiddleware,
+  getGateway: () => gateway,
 }))
 app.use('/api/channels', createChannelsRouter({
   authMiddleware,
