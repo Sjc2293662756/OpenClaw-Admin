@@ -44,6 +44,7 @@ if systemctl is-active --quiet gaiop-admin.service; then exit 61; fi
 if [ -e "$current_root" ]; then mv -- "$current_root" "$failed_root"; fi
 mv -- "$previous_root" "$current_root"
 if [ -f "$database_backup" ]; then
+  rm -f -- "$database_file-wal" "$database_file-shm"
   install -o gaiop -g gaiop -m 0640 "$database_backup" "$database_file"
 fi
 systemctl daemon-reload
