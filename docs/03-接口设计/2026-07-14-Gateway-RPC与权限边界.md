@@ -3,8 +3,10 @@
 | 属性 | 内容 |
 |---|---|
 | 创建日期 | 2026-07-14 |
-| 最后更新 | 2026-07-15 |
+| 最后更新 | 2026-07-27 |
 | 代码依据 | `server/index.js` 的 `/api/status`、`/api/rpc`、`/api/events`，`server/lib/permissions.js` |
+
+> **当前边界（2026-07-27）：** WebChat发给Gateway/模型的数据面只包含标准对话参数。登录用户、报告来源、活动数据源等管理信息由Admin/GAIOP控制面通过服务器端签名快照独立处理，不再写入 `chat.send.metadata`。`chat.send` 因Gateway版本兼容需要回退到带 `sessionKey` 的 `agent` 时，仅改变RPC适配，不改变会话归属、标题或报告来源边界。本文第3节旧 metadata 方案只用于解释迁移原因。
 
 ## 1. 接口
 
