@@ -8,6 +8,8 @@ export type AuthUser = {
   id?: string
   username: string
   role: 'basic' | 'auditor' | 'standard' | 'admin'
+  isInitialAdmin?: boolean
+  mustChangePassword?: boolean
 }
 
 export const useAuthStore = defineStore('auth', () => {

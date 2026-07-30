@@ -62,6 +62,8 @@ release_id='${releaseId}'
 backup_root="/var/backups/gaiop/admin-prestage-$release_id"
 stage_root="/opt/gaiop/.admin-stage-$release_id"
 final_root='/opt/gaiop/admin'
+database_file='/var/lib/gaiop/admin/wizard.db'
+database_backup="$backup_root/wizard.db-pre-migration"
 unit_file='/etc/systemd/system/gaiop-admin.service'
 env_file='/etc/gaiop/admin.env'
 archive='${remoteArchive}'
@@ -266,6 +268,26 @@ if [ "$service_was_active" -eq 1 ]; then
   fi
   if systemctl is-active --quiet gaiop-admin.service; then exit 45; fi
 fi
+mark_phase 'DATABASE_BACKUP'
+if [ -f "$database_file" ]; then
+  cd "$final_root"
+  node - "$database_file" "$database_backup" <<'NODE'
+const Database = require('better-sqlite3')
+const [source, destination] = process.argv.slice(2)
+const db = new Database(source, { readonly: true, fileMustExist: true })
+const integrity = db.pragma('integrity_check', { simple: true })
+if (integrity !== 'ok') throw new Error('database integrity check failed')
+db.backup(destination)
+  .then(() => db.close())
+  .catch((error) => {
+    db.close()
+    throw error
+  })
+NODE
+  test -s "$database_backup"
+  chmod 0600 "$database_backup"
+  printf 'DATABASE_BACKUP_CREATED\\n'
+fi
 if [ -e "$final_root" ]; then mv -- "$final_root" "$backup_root/preexisting-admin"; fi
 mv -- "$stage_root" "$final_root"
 committed=1
@@ -281,6 +303,7 @@ function summarize(result) {
   return {
     completed: result.ok && /STAGE_COMPLETE/.test(output),
     backupCreated: /BACKUP_CREATED/.test(output),
+    databaseBackupCreated: /DATABASE_BACKUP_CREATED/.test(output),
     serviceStarted: false,
     caddyChanged: false,
     networkChanged: false,

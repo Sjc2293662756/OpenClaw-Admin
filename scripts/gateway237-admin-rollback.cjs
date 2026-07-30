@@ -34,6 +34,8 @@ release_id='${releaseId}'
 backup_root="/var/backups/gaiop/admin-prestage-$release_id"
 previous_root="$backup_root/preexisting-admin"
 current_root='/opt/gaiop/admin'
+database_file='/var/lib/gaiop/admin/wizard.db'
+database_backup="$backup_root/wizard.db-pre-migration"
 failed_root="$backup_root/failed-release-$(date -u +%Y%m%dT%H%M%SZ)"
 
 test -d "$previous_root"
@@ -41,6 +43,9 @@ systemctl stop gaiop-admin.service || true
 if systemctl is-active --quiet gaiop-admin.service; then exit 61; fi
 if [ -e "$current_root" ]; then mv -- "$current_root" "$failed_root"; fi
 mv -- "$previous_root" "$current_root"
+if [ -f "$database_backup" ]; then
+  install -o gaiop -g gaiop -m 0640 "$database_backup" "$database_file"
+fi
 systemctl daemon-reload
 systemctl start gaiop-admin.service
 for _ in $(seq 1 120); do

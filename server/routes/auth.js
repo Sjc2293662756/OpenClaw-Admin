@@ -1,16 +1,17 @@
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
+import { createLoginFailureTracker } from '../lib/account-security.js'
 
 export function createAuthRouter({
   db,
   sessions,
   authMiddleware,
   isAuthEnabled,
-  getLegacyCredentials,
   verifyPassword,
   recordAudit,
   createId,
   getSessionSettings,
+  loginFailures = createLoginFailureTracker(),
 }) {
   const router = Router()
 
@@ -26,18 +27,37 @@ export function createAuthRouter({
     if (!username || !password) {
       return sendError(res, { status: 400, code: 'LOGIN_INPUT_REQUIRED', message: '请输入用户名和密码' })
     }
-
-    const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username)
-    const legacyCredentials = getLegacyCredentials()
-    const validUser = user && user.status === 'active' && verifyPassword(password, user.password_hash)
-    const validLegacyUser = !user && username === legacyCredentials.username && password === legacyCredentials.password
-    if (!validUser && !validLegacyUser) {
+    if (username.length > 64) {
       return sendError(res, { status: 401, code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' })
     }
 
-    const sessionUser = validUser
-      ? { id: user.id, username: user.username, role: user.role }
-      : { username: legacyCredentials.username, role: 'admin' }
+    const failureState = loginFailures.getState(username)
+    if (failureState.locked) {
+      recordAudit({ username, role: 'unknown' }, '登录失败', '管理平台', '账户处于临时锁定期')
+      return sendError(res, { status: 401, code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' })
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username)
+    const validUser = user && user.status === 'active' && verifyPassword(password, user.password_hash)
+    if (!validUser) {
+      const result = loginFailures.recordFailure(username)
+      recordAudit(
+        { id: user?.id, username, role: user?.role || 'unknown' },
+        result.justLocked ? '登录锁定' : '登录失败',
+        '管理平台',
+        result.justLocked ? '连续登录失败达到限制，临时锁定5分钟' : `连续失败次数：${result.failures}`,
+      )
+      return sendError(res, { status: 401, code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' })
+    }
+
+    loginFailures.clear(username)
+    const sessionUser = {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+      isInitialAdmin: Boolean(user.is_initial_admin),
+      mustChangePassword: Boolean(user.must_change_password),
+    }
     const now = Date.now()
     const policy = getSessionSettings()
     const token = createId()
@@ -54,7 +74,8 @@ export function createAuthRouter({
   router.post('/logout', (req, res) => {
     const token = req.headers.authorization?.replace('Bearer ', '')
     if (token) {
-      recordAudit(sessions.get(token), '退出登录', '管理平台', '用户主动退出')
+      const session = sessions.get(token)
+      if (session) recordAudit(session, '退出登录', '管理平台', '用户主动退出')
       sessions.delete(token)
     }
     sendOk(res)
@@ -63,7 +84,13 @@ export function createAuthRouter({
   router.get('/check', authMiddleware, (req, res) => {
     sendOk(res, {
       authenticated: true,
-      user: { id: req.user.id, username: req.user.username, role: req.user.role },
+      user: {
+        id: req.user.id,
+        username: req.user.username,
+        role: req.user.role,
+        isInitialAdmin: Boolean(req.user.isInitialAdmin),
+        mustChangePassword: Boolean(req.user.mustChangePassword),
+      },
     })
   })
 

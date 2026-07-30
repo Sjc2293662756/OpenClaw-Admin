@@ -3,6 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NRadio, NRadioGroup, NSelect, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
+import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '@/utils/password-policy'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -10,16 +11,20 @@ const message = useMessage()
 const formRef = ref<FormInst | null>(null)
 const saving = ref(false)
 const isAdmin = computed(() => authStore.isAdmin)
+const isInitialAdmin = computed(() => Boolean(authStore.currentUser?.isInitialAdmin))
 const form = reactive({ username: '', description: '', role: 'basic', password: '', confirmPassword: '', status: 'active' })
 
-const roleOptions = [
+const roleOptions = computed(() => [
   { label: '基础用户', value: 'basic' }, { label: '审计用户', value: 'auditor' },
   { label: '标准用户', value: 'standard' }, { label: '管理员', value: 'admin' },
-]
+].filter(option => option.value !== 'admin' || isInitialAdmin.value))
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名', trigger: ['input', 'blur'] }],
   role: [{ required: true, message: '请选择用户类型', trigger: ['change', 'blur'] }],
-  password: [{ required: true, message: '请输入密码', trigger: ['input', 'blur'] }, { min: 6, message: '密码至少 6 位', trigger: ['input', 'blur'] }],
+  password: [
+    { required: true, message: '请输入密码', trigger: ['input', 'blur'] },
+    { validator: () => isValidPassword(form.password), message: PASSWORD_POLICY_MESSAGE, trigger: ['input', 'blur'] },
+  ],
   confirmPassword: [{ required: true, message: '请再次输入密码', trigger: ['input', 'blur'] }, { validator: () => form.password === form.confirmPassword, message: '两次输入的密码不一致', trigger: ['input', 'blur'] }],
 }
 
@@ -49,6 +54,7 @@ async function submit() {
       <NFormItem label="用户类型" path="role" required><NSelect v-model:value="form.role" :options="roleOptions" /></NFormItem>
       <NFormItem label="输入密码" path="password" required><NInput v-model:value="form.password" type="password" show-password-on="click" placeholder="请输入密码" /></NFormItem>
       <NFormItem label="确认密码" path="confirmPassword" required><NInput v-model:value="form.confirmPassword" type="password" show-password-on="click" placeholder="请再次输入密码" /></NFormItem>
+      <NFormItem label=""><span class="password-hint">{{ PASSWORD_POLICY_MESSAGE }}</span></NFormItem>
       <NFormItem label="状态"><NRadioGroup v-model:value="form.status"><NSpace><NRadio value="active">激活</NRadio><NRadio value="inactive">非激活</NRadio></NSpace></NRadioGroup></NFormItem>
       <NFormItem label=""><NSpace><NButton @click="router.push({ name: 'UserManagement' })">返回</NButton><NButton type="primary" :loading="saving" @click="submit">提交</NButton></NSpace></NFormItem>
     </NForm>
@@ -60,4 +66,5 @@ async function submit() {
 .page-alert { margin-bottom: 18px; }
 .user-form { max-width: 680px; padding: 18px 8px; }
 .static-value { color: var(--text-color-2); }
+.password-hint { color: var(--text-secondary); font-size: 13px; }
 </style>

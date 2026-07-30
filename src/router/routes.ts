@@ -20,6 +20,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
   {
+    path: '/users/password',
+    name: 'PasswordChange',
+    component: () => import('@/views/users/PasswordChangePage.vue'),
+    meta: { requiresAuth: true, passwordChangeOnly: true },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/DefaultLayout.vue'),
     meta: { requiresAuth: true },
@@ -125,12 +131,6 @@ export const routes: RouteRecordRaw[] = [
         name: 'AuditLogs',
         component: () => import('@/views/audit/AuditLogsPage.vue'),
         meta: { title: '审计信息', icon: 'DocumentTextOutline', gateway: 'openclaw' },
-      },
-      {
-        path: 'users/password',
-        name: 'PasswordChange',
-        component: () => import('@/views/users/PasswordChangePage.vue'),
-        meta: { hidden: true, gateway: 'openclaw' },
       },
       {
         path: 'settings',

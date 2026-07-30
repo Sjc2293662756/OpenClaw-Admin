@@ -6,7 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 
 type UserRole = 'basic' | 'auditor' | 'standard' | 'admin'
 type UserStatus = 'active' | 'inactive'
-type ManagedUser = { id: string; username: string; role: UserRole; description: string; status: UserStatus }
+type ManagedUser = { id: string; username: string; role: UserRole; description: string; status: UserStatus; isInitialAdmin: boolean }
 
 const route = useRoute()
 const router = useRouter()
@@ -18,15 +18,24 @@ const saving = ref(false)
 const loadError = ref('')
 const userId = computed(() => String(route.params.id || ''))
 const isAdmin = computed(() => authStore.isAdmin)
+const isInitialAdmin = computed(() => Boolean(authStore.currentUser?.isInitialAdmin))
 const isCurrentUser = computed(() => authStore.currentUser?.id === userId.value)
+const targetIsInitialAdmin = ref(false)
+const targetIsAdmin = computed(() => form.role === 'admin')
+const canManageTarget = computed(() => {
+  if (!isAdmin.value) return false
+  if (targetIsInitialAdmin.value) return false
+  return !targetIsAdmin.value || isInitialAdmin.value
+})
+const securityFieldsDisabled = computed(() => isCurrentUser.value || !canManageTarget.value)
 const form = reactive({ username: '', description: '', role: 'basic' as UserRole, status: 'active' as UserStatus })
 
-const roleOptions = [
+const roleOptions = computed(() => [
   { label: '基础用户', value: 'basic' },
   { label: '审计用户', value: 'auditor' },
   { label: '标准用户', value: 'standard' },
   { label: '管理员', value: 'admin' },
-]
+].filter(option => option.value !== 'admin' || isInitialAdmin.value || form.role === 'admin'))
 const rules: FormRules = {
   role: [{ required: true, message: '请选择用户类型', trigger: ['change', 'blur'] }],
   description: [{ max: 500, message: '描述不能超过 500 个字符', trigger: ['input', 'blur'] }],
@@ -53,6 +62,7 @@ async function loadUser() {
     form.description = user.description || ''
     form.role = user.role
     form.status = user.status
+    targetIsInitialAdmin.value = Boolean(user.isInitialAdmin)
   } catch (error) {
     loadError.value = error instanceof Error ? error.message : '获取用户信息失败'
   } finally {
@@ -61,6 +71,10 @@ async function loadUser() {
 }
 
 async function submit() {
+  if (!canManageTarget.value) {
+    message.error('只有初始管理员可以管理管理员账户')
+    return
+  }
   try { await formRef.value?.validate() } catch { return }
   saving.value = true
   try {
@@ -92,14 +106,17 @@ onMounted(loadUser)
       </div>
       <template v-else>
         <NAlert v-if="isCurrentUser" type="info" :bordered="false" class="page-alert">
-          当前登录账户可以修改描述，但不能修改自身角色或将账户停用。
+          管理员账户只能通过“修改我的密码”维护自身密码，不能通过用户编辑页修改自身账户。
+        </NAlert>
+        <NAlert v-else-if="targetIsAdmin && !isInitialAdmin" type="warning" :bordered="false" class="page-alert">
+          只有初始管理员可以编辑、停用或降级管理员账户。
         </NAlert>
         <NForm ref="formRef" :model="form" :rules="rules" label-placement="left" label-width="100" class="user-form">
           <NFormItem label="用户名"><NInput v-model:value="form.username" disabled /></NFormItem>
-          <NFormItem label="描述" path="description"><NInput v-model:value="form.description" type="textarea" placeholder="可选，用于说明该账户用途" maxlength="500" show-count :autosize="{ minRows: 3, maxRows: 5 }" /></NFormItem>
-          <NFormItem label="用户类型" path="role" required><NSelect v-model:value="form.role" :disabled="isCurrentUser" :options="roleOptions" /></NFormItem>
-          <NFormItem label="状态"><NRadioGroup v-model:value="form.status" :disabled="isCurrentUser"><NSpace><NRadio value="active">激活</NRadio><NRadio value="inactive">非激活</NRadio></NSpace></NRadioGroup></NFormItem>
-          <NFormItem label=""><NSpace><NButton @click="router.push({ name: 'UserManagement' })">返回</NButton><NButton type="primary" :loading="saving" @click="submit">保存</NButton></NSpace></NFormItem>
+          <NFormItem label="描述" path="description"><NInput v-model:value="form.description" :disabled="!canManageTarget" type="textarea" placeholder="可选，用于说明该账户用途" maxlength="500" show-count :autosize="{ minRows: 3, maxRows: 5 }" /></NFormItem>
+          <NFormItem label="用户类型" path="role" required><NSelect v-model:value="form.role" :disabled="securityFieldsDisabled" :options="roleOptions" /></NFormItem>
+          <NFormItem label="状态"><NRadioGroup v-model:value="form.status" :disabled="securityFieldsDisabled"><NSpace><NRadio value="active">激活</NRadio><NRadio value="inactive">非激活</NRadio></NSpace></NRadioGroup></NFormItem>
+          <NFormItem label=""><NSpace><NButton @click="router.push({ name: 'UserManagement' })">返回</NButton><NButton type="primary" :disabled="!canManageTarget" :loading="saving" @click="submit">保存</NButton></NSpace></NFormItem>
         </NForm>
       </template>
     </NSpin>

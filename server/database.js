@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { mkdirSync } from 'fs'
+import { migrateUserSecurityColumns } from './lib/account-security.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -73,6 +74,8 @@ db.exec(`
     role TEXT NOT NULL DEFAULT 'basic' CHECK (role IN ('basic', 'auditor', 'standard', 'admin')),
     description TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+    is_initial_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_initial_admin IN (0, 1)),
+    must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
   );
@@ -213,6 +216,8 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
 `)
+
+migrateUserSecurityColumns(db)
 
 try {
   db.exec('ALTER TABLE scenarios ADD COLUMN execution_log TEXT DEFAULT \'[]\'')

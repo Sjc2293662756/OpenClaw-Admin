@@ -26,6 +26,10 @@ const isConnecting = computed(() =>
 )
 
 function redirectToPlatform() {
+  if (authStore.currentUser?.mustChangePassword) {
+    router.push({ name: 'PasswordChange' })
+    return
+  }
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/workspace'
   router.push(redirect)
 }
@@ -82,9 +86,7 @@ async function handleLogin() {
     return
   }
 
-  error.value = authStore.error === 'Invalid credentials'
-    ? '账户名或密码错误，请重新输入。'
-    : authStore.error || '登录失败，请稍后重试。'
+  error.value = authStore.error || '登录失败，请稍后重试。'
   loading.value = false
 }
 

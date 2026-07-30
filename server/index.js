@@ -15,6 +15,7 @@ import { execSync } from 'child_process'
 import pty from 'node-pty'
 import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord } from './database.js'
 import { USER_ROLES, USER_STATUSES, getRpcPermissionDecision, isReadOnlyRpcMethod, createRoleMiddleware } from './lib/permissions.js'
+import { isPasswordChangeRequest } from './lib/account-security.js'
 import { sendError } from './lib/api-response.js'
 import { sanitizeGatewayConfigPayload } from './lib/sensitive-data.js'
 import { createAuditRouter } from './routes/audit.js'
@@ -358,8 +359,6 @@ function canReceiveSseData(user, data) {
   return !!sessionKey && canAccessWorkspaceSession(db, user, sessionKey)
 }
 
-const RESET_PASSWORD = 'admin123'
-
 function hashPassword(password) {
   const salt = randomBytes(16).toString('base64')
   const hash = scryptSync(password, salt, 64).toString('base64')
@@ -381,6 +380,8 @@ function publicUser(user) {
     role: user.role,
     description: user.description || '',
     status: user.status,
+    isInitialAdmin: Boolean(user.is_initial_admin),
+    mustChangePassword: Boolean(user.must_change_password),
     createdAt: user.created_at,
     updatedAt: user.updated_at,
   }
@@ -390,8 +391,10 @@ function ensureInitialAdmin() {
   const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
   if (count || !envConfig.AUTH_USERNAME || !envConfig.AUTH_PASSWORD) return
   const now = Date.now()
-  db.prepare(`INSERT INTO users (id, username, password_hash, role, description, status, created_at, updated_at)
-    VALUES (?, ?, ?, 'admin', ?, 'active', ?, ?)`)
+  db.prepare(`INSERT INTO users (
+      id, username, password_hash, role, description, status,
+      is_initial_admin, must_change_password, created_at, updated_at
+    ) VALUES (?, ?, ?, 'admin', ?, 'active', 1, 0, ?, ?)`)
     .run(randomUUID(), envConfig.AUTH_USERNAME.trim(), hashPassword(envConfig.AUTH_PASSWORD), '初始管理员账户', now, now)
   console.log('[Auth] Initial administrator account created')
 }
@@ -430,6 +433,14 @@ function authMiddleware(req, res, next) {
     return sendError(res, { status: 401, code: 'UNAUTHORIZED', message: '登录状态已失效，请重新登录' })
   }
   req.user = session
+  const path = String(req.originalUrl || '').split('?')[0]
+  if (session.mustChangePassword && path !== '/api/auth/check' && !isPasswordChangeRequest(req, session)) {
+    return sendError(res, {
+      status: 403,
+      code: 'PASSWORD_CHANGE_REQUIRED',
+      message: '必须先修改临时密码',
+    })
+  }
   next()
 }
 
@@ -441,7 +452,7 @@ function recordAudit(user, action, target = '', detail = '') {
   try {
     db.prepare(`INSERT INTO audit_logs (id, actor_user_id, actor_username, actor_role, action, target, detail, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      randomUUID(), user?.id || null, user?.username || 'system', user?.role || 'system', action,
+      randomUUID(), user?.id || null, String(user?.username || 'system').slice(0, 200), user?.role || 'system', action,
       String(target || '').slice(0, 200), String(detail || '').slice(0, 500), Date.now()
     )
   } catch (error) {
@@ -451,64 +462,11 @@ function recordAudit(user, action, target = '', detail = '') {
 
 // 设置 Hermes 代理的认证中间件
 
-// 迁移保留：认证路由已由下方独立模块接管，不再注册以下旧实现。
-function registerLegacyAuthRoutes() {
-app.get('/api/auth/config', (req, res) => {
-  res.json({
-    enabled: isAuthEnabled(),
-  })
-})
-
-app.post('/api/auth/login', (req, res) => {
-  if (!isAuthEnabled()) {
-    return res.json({ ok: true, message: 'Auth disabled' })
-  }
-
-  const { username, password } = req.body
-
-  if (!username || !password) {
-    return res.status(400).json({ ok: false, error: 'Username and password required' })
-  }
-
-  const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(String(username).trim())
-  const validUser = user && user.status === 'active' && verifyPassword(password, user.password_hash)
-  const validLegacyUser = !user && username === envConfig.AUTH_USERNAME && password === envConfig.AUTH_PASSWORD
-  if (!validUser && !validLegacyUser) {
-    return res.status(401).json({ ok: false, error: 'Invalid credentials' })
-  }
-
-  const token = randomUUID()
-  const expires = Date.now() + 24 * 60 * 60 * 1000
-
-  const sessionUser = validUser
-    ? { id: user.id, username: user.username, role: user.role }
-    : { username: envConfig.AUTH_USERNAME, role: 'admin' }
-  sessions.set(token, { ...sessionUser, expires })
-  recordAudit(sessionUser, '登录', '管理平台', '登录成功')
-
-  res.json({ ok: true, token, user: sessionUser })
-})
-
-app.post('/api/auth/logout', (req, res) => {
-  const token = req.headers.authorization?.replace('Bearer ', '')
-  if (token) {
-    recordAudit(sessions.get(token), '退出登录', '管理平台', '用户主动退出')
-    sessions.delete(token)
-  }
-  res.json({ ok: true })
-})
-
-app.get('/api/auth/check', authMiddleware, (req, res) => {
-  res.json({ ok: true, authenticated: true, user: { id: req.user.id, username: req.user.username, role: req.user.role } })
-})
-}
-
 app.use('/api/auth', createAuthRouter({
   db,
   sessions,
   authMiddleware,
   isAuthEnabled,
-  getLegacyCredentials: () => ({ username: envConfig.AUTH_USERNAME, password: envConfig.AUTH_PASSWORD }),
   verifyPassword,
   recordAudit,
   createId: randomUUID,
@@ -556,11 +514,6 @@ app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
 // 迁移保留：阶段 B 已由下方独立路由接管这些 API。保留旧实现仅用于短期回归比对，
 // 不再注册，确认线上稳定后会在后续清理。
 function registerLegacyAccountAndConfigurationRoutes() {
-app.get('/api/users', authMiddleware, (_req, res) => {
-  const users = db.prepare('SELECT id, username, role, description, status, created_at, updated_at FROM users ORDER BY updated_at DESC').all()
-  res.json({ ok: true, users: users.map(publicUser) })
-})
-
 app.get('/api/audit-logs', auditViewerMiddleware, (req, res) => {
   const requestedLimit = Number.parseInt(String(req.query.limit || '100'), 10)
   const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 200) : 100
@@ -570,70 +523,6 @@ app.get('/api/audit-logs', auditViewerMiddleware, (req, res) => {
     id: log.id, username: log.actor_username, role: log.actor_role, action: log.action,
     target: log.target || '', detail: log.detail || '', createdAt: log.created_at,
   })) })
-})
-
-app.post('/api/users', adminMiddleware, (req, res) => {
-  const username = String(req.body?.username || '').trim()
-  const password = String(req.body?.password || '')
-  const role = String(req.body?.role || '')
-  const description = String(req.body?.description || '').trim()
-  const status = String(req.body?.status || 'active')
-
-  if (!username || username.length > 64 || !password || password.length < 6 || !USER_ROLES.has(role) || !USER_STATUSES.has(status) || description.length > 500) {
-    return res.status(400).json({ ok: false, error: '用户信息不完整或格式不正确' })
-  }
-  try {
-    const now = Date.now()
-    const user = { id: randomUUID(), username, password_hash: hashPassword(password), role, description, status, created_at: now, updated_at: now }
-    db.prepare(`INSERT INTO users (id, username, password_hash, role, description, status, created_at, updated_at)
-      VALUES (@id, @username, @password_hash, @role, @description, @status, @created_at, @updated_at)`).run(user)
-    recordAudit(req.user, '创建用户', username, `角色：${role}；状态：${status}`)
-    res.status(201).json({ ok: true, user: publicUser(user) })
-  } catch (error) {
-    const duplicate = String(error.message).includes('UNIQUE')
-    res.status(duplicate ? 409 : 500).json({ ok: false, error: duplicate ? '用户名已存在' : '创建用户失败' })
-  }
-})
-
-app.post('/api/users/:id/reset-password', adminMiddleware, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
-  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' })
-  const updatedAt = Date.now()
-  db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hashPassword(RESET_PASSWORD), updatedAt, user.id)
-  for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
-  recordAudit(req.user, '重置用户密码', user.username, '已重置为默认密码')
-  res.json({ ok: true, updatedAt })
-})
-
-app.put('/api/users/:id/password', authMiddleware, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
-  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' })
-  const newPassword = String(req.body?.newPassword || '')
-  const isSelf = req.user.id === user.id
-  if (!isSelf && req.user.role !== 'admin') return res.status(403).json({ ok: false, error: '无权修改该用户密码' })
-  if (newPassword.length < 6) return res.status(400).json({ ok: false, error: '密码至少 6 位' })
-  if (isSelf && !verifyPassword(String(req.body?.currentPassword || ''), user.password_hash)) {
-    return res.status(400).json({ ok: false, error: '当前密码不正确' })
-  }
-  const updatedAt = Date.now()
-  db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(hashPassword(newPassword), updatedAt, user.id)
-  for (const [token, session] of sessions) if (session.id === user.id && token !== req.headers.authorization?.replace('Bearer ', '')) sessions.delete(token)
-  recordAudit(req.user, isSelf ? '修改本人密码' : '修改用户密码', user.username)
-  res.json({ ok: true, updatedAt })
-})
-
-app.delete('/api/users/:id', adminMiddleware, (req, res) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
-  if (!user) return res.status(404).json({ ok: false, error: '用户不存在' })
-  if (req.user.id === user.id) return res.status(400).json({ ok: false, error: '不能删除当前登录账户' })
-  if (user.role === 'admin') {
-    const adminCount = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND status = 'active'").get().count
-    if (adminCount <= 1) return res.status(400).json({ ok: false, error: '至少需要保留一个已激活的管理员账户' })
-  }
-  db.prepare('DELETE FROM users WHERE id = ?').run(user.id)
-  for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
-  recordAudit(req.user, '删除用户', user.username, `角色：${user.role}`)
-  res.json({ ok: true })
 })
 
 function dataSourceEncryptionMiddleware(_req, res, next) {
@@ -726,7 +615,6 @@ app.use('/api/users', createUsersRouter({
   publicUser,
   userRoles: USER_ROLES,
   userStatuses: USER_STATUSES,
-  resetPassword: RESET_PASSWORD,
   createId: randomUUID,
 }))
 app.use('/api/audit-logs', createAuditRouter({ db, auditViewerMiddleware }))

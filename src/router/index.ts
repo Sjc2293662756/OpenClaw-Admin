@@ -33,8 +33,12 @@ router.beforeEach(async (to, _from, next) => {
       try {
         const valid = await authStore.checkAuth()
         if (valid) {
-          const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/workspace'
-          next(redirect)
+          if (authStore.currentUser?.mustChangePassword) {
+            next({ name: 'PasswordChange' })
+          } else {
+            const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/workspace'
+            next(redirect)
+          }
           return
         }
       } catch (error) {
@@ -59,6 +63,11 @@ router.beforeEach(async (to, _from, next) => {
   } catch (error) {
     console.error('[Router] checkAuth failed:', error)
     next({ name: 'Welcome', query: { redirect: to.fullPath } })
+    return
+  }
+
+  if (authStore.currentUser?.mustChangePassword && to.name !== 'PasswordChange') {
+    next({ name: 'PasswordChange' })
     return
   }
 
