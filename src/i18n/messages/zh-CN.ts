@@ -1321,6 +1321,7 @@ export default {
         },
         listTitle: '会话列表',
         listCount: '当前 {current} / 共 {total}',
+        usageLoading: '正在补充消息与 Token 统计',
         actionsTitle: '会话操作',
         meta: {
           peer: '对话方',

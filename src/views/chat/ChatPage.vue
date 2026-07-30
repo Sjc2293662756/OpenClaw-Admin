@@ -33,6 +33,7 @@ import { useSkillStore } from '@/stores/skill'
 import { useWebSocketStore } from '@/stores/websocket'
 import { formatDate, formatRelativeTime, parseSessionKey, truncate } from '@/utils/format'
 import { renderSimpleMarkdown } from '@/utils/markdown'
+import { loadSelectedSessionWithBackgroundList } from '@/utils/session-loading'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { usePermissions } from '@/composables/usePermissions'
@@ -2607,19 +2608,29 @@ onMounted(async () => {
     })
   )
 
-  await sessionStore.fetchSessions()
   const routeSessionKey = normalizeSessionSelectValue(
     Array.isArray(route.query.session) ? route.query.session[0] : (route.query.session as string | number | null)
   )
 
   // 对话工作台默认进入的是“未开始的新对话”，不恢复上一次会话，也不自动选中列表中的第一条。
-  if (workspaceMode.value && !routeSessionKey) {
-    sessionKeyInput.value = ''
-    chatStore.setSessionKey('')
-    await chatStore.fetchHistory('')
+  if (workspaceMode.value) {
+    if (!routeSessionKey) {
+      void sessionStore.fetchSessions()
+      sessionKeyInput.value = ''
+      chatStore.setSessionKey('')
+      await chatStore.fetchHistory('')
+      return
+    }
+
+    await loadSelectedSessionWithBackgroundList(
+      routeSessionKey,
+      (key) => loadHistoryForKey(key, { force: true }),
+      () => sessionStore.fetchSessions(),
+    )
     return
   }
 
+  await sessionStore.fetchSessions()
   const currentStoreKey = chatStore.sessionKey.trim()
   const storedSessionKey = readStoredSessionKey()
   if (!sessionKeyInput.value && routeSessionKey) {
@@ -2698,8 +2709,11 @@ watch(
 )
 
 async function handleRefreshChatData() {
-  await sessionStore.fetchSessions()
-  await loadHistoryForKey(ensureSessionKey(), { force: true })
+  await loadSelectedSessionWithBackgroundList(
+    ensureSessionKey(),
+    (key) => loadHistoryForKey(key, { force: true }),
+    () => sessionStore.fetchSessions({ force: true }),
+  )
 }
 
 async function handleSend() {

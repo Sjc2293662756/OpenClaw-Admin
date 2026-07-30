@@ -1316,6 +1316,7 @@ export default {
         },
         listTitle: 'Session list',
         listCount: '{current} / {total}',
+        usageLoading: 'Loading message and token statistics',
         actionsTitle: 'Actions',
         meta: {
           peer: 'Peer',

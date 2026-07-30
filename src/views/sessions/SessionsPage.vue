@@ -691,9 +691,14 @@ async function handleCreateSession() {
 
     <NCard :title="t('pages.sessions.list.listTitle')" class="sessions-card">
       <template #header-extra>
-        <NText depth="3" style="font-size: 12px;">
-          {{ t('pages.sessions.list.listCount', { current: filteredSessions.length, total: stats.total }) }}
-        </NText>
+        <NSpace align="center" :size="8">
+          <NTag v-if="sessionStore.usageLoading" size="small" type="info" :bordered="false" round>
+            {{ t('pages.sessions.list.usageLoading') }}
+          </NTag>
+          <NText depth="3" style="font-size: 12px;">
+            {{ t('pages.sessions.list.listCount', { current: filteredSessions.length, total: stats.total }) }}
+          </NText>
+        </NSpace>
       </template>
 
       <NDataTable

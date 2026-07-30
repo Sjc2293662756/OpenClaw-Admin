@@ -145,7 +145,6 @@ watch(
   () => wsStore.state,
   (state) => {
     ready.value = state === ConnectionState.CONNECTED
-    if (ready.value) refreshHistory()
   }
 )
 
@@ -156,7 +155,6 @@ onMounted(() => {
     void router.replace({ query })
   }
   if (wsStore.state !== ConnectionState.CONNECTED) wsStore.connect()
-  else refreshHistory()
   unsubscribeState = wsStore.subscribe('stateChange', (state: unknown) => {
     ready.value = state === ConnectionState.CONNECTED
   })

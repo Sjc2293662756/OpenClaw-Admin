@@ -8,9 +8,13 @@ export const useSessionStore = defineStore('session', () => {
   const sessions = ref<Session[]>([])
   const currentSession = ref<SessionDetail | null>(null)
   const loading = ref(false)
+  const usageLoading = ref(false)
 
   const wsStore = useWebSocketStore()
   const authStore = useAuthStore()
+  let listRequestId = 0
+  let usageRequestId = 0
+  let activeListRequest: Promise<void> | null = null
 
   async function createWorkspaceSession(): Promise<string> {
     const response = await fetch('/api/workspace/sessions', {
@@ -142,36 +146,93 @@ export const useSessionStore = defineStore('session', () => {
     })
   }
 
-  async function fetchSessions() {
-    loading.value = true
-    try {
-      const list = await wsStore.rpc.listSessions()
-      if (list.length === 0) {
-        sessions.value = list
-        return
+  function preserveExistingUsage(list: Session[]): Session[] {
+    if (list.length === 0 || sessions.value.length === 0) return list
+    const previous = new Map(sessions.value.map((session) => [session.key, session]))
+    return list.map((session) => {
+      const cached = previous.get(session.key)
+      if (!cached) return session
+      const nextMessageCount = Math.max(session.messageCount, cached.messageCount)
+      const nextTokenUsage = session.tokenUsage || cached.tokenUsage
+      if (nextMessageCount === session.messageCount && nextTokenUsage === session.tokenUsage) {
+        return session
       }
+      return {
+        ...session,
+        messageCount: nextMessageCount,
+        tokenUsage: nextTokenUsage,
+      }
+    })
+  }
 
-      const hasMessageCount = list.some((item) => item.messageCount > 0)
-      const hasMissingTokenUsage = list.some((item) => !item.tokenUsage)
-      if (hasMessageCount && !hasMissingTokenUsage) {
-        sessions.value = list
-        return
-      }
+  function shouldLoadUsage(list: Session[]): boolean {
+    if (list.length === 0) return false
+    const hasMessageCount = list.some((item) => item.messageCount > 0)
+    const hasMissingTokenUsage = list.some((item) => !item.tokenUsage)
+    return !hasMessageCount || hasMissingTokenUsage
+  }
 
-      try {
-        const usage = await wsStore.rpc.getSessionsUsage({
-          limit: Math.max(200, list.length * 4),
-        })
-        sessions.value = mergeUsageIntoSessions(list, usage)
-      } catch {
-        sessions.value = list
-      }
-    } catch (error) {
-      sessions.value = []
-      console.error('[SessionStore] fetchSessions failed:', error)
-    } finally {
-      loading.value = false
+  function loadUsageInBackground(list: Session[], sourceListRequestId: number) {
+    if (!shouldLoadUsage(list)) {
+      usageLoading.value = false
+      return
     }
+
+    const requestId = ++usageRequestId
+    usageLoading.value = true
+    void wsStore.rpc.getSessionsUsage({
+      limit: Math.max(200, list.length * 4),
+    }).then((usage) => {
+      if (requestId !== usageRequestId || sourceListRequestId !== listRequestId) return
+      sessions.value = mergeUsageIntoSessions(sessions.value, usage)
+    }).catch(() => {
+      // Usage is supplementary. The already-visible session list remains valid.
+    }).finally(() => {
+      if (requestId === usageRequestId && sourceListRequestId === listRequestId) {
+        usageLoading.value = false
+      }
+    })
+  }
+
+  function fetchSessions(options?: { force?: boolean }): Promise<void> {
+    if (activeListRequest && !options?.force) {
+      return activeListRequest
+    }
+
+    const requestId = ++listRequestId
+    // A forced/new list request retires any usage response derived from an
+    // older list snapshot. The RPC may still complete, but cannot overwrite it.
+    usageRequestId += 1
+    usageLoading.value = false
+    loading.value = true
+
+    let request!: Promise<void>
+    request = (async () => {
+      try {
+        const list = await wsStore.rpc.listSessions()
+        if (requestId !== listRequestId) return
+
+        const visibleList = preserveExistingUsage(list)
+        // First paint is driven only by sessions.list. Slow usage statistics
+        // are merged progressively without holding the table or callers open.
+        sessions.value = visibleList
+        loadUsageInBackground(visibleList, requestId)
+      } catch (error) {
+        if (requestId === listRequestId) {
+          console.error('[SessionStore] fetchSessions failed:', error)
+        }
+      } finally {
+        if (requestId === listRequestId) {
+          loading.value = false
+        }
+        if (activeListRequest === request) {
+          activeListRequest = null
+        }
+      }
+    })()
+
+    activeListRequest = request
+    return request
   }
 
   async function fetchSession(key: string) {
@@ -267,6 +328,7 @@ export const useSessionStore = defineStore('session', () => {
     sessions,
     currentSession,
     loading,
+    usageLoading,
     fetchSessions,
     fetchSession,
     resetSession,

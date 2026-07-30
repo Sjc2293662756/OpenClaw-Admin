@@ -74,6 +74,9 @@ export const useChatStore = defineStore('chat', () => {
   let pendingStreamMessages: ChatMessage[] = []
   let lastToolPreviewUpdateAtMs = 0
   const finalizedRuns = new Map<string, number>()
+  let historyRequestId = 0
+  let activeHistoryKey = ''
+  let activeHistoryRequest: Promise<void> | null = null
 
   // 获取或创建智能体状态
   function getOrCreateAgentStatus(agentId: string): AgentStatus {
@@ -312,8 +315,20 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function setSessionKey(key: string) {
-    sessionKey.value = key.trim()
-    const match = key.match(/^agent:([^:]+):/)
+    const normalizedKey = key.trim()
+    const changed = normalizedKey !== sessionKey.value
+    if (changed) {
+      historyRequestId += 1
+      activeHistoryKey = ''
+      activeHistoryRequest = null
+      messages.value = []
+      loading.value = false
+      syncing.value = false
+      lastError.value = null
+      lastSyncedAt.value = null
+    }
+    sessionKey.value = normalizedKey
+    const match = normalizedKey.match(/^agent:([^:]+):/)
     if (match && match[1]) {
       const agentId = match[1]
       resetAgentStatus(agentId)
@@ -334,17 +349,22 @@ export const useChatStore = defineStore('chat', () => {
       clearError?: boolean
     }
   ) {
-    if (!key.trim()) {
+    const normalizedKey = key.trim()
+    if (!normalizedKey) {
+      setSessionKey('')
       messages.value = []
       return
     }
 
-    const silent = options?.silent ?? false
-    const clearError = options?.clearError ?? !silent
-    if (silent && syncing.value) {
-      return
+    if (normalizedKey !== sessionKey.value) {
+      setSessionKey(normalizedKey)
+    }
+    if (activeHistoryRequest && activeHistoryKey === normalizedKey) {
+      return activeHistoryRequest
     }
 
+    const silent = options?.silent ?? false
+    const clearError = options?.clearError ?? !silent
     if (silent) {
       syncing.value = true
     } else {
@@ -354,23 +374,39 @@ export const useChatStore = defineStore('chat', () => {
       lastError.value = null
     }
 
-    try {
-      const normalizedKey = key.trim()
-      sessionKey.value = normalizedKey
-      messages.value = await wsStore.rpc.listChatHistory(normalizedKey)
-      lastSyncedAt.value = Date.now()
-    } catch (error) {
-      if (!silent || clearError) {
-        lastError.value = error instanceof Error ? error.message : String(error)
+    const requestId = ++historyRequestId
+    activeHistoryKey = normalizedKey
+
+    let request!: Promise<void>
+    request = (async () => {
+      try {
+        const history = await wsStore.rpc.listChatHistory(normalizedKey)
+        if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
+        messages.value = history
+        lastSyncedAt.value = Date.now()
+      } catch (error) {
+        if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
+        if (!silent || clearError) {
+          lastError.value = error instanceof Error ? error.message : String(error)
+        }
+        console.error('[ChatStore] fetchHistory failed:', error)
+      } finally {
+        if (requestId === historyRequestId && sessionKey.value === normalizedKey) {
+          if (silent) {
+            syncing.value = false
+          } else {
+            loading.value = false
+          }
+        }
+        if (activeHistoryRequest === request) {
+          activeHistoryKey = ''
+          activeHistoryRequest = null
+        }
       }
-      console.error('[ChatStore] fetchHistory failed:', error)
-    } finally {
-      if (silent) {
-        syncing.value = false
-      } else {
-        loading.value = false
-      }
-    }
+    })()
+
+    activeHistoryRequest = request
+    return request
   }
 
   function clearTimers() {
