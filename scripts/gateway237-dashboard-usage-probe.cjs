@@ -18,6 +18,7 @@ node --input-type=module - <<'NODE'
 import fs from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { OpenClawGateway } from '/opt/gaiop/admin/server/gateway.js'
+import { createDashboardUsageRuntime } from '/opt/gaiop/admin/server/lib/dashboard-usage-runtime.js'
 
 function readProcessEnvironment(pid) {
   return fs.readFileSync('/proc/' + pid + '/environ', 'utf8')
@@ -88,6 +89,28 @@ for (const days of [7, 30, 90]) {
     dailyPoints: Array.isArray(result?.aggregates?.daily) ? result.aggregates.daily.length : 0,
   })
 }
+
+let runtimeLoadCalls = 0
+const runtime = createDashboardUsageRuntime({
+  loadUsage: async (params) => {
+    runtimeLoadCalls += 1
+    return gateway.call('sessions.usage', params, 160_000)
+  },
+})
+const runtimeParams = {
+  principal: 'probe:dashboard',
+  ...calendarRange(7, now),
+}
+const concurrentStartedAt = Date.now()
+const [runtimeFirst, runtimeShared] = await Promise.all([
+  runtime.read(runtimeParams),
+  runtime.read(runtimeParams),
+])
+const concurrentElapsedMs = Date.now() - concurrentStartedAt
+const cacheStartedAt = Date.now()
+const runtimeCached = await runtime.read(runtimeParams)
+const cacheElapsedMs = Date.now() - cacheStartedAt
+const projected = JSON.stringify(runtimeFirst.usage)
 gateway.disconnect()
 
 const indexHtml = fs.readFileSync('/opt/gaiop/admin/dist/index.html', 'utf8')
@@ -95,6 +118,16 @@ const entryAsset = indexHtml.match(/assets\/index-[^"']+\.js/)?.[0] || ''
 process.stdout.write(JSON.stringify({
   completed: true,
   ranges,
+  runtimeProbe: {
+    loadCalls: runtimeLoadCalls,
+    concurrentElapsedMs,
+    cacheElapsedMs,
+    firstCache: runtimeFirst.cache,
+    sharedCache: runtimeShared.cache,
+    repeatCache: runtimeCached.cache,
+    responseBytes: Buffer.byteLength(projected),
+    sessions: Array.isArray(runtimeFirst.usage?.sessions) ? runtimeFirst.usage.sessions.length : 0,
+  },
   entryAsset,
 }))
 NODE
