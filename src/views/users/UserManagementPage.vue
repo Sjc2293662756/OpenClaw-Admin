@@ -175,51 +175,54 @@ onMounted(loadUsers)
 </script>
 
 <template>
-  <NCard title="用户列表" :bordered="false" class="user-card">
-    <template #header-extra>
-      <NSpace>
-        <NButton @click="router.push({ name: 'PasswordChange' })">修改密码</NButton>
-        <NButton :disabled="!isAdmin" type="primary" @click="router.push({ name: 'UserCreate' })">
-          <template #icon><NIcon><AddOutline /></NIcon></template>添加用户
-        </NButton>
-        <NButton :loading="loading" @click="loadUsers">
-          <template #icon><NIcon><RefreshOutline /></NIcon></template>刷新
-        </NButton>
-      </NSpace>
-    </template>
-    <div class="user-toolbar">
-      <NInput v-model:value="keyword" clearable placeholder="搜索用户名或描述">
-        <template #prefix><NIcon><SearchOutline /></NIcon></template>
-      </NInput>
-      <NSelect v-model:value="roleFilter" clearable placeholder="全部角色" :options="roleOptions" />
-      <NSelect v-model:value="statusFilter" clearable placeholder="全部状态" :options="statusOptions" />
-      <span class="user-toolbar__count">共 {{ filteredUsers.length }} 个用户</span>
-    </div>
-    <NDataTable :columns="columns" :data="filteredUsers" :loading="loading" :bordered="false" :single-line="false" :pagination="{ pageSize: 10 }">
-      <template #empty><NEmpty description="暂无用户" /></template>
-    </NDataTable>
-  </NCard>
-  <NModal v-model:show="resetModalVisible" :mask-closable="!resetting">
-    <NCard :title="`重置“${resetTarget?.username || ''}”的密码`" :bordered="false" class="reset-card" role="dialog" aria-modal="true">
-      <NAlert type="warning" :bordered="false">
-        重置会撤销该用户的所有登录Token。用户使用临时密码登录后，只能修改密码，并需使用新密码重新登录。
-      </NAlert>
-      <div class="reset-fields">
-        <NInput v-model:value="temporaryPassword" type="password" show-password-on="click" placeholder="输入临时密码" />
-        <NInput v-model:value="confirmPassword" type="password" show-password-on="click" placeholder="再次输入临时密码" />
-        <span class="password-hint">{{ PASSWORD_POLICY_MESSAGE }}</span>
-      </div>
-      <template #footer>
-        <NSpace justify="end">
-          <NButton :disabled="resetting" @click="resetTarget = null">取消</NButton>
-          <NButton type="primary" :loading="resetting" @click="submitResetPassword">确认重置</NButton>
+  <div class="user-management-page">
+    <NCard title="用户列表" :bordered="false" class="user-card">
+      <template #header-extra>
+        <NSpace>
+          <NButton @click="router.push({ name: 'PasswordChange' })">修改密码</NButton>
+          <NButton :disabled="!isAdmin" type="primary" @click="router.push({ name: 'UserCreate' })">
+            <template #icon><NIcon><AddOutline /></NIcon></template>添加用户
+          </NButton>
+          <NButton :loading="loading" @click="loadUsers">
+            <template #icon><NIcon><RefreshOutline /></NIcon></template>刷新
+          </NButton>
         </NSpace>
       </template>
+      <div class="user-toolbar">
+        <NInput v-model:value="keyword" clearable placeholder="搜索用户名或描述">
+          <template #prefix><NIcon><SearchOutline /></NIcon></template>
+        </NInput>
+        <NSelect v-model:value="roleFilter" clearable placeholder="全部角色" :options="roleOptions" />
+        <NSelect v-model:value="statusFilter" clearable placeholder="全部状态" :options="statusOptions" />
+        <span class="user-toolbar__count">共 {{ filteredUsers.length }} 个用户</span>
+      </div>
+      <NDataTable :columns="columns" :data="filteredUsers" :loading="loading" :bordered="false" :single-line="false" :pagination="{ pageSize: 10 }">
+        <template #empty><NEmpty description="暂无用户" /></template>
+      </NDataTable>
     </NCard>
-  </NModal>
+    <NModal v-model:show="resetModalVisible" :mask-closable="!resetting">
+      <NCard :title="`重置“${resetTarget?.username || ''}”的密码`" :bordered="false" class="reset-card" role="dialog" aria-modal="true">
+        <NAlert type="warning" :bordered="false">
+          重置会撤销该用户的所有登录Token。用户使用临时密码登录后，只能修改密码，并需使用新密码重新登录。
+        </NAlert>
+        <div class="reset-fields">
+          <NInput v-model:value="temporaryPassword" type="password" show-password-on="click" placeholder="输入临时密码" />
+          <NInput v-model:value="confirmPassword" type="password" show-password-on="click" placeholder="再次输入临时密码" />
+          <span class="password-hint">{{ PASSWORD_POLICY_MESSAGE }}</span>
+        </div>
+        <template #footer>
+          <NSpace justify="end">
+            <NButton :disabled="resetting" @click="resetTarget = null">取消</NButton>
+            <NButton type="primary" :loading="resetting" @click="submitResetPassword">确认重置</NButton>
+          </NSpace>
+        </template>
+      </NCard>
+    </NModal>
+  </div>
 </template>
 
 <style scoped>
+.user-management-page { min-width: 0; }
 .user-card { min-height: 420px; }
 .user-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 160px 150px auto; align-items: center; gap: 12px; margin-bottom: 16px; }
 .user-toolbar__count { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
