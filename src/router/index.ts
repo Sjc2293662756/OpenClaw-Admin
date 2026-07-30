@@ -1,11 +1,14 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { routes } from './routes'
 import { useAuthStore } from '@/stores/auth'
+import { installChunkLoadRecovery } from './chunk-recovery'
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
 })
+
+installChunkLoadRecovery(router)
 
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()

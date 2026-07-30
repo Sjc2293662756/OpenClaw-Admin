@@ -146,6 +146,31 @@ tar -xzf "$archive" -C "$stage_root" --no-same-owner
 rm -f -- "$archive"
 test -f "$stage_root/server/index.js"
 test -f "$stage_root/dist/index.html"
+test -d "$stage_root/dist/assets"
+
+# Record only the assets produced by this release.  On the next deployment this
+# manifest lets us preserve exactly one previous generation instead of growing
+# the asset directory without bound.
+find "$stage_root/dist/assets" -maxdepth 1 -type f -printf '%f\\n' | LC_ALL=C sort > "$stage_root/dist/.release-assets"
+
+# Keep the active release's hashed assets so tabs opened before the switch can
+# finish lazy-loading routes after deployment.  New files always win on a rare
+# hash collision.
+if [ -d "$final_root/dist/assets" ]; then
+  mark_phase 'ASSET_COMPATIBILITY'
+  if [ -f "$final_root/dist/.release-assets" ]; then
+    while IFS= read -r asset; do
+      case "$asset" in
+        ''|*/*|*'..'*) printf 'BLOCK_INVALID_ASSET_MANIFEST\\n'; exit 48 ;;
+      esac
+      if [ -f "$final_root/dist/assets/$asset" ] && [ ! -e "$stage_root/dist/assets/$asset" ]; then
+        cp -a -- "$final_root/dist/assets/$asset" "$stage_root/dist/assets/$asset"
+      fi
+    done < "$final_root/dist/.release-assets"
+  else
+    cp -an -- "$final_root/dist/assets/." "$stage_root/dist/assets/"
+  fi
+fi
 chown -R gaiop:gaiop "$stage_root"
 
 reused_dependencies=0

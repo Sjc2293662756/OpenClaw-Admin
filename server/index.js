@@ -18,6 +18,7 @@ import { USER_ROLES, USER_STATUSES, getRpcPermissionDecision, isReadOnlyRpcMetho
 import { isPasswordChangeRequest } from './lib/account-security.js'
 import { sendError } from './lib/api-response.js'
 import { sanitizeGatewayConfigPayload } from './lib/sensitive-data.js'
+import { missingStaticAssetMiddleware } from './lib/static-assets.js'
 import { createAuditRouter } from './routes/audit.js'
 import { createAuthRouter } from './routes/auth.js'
 import { createUsersRouter } from './routes/users.js'
@@ -4401,11 +4402,18 @@ app.post('/api/backup/upload', adminMiddleware, backupUpload.single('backup'), a
 })
 
 if (hasDist) {
+  app.get('/index.html', (_req, res) => {
+    res.set('Cache-Control', 'no-cache')
+    res.sendFile(join(distPath, 'index.html'))
+  })
+
   app.use(express.static(distPath, {
     immutable: true,
     index: false,
     maxAge: '1y',
   }))
+
+  app.use(missingStaticAssetMiddleware)
 
   app.use((req, res, next) => {
     if (!req.path.startsWith('/api')) {
