@@ -43,6 +43,10 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 const cpuUsage = computed(() => metrics.value?.cpu?.usage ?? 0)
 const memoryUsage = computed(() => metrics.value?.memory?.usagePercent ?? 0)
 const diskUsage = computed(() => metrics.value?.disk?.usagePercent ?? 0)
+const displayHostname = computed(() => {
+  const hostname = metrics.value?.hostname?.trim() || ''
+  return hostname.toLowerCase() === 'netinsideopenclaw' ? 'NetInside GAIOP' : hostname
+})
 
 const cpuColor = computed(() => {
   const usage = cpuUsage.value
@@ -302,7 +306,7 @@ onUnmounted(() => {
               </template>
               <NSpace :size="8">
                 <NTag v-if="metrics?.platform" :bordered="false" round>{{ metrics.platform }}</NTag>
-                <NTag v-if="metrics?.hostname" :bordered="false" round type="info">{{ metrics.hostname }}</NTag>
+                <NTag v-if="displayHostname" :bordered="false" round type="info">{{ displayHostname }}</NTag>
               </NSpace>
             </NCard>
           </NGridItem>
