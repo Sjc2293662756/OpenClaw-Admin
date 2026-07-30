@@ -11,7 +11,6 @@ import {
   LockClosedOutline,
   LogOutOutline,
   PersonOutline,
-  RefreshOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
 import ChatPage from '@/views/chat/ChatPage.vue'
@@ -206,7 +205,7 @@ onUnmounted(() => {
             :disabled="historyRefreshing"
             @click="refreshHistory"
           >
-            <NIcon :component="RefreshOutline" :class="{ 'is-spinning': historyRefreshing }" />
+            <NIcon :component="ChatbubbleEllipsesOutline" :class="{ 'is-spinning': historyRefreshing }" />
           </button>
         </div>
 
