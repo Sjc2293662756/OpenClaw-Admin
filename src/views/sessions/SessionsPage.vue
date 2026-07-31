@@ -88,7 +88,9 @@ const serverNowReceivedAt = ref(Date.now())
 const timePreset = ref<TimeRangePreset>('last7days')
 const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value))
 const timeRangeTouched = ref(false)
-const canDeleteSessions = computed(() => authStore.isAdmin)
+const canDeleteSessions = computed(() =>
+  ['basic', 'standard', 'admin'].includes(authStore.currentUser?.role || '')
+)
 
 const allSessionKeys = computed(() => filteredSessions.value.map((s) => s.key))
 const isAllSelected = computed(() => {
@@ -568,7 +570,7 @@ function handleContinueConversation(session: SessionRow) {
 
 async function handleDelete(session: SessionRow) {
   if (!canDeleteSessions.value) {
-    message.error('仅管理员可以删除会话')
+    message.error('当前用户仅有查看权限，不能删除会话')
     return
   }
   try {
@@ -581,7 +583,7 @@ async function handleDelete(session: SessionRow) {
 
 async function handleBatchDelete() {
   if (!canDeleteSessions.value) {
-    message.error('仅管理员可以删除会话')
+    message.error('当前用户仅有查看权限，不能删除会话')
     return
   }
   if (allSelectedKeys.value.length === 0) return

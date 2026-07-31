@@ -38,7 +38,7 @@ const EXPLICIT_READ_RPC_METHODS = new Set([
   'crons.history',
 ])
 
-const ADMIN_ONLY_RPC_METHODS = new Set([
+const OWNED_SESSION_DELETE_RPC_METHODS = new Set([
   'sessions.delete',
   'session.delete',
 ])
@@ -97,12 +97,11 @@ export function getRpcPermissionDecision(user, method) {
 
   if (user?.role === 'admin') return { allowed: true }
 
-  if (ADMIN_ONLY_RPC_METHODS.has(normalized)) {
-    return {
-      allowed: false,
-      code: 'ADMIN_REQUIRED',
-      message: '仅管理员可以删除会话',
-    }
+  if (
+    OWNED_SESSION_DELETE_RPC_METHODS.has(normalized) &&
+    (user?.role === 'basic' || user?.role === 'standard')
+  ) {
+    return { allowed: true }
   }
 
   if (isReadOnlyRpcMethod(normalized)) return { allowed: true }
