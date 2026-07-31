@@ -155,21 +155,26 @@ function removeUser(user: ManagedUser) {
   })
 }
 
-const columns: DataTableColumns<ManagedUser> = [
-  { title: '更新时间', key: 'updatedAt', width: 180, render: row => formatTime(row.updatedAt) },
-  { title: '用户名', key: 'username', minWidth: 140 },
-  { title: '用户权限', key: 'role', width: 220, render: row => h(NSpace, { size: 'small' }, { default: () => [
-    h(NTag, { type: roleType[row.role], bordered: false }, { default: () => roleText[row.role] }),
-    ...(row.isInitialAdmin ? [h(NTag, { type: 'warning', bordered: false }, { default: () => '初始管理员' })] : []),
-  ] }) },
-  { title: '描述', key: 'description', minWidth: 220, ellipsis: { tooltip: true }, render: row => row.description || '—' },
-  { title: '状态', key: 'status', width: 105, render: row => h(NTag, { type: row.status === 'active' ? 'success' : 'default', bordered: false }, { default: () => row.status === 'active' ? '已激活' : '未激活' }) },
-  { title: '操作', key: 'actions', width: 250, render: row => h(NSpace, { size: 'small' }, { default: () => [
-    h(NButton, { size: 'small', disabled: !canEditUser(row), title: managementReason(row, 'edit'), onClick: () => router.push({ name: 'UserEdit', params: { id: row.id } }) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => '编辑' }),
-    h(NButton, { size: 'small', disabled: !canResetUser(row), title: managementReason(row, 'reset'), onClick: () => openResetPassword(row) }, { default: () => '重置' }),
-    h(NButton, { size: 'small', type: 'error', ghost: true, disabled: !canDeleteUser(row), title: managementReason(row, 'delete'), onClick: () => removeUser(row) }, { default: () => '删除' }),
-  ] }) },
-]
+const columns = computed<DataTableColumns<ManagedUser>>(() => {
+  const base: DataTableColumns<ManagedUser> = [
+    { title: '更新时间', key: 'updatedAt', width: 180, render: row => formatTime(row.updatedAt) },
+    { title: '用户名', key: 'username', minWidth: 140 },
+    { title: '用户权限', key: 'role', width: 220, render: row => h(NSpace, { size: 'small' }, { default: () => [
+      h(NTag, { type: roleType[row.role], bordered: false }, { default: () => roleText[row.role] }),
+      ...(row.isInitialAdmin ? [h(NTag, { type: 'warning', bordered: false }, { default: () => '初始管理员' })] : []),
+    ] }) },
+    { title: '描述', key: 'description', minWidth: 220, ellipsis: { tooltip: true }, render: row => row.description || '—' },
+    { title: '状态', key: 'status', width: 105, render: row => h(NTag, { type: row.status === 'active' ? 'success' : 'default', bordered: false }, { default: () => row.status === 'active' ? '已激活' : '未激活' }) },
+  ]
+  if (!isAdmin.value) return base
+  return [...base, {
+    title: '操作', key: 'actions', width: 250, render: row => h(NSpace, { size: 'small' }, { default: () => [
+      h(NButton, { size: 'small', disabled: !canEditUser(row), title: managementReason(row, 'edit'), onClick: () => router.push({ name: 'UserEdit', params: { id: row.id } }) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => '编辑' }),
+      h(NButton, { size: 'small', disabled: !canResetUser(row), title: managementReason(row, 'reset'), onClick: () => openResetPassword(row) }, { default: () => '重置' }),
+      h(NButton, { size: 'small', type: 'error', ghost: true, disabled: !canDeleteUser(row), title: managementReason(row, 'delete'), onClick: () => removeUser(row) }, { default: () => '删除' }),
+    ] }),
+  }]
+})
 
 onMounted(loadUsers)
 </script>
@@ -180,7 +185,7 @@ onMounted(loadUsers)
       <template #header-extra>
         <NSpace>
           <NButton @click="router.push({ name: 'PasswordChange' })">修改密码</NButton>
-          <NButton :disabled="!isAdmin" type="primary" @click="router.push({ name: 'UserCreate' })">
+          <NButton v-if="isAdmin" type="primary" @click="router.push({ name: 'UserCreate' })">
             <template #icon><NIcon><AddOutline /></NIcon></template>添加用户
           </NButton>
           <NButton :loading="loading" @click="loadUsers">
@@ -188,6 +193,9 @@ onMounted(loadUsers)
           </NButton>
         </NSpace>
       </template>
+      <NAlert v-if="!isAdmin" type="info" :bordered="false" class="user-read-only-alert">
+        当前为审计用户，仅可查看账户信息，不能新增、编辑、重置密码、启停或删除账户。
+      </NAlert>
       <div class="user-toolbar">
         <NInput v-model:value="keyword" clearable placeholder="搜索用户名或描述">
           <template #prefix><NIcon><SearchOutline /></NIcon></template>
@@ -224,6 +232,7 @@ onMounted(loadUsers)
 <style scoped>
 .user-management-page { min-width: 0; }
 .user-card { min-height: 420px; }
+.user-read-only-alert { margin-bottom: 16px; }
 .user-toolbar { display: grid; grid-template-columns: minmax(220px, 1fr) 160px 150px auto; align-items: center; gap: 12px; margin-bottom: 16px; }
 .user-toolbar__count { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 .reset-card { width: min(520px, calc(100vw - 32px)); }

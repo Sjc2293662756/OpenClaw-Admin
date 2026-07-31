@@ -18,6 +18,7 @@ const PASSWORDS = {
   initial: 'InitialA1!',
   admin: 'AdminUser2!',
   basic: 'BasicUser3!',
+  auditor: 'AuditUser4!',
   temporary: 'Temp Pass4!',
   replacement: 'New Pass5!',
 }
@@ -73,6 +74,7 @@ async function createFixture() {
   insert.run('initial-id', 'initial-admin', hashPassword(PASSWORDS.initial), 'admin', 1, 1, 1)
   insert.run('admin-id', 'ordinary-admin', hashPassword(PASSWORDS.admin), 'admin', 0, 2, 2)
   insert.run('basic-id', 'basic-user', hashPassword(PASSWORDS.basic), 'basic', 0, 3, 3)
+  insert.run('auditor-id', 'auditor-user', hashPassword(PASSWORDS.auditor), 'auditor', 0, 4, 4)
 
   const sessions = new Map()
   const audits = []
@@ -96,6 +98,7 @@ async function createFixture() {
     next()
   }
   const adminMiddleware = createRoleMiddleware(authMiddleware, ['admin'], '仅管理员可以执行此操作')
+  const accountViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '账户信息仅审计用户和管理员可查看')
   const recordAudit = (user, action, target = '', detail = '') => {
     audits.push({ user, action, target, detail })
   }
@@ -116,6 +119,7 @@ async function createFixture() {
     sessions,
     authMiddleware,
     adminMiddleware,
+    accountViewerMiddleware,
     recordAudit,
     hashPassword,
     verifyPassword,
@@ -269,6 +273,50 @@ test('password policy, administrator hierarchy, and direct REST protections are 
 
     assert.equal(fixture.db.prepare('SELECT role, status FROM users WHERE id = ?').get('initial-id').role, 'admin')
     assert.equal(fixture.db.prepare('SELECT status FROM users WHERE id = ?').get('initial-id').status, 'active')
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('auditors can read safe account information while basic users and all auditor writes are rejected', async () => {
+  const fixture = await createFixture()
+  try {
+    const auditor = await fixture.login('auditor-user', PASSWORDS.auditor)
+    const basic = await fixture.login('basic-user', PASSWORDS.basic)
+
+    const list = await fixture.request('/api/users', { token: auditor.token })
+    assert.equal(list.response.status, 200)
+    assert.equal(list.body.users.length, 4)
+    assert.equal(list.body.users.some(user => user.username === 'basic-user'), true)
+    assert.equal(list.body.users.every(user => !Object.hasOwn(user, 'mustChangePassword')), true)
+    assert.equal(JSON.stringify(list.body).includes('password_hash'), false)
+
+    const basicList = await fixture.request('/api/users', { token: basic.token })
+    assert.equal(basicList.response.status, 403)
+
+    const auditorWrites = [
+      fixture.request('/api/users', {
+        token: auditor.token,
+        method: 'POST',
+        body: JSON.stringify({ username: 'blocked-user', password: 'Blocked9!', role: 'basic', status: 'active' }),
+      }),
+      fixture.request('/api/users/basic-id', {
+        token: auditor.token,
+        method: 'PUT',
+        body: JSON.stringify({ role: 'standard', description: '', status: 'active' }),
+      }),
+      fixture.request('/api/users/basic-id/reset-password', {
+        token: auditor.token,
+        method: 'POST',
+        body: JSON.stringify({ temporaryPassword: PASSWORDS.temporary, confirmPassword: PASSWORDS.temporary }),
+      }),
+      fixture.request('/api/users/basic-id', { token: auditor.token, method: 'DELETE' }),
+    ]
+    for (const request of auditorWrites) {
+      const result = await request
+      assert.equal(result.response.status, 403)
+    }
+    assert.equal(fixture.db.prepare('SELECT COUNT(*) AS count FROM users').get().count, 4)
   } finally {
     await fixture.close()
   }

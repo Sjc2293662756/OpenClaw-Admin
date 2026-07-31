@@ -7,6 +7,7 @@ export function createUsersRouter({
   sessions,
   authMiddleware,
   adminMiddleware,
+  accountViewerMiddleware,
   recordAudit,
   hashPassword,
   verifyPassword,
@@ -17,13 +18,20 @@ export function createUsersRouter({
 }) {
   const router = Router()
 
-  router.get('/', authMiddleware, (_req, res) => {
+  router.get('/', accountViewerMiddleware, (req, res) => {
     const users = db.prepare(`
       SELECT id, username, role, description, status, is_initial_admin, must_change_password, created_at, updated_at
       FROM users
       ORDER BY updated_at DESC
     `).all()
-    sendOk(res, { users: users.map(publicUser) })
+    sendOk(res, {
+      users: users.map((user) => {
+        const projected = publicUser(user)
+        if (req.user?.role !== 'auditor') return projected
+        const { mustChangePassword: _mustChangePassword, ...auditorView } = projected
+        return auditorView
+      }),
+    })
   })
 
   router.post('/', adminMiddleware, (req, res) => {

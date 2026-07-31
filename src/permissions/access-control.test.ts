@@ -19,12 +19,13 @@ const expected: Record<PageAccessKey, UserRole[]> = {
   cron: ['auditor', 'admin'],
   memory: ['admin'],
   models: ['admin'],
-  channels: ['auditor', 'standard', 'admin'],
+  channels: roles,
   skills: ['auditor', 'standard', 'admin'],
   system: ['auditor', 'standard', 'admin'],
   agents: ['admin'],
   office: ['admin'],
-  users: ['admin'],
+  users: ['auditor', 'admin'],
+  userAdministration: ['admin'],
   audit: ['auditor', 'admin'],
   settings: roles,
   systemConfiguration: ['admin'],
@@ -44,6 +45,8 @@ describe('four-role page access matrix', () => {
   it('applies the same decision to direct and hidden child routes', () => {
     expect(canAccessRoute('standard', 'Memory')).toBe(false)
     expect(canAccessRoute('standard', 'UserCreate')).toBe(false)
+    expect(canAccessRoute('auditor', 'UserManagement')).toBe(true)
+    expect(canAccessRoute('auditor', 'UserCreate')).toBe(false)
     expect(canAccessRoute('auditor', 'DataSourceEdit')).toBe(false)
     expect(canAccessRoute('auditor', 'Cron')).toBe(true)
     expect(canAccessRoute('basic', 'ChatWorkspace')).toBe(true)

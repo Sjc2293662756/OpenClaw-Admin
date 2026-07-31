@@ -461,6 +461,7 @@ function authMiddleware(req, res, next) {
 const adminMiddleware = createRoleMiddleware(authMiddleware, ['admin'], '仅管理员可以执行此操作')
 const operatorMiddleware = createRoleMiddleware(authMiddleware, ['standard', 'admin'], '当前用户仅有查看权限，不能执行此操作')
 const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
+const accountViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '账户信息仅审计用户和管理员可查看')
 const systemMonitorMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'standard', 'admin'], '当前角色无权查看系统监控')
 
 function recordAudit(user, action, target = '', detail = '') {
@@ -634,6 +635,7 @@ app.use('/api/users', createUsersRouter({
   sessions,
   authMiddleware,
   adminMiddleware,
+  accountViewerMiddleware,
   recordAudit,
   hashPassword,
   verifyPassword,

@@ -53,20 +53,22 @@ async function startTestServer() {
   return { baseUrl: `http://127.0.0.1:${port}/channels`, calls, audits, server }
 }
 
-test('standard channel read returns only safe configuration status', async () => {
+test('basic and standard channel reads return only safe configuration status', async () => {
   const context = await startTestServer()
   try {
-    const response = await fetch(`${context.baseUrl}/config`)
-    const payload = await response.json()
-    assert.equal(response.status, 200)
-    assert.deepEqual(payload.config, {
-      channels: {
-        feishu: { configured: true, enabled: true },
-        wecom: { configured: true, enabled: true },
-      },
-    })
-    assert.equal(JSON.stringify(payload).includes('bot-public'), false)
-    assert.equal(JSON.stringify(payload).includes('existing-feishu-app'), false)
+    for (const role of ['basic', 'standard']) {
+      const response = await fetch(`${context.baseUrl}/config`, { headers: { 'x-test-role': role } })
+      const payload = await response.json()
+      assert.equal(response.status, 200)
+      assert.deepEqual(payload.config, {
+        channels: {
+          feishu: { configured: true, enabled: true },
+          wecom: { configured: true, enabled: true },
+        },
+      })
+      assert.equal(JSON.stringify(payload).includes('bot-public'), false)
+      assert.equal(JSON.stringify(payload).includes('existing-feishu-app'), false)
+    }
   } finally {
     context.server.close()
   }

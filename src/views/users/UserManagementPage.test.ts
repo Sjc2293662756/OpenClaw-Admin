@@ -82,4 +82,65 @@ describe('user management page routing', () => {
     expect(wrapper.find('input[placeholder="请输入用户名"]').exists()).toBe(true)
     wrapper.unmount()
   })
+
+  it('shows auditors a read-only account list without management actions', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      ok: true,
+      users: [{
+        id: 'basic-user',
+        username: 'viewer-target',
+        role: 'basic',
+        description: '只读账户',
+        status: 'active',
+        isInitialAdmin: false,
+        updatedAt: Date.now(),
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const authStore = useAuthStore()
+    authStore.token = 'auditor-token'
+    authStore.currentUser = {
+      id: 'auditor-id',
+      username: 'auditor',
+      role: 'auditor',
+      isInitialAdmin: false,
+      mustChangePassword: false,
+    }
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/users', name: 'UserManagement', component: UserManagementPage },
+        { path: '/users/password', name: 'PasswordChange', component: { template: '<div>password</div>' } },
+      ],
+    })
+    await router.push('/users')
+    await router.isReady()
+    const Harness = defineComponent({
+      setup() {
+        return () => h(NConfigProvider, null, {
+          default: () => h(NDialogProvider, null, {
+            default: () => h(NMessageProvider, null, {
+              default: () => h(RouterView),
+            }),
+          }),
+        })
+      },
+    })
+    const wrapper = mount(Harness, { global: { plugins: [pinia, router] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('当前为审计用户，仅可查看账户信息')
+    expect(wrapper.text()).toContain('viewer-target')
+    const buttonText = wrapper.findAll('button').map(button => button.text()).join('|')
+    expect(buttonText).not.toContain('添加用户')
+    expect(buttonText).not.toContain('编辑')
+    expect(buttonText).not.toContain('重置')
+    expect(buttonText).not.toContain('删除')
+    wrapper.unmount()
+  })
 })

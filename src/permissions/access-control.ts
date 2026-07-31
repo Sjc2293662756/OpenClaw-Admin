@@ -15,6 +15,7 @@ export type PageAccessKey =
   | 'agents'
   | 'office'
   | 'users'
+  | 'userAdministration'
   | 'audit'
   | 'settings'
   | 'systemConfiguration'
@@ -46,12 +47,13 @@ export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   cron: { moduleName: '任务计划', roles: AUDIT_AND_ADMIN },
   memory: { moduleName: '记忆管理', roles: ADMIN_ONLY },
   models: { moduleName: '模型管理', roles: ADMIN_ONLY },
-  channels: { moduleName: '频道管理', roles: STATUS_VIEWERS },
+  channels: { moduleName: '频道管理', roles: ALL_ROLES },
   skills: { moduleName: 'Skills管理', roles: STATUS_VIEWERS },
   system: { moduleName: '系统监视器', roles: STATUS_VIEWERS },
   agents: { moduleName: '多智能体', roles: ADMIN_ONLY },
   office: { moduleName: '智能体工坊', roles: ADMIN_ONLY },
-  users: { moduleName: '用户管理', roles: ADMIN_ONLY },
+  users: { moduleName: '账户管理', roles: AUDIT_AND_ADMIN },
+  userAdministration: { moduleName: '账户管理', roles: ADMIN_ONLY },
   audit: { moduleName: '审计信息', roles: AUDIT_AND_ADMIN },
   settings: { moduleName: '系统设置', roles: ALL_ROLES },
   systemConfiguration: { moduleName: '系统配置', roles: ADMIN_ONLY },
@@ -74,8 +76,8 @@ export const ROUTE_ACCESS_KEYS: Record<string, PageAccessKey> = {
   Agents: 'agents',
   Office: 'office',
   UserManagement: 'users',
-  UserCreate: 'users',
-  UserEdit: 'users',
+  UserCreate: 'userAdministration',
+  UserEdit: 'userAdministration',
   AuditLogs: 'audit',
   Settings: 'settings',
   BasicSettings: 'settings',
