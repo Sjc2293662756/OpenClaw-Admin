@@ -3,6 +3,21 @@ import { sendError, sendOk } from '../lib/api-response.js'
 import { patchGatewayChannelConfig, readGatewayChannelConfig, validateChannelPatches } from '../lib/gateway-channel-config.js'
 import { createFeishuAppOnboarding } from '../lib/feishu-app-onboarding.js'
 
+function safeChannelStatusConfig(config) {
+  const channels = config?.channels && typeof config.channels === 'object' && !Array.isArray(config.channels)
+    ? config.channels
+    : {}
+  return {
+    channels: Object.fromEntries(Object.entries(channels).map(([key, value]) => {
+      const row = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+      return [key, {
+        configured: true,
+        enabled: row.enabled !== false,
+      }]
+    })),
+  }
+}
+
 export function createChannelsRouter({ authMiddleware, adminMiddleware, recordAudit, gateway, getGateway, feishuOnboarding }) {
   const router = Router()
   const currentGateway = () => typeof getGateway === 'function' ? getGateway() : gateway
@@ -23,9 +38,12 @@ export function createChannelsRouter({ authMiddleware, adminMiddleware, recordAu
     },
   })
 
-  router.get('/config', authMiddleware, async (_req, res) => {
+  router.get('/config', authMiddleware, async (req, res) => {
     try {
-      return sendOk(res, { config: await readGatewayChannelConfig(currentGateway()) })
+      const config = await readGatewayChannelConfig(currentGateway())
+      return sendOk(res, {
+        config: req.user?.role === 'admin' ? config : safeChannelStatusConfig(config),
+      })
     } catch (error) {
       return sendError(res, {
         status: error?.code === 'GATEWAY_UNAVAILABLE' ? 503 : 502,

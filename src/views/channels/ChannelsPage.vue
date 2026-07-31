@@ -358,6 +358,7 @@ onUnmounted(() => {
             {{ t('common.refresh') }}
           </NButton>
           <NButton
+            v-if="canManageSecurity"
             size="small"
             type="warning"
             class="toolbar-btn toolbar-btn--apply"
@@ -413,19 +414,32 @@ onUnmounted(() => {
                   <span>{{ card.description }}</span>
                 </div>
 
-                <NAlert
-                  v-if="!card.pluginInstalled"
-                  type="warning"
-                  :bordered="false"
-                >
-                  {{
-                    card.pluginStatusKnown
-                      ? t('pages.channels.componentHint.missing', { channel: card.label })
-                      : t('pages.channels.componentHint.unknown', { channel: card.label })
-                  }}
-                </NAlert>
+                <NCard v-if="!canManageSecurity" size="small" embedded title="安全运行状态">
+                  <NSpace vertical :size="8">
+                    <NText>仅展示组件、配置和运行可用状态，不返回或展示频道配置内容。</NText>
+                    <NSpace :size="8">
+                      <NTag :type="pluginStatusType(card)" :bordered="false">{{ pluginStatusLabel(card) }}</NTag>
+                      <NTag :type="card.configured ? 'success' : 'default'" :bordered="false">
+                        {{ card.configured ? t('pages.channels.configured') : t('pages.channels.notConfigured') }}
+                      </NTag>
+                    </NSpace>
+                  </NSpace>
+                </NCard>
 
-                <NCard v-if="!card.configured" size="small" embedded :title="t('pages.channels.configurationCardTitle')">
+                <template v-else>
+                  <NAlert
+                    v-if="!card.pluginInstalled"
+                    type="warning"
+                    :bordered="false"
+                  >
+                    {{
+                      card.pluginStatusKnown
+                        ? t('pages.channels.componentHint.missing', { channel: card.label })
+                        : t('pages.channels.componentHint.unknown', { channel: card.label })
+                    }}
+                  </NAlert>
+
+                  <NCard v-if="!card.configured" size="small" embedded :title="t('pages.channels.configurationCardTitle')">
                   <NSpace justify="space-between" align="center" class="channel-install-row">
                     <NText depth="3">{{ t('pages.channels.configurationHint', { channel: card.label }) }}</NText>
                     <NButton
@@ -578,7 +592,7 @@ onUnmounted(() => {
                   </NAlert>
                 </NCard>
 
-                <NCard v-if="card.configured" size="small" :title="t('pages.channels.credentialsTitle')" embedded>
+                  <NCard v-if="card.configured" size="small" :title="t('pages.channels.credentialsTitle')" embedded>
                   <NAlert type="info" :bordered="false" style="margin-bottom: 12px;">
                     {{ t('pages.channels.credentialsHint') }}
                   </NAlert>
@@ -617,7 +631,8 @@ onUnmounted(() => {
                       </NInputGroup>
                     </NFormItem>
                   </NForm>
-                </NCard>
+                  </NCard>
+                </template>
               </NSpace>
             </NCollapseItem>
           </NCollapse>

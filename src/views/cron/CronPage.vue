@@ -45,6 +45,7 @@ import { useCronStore } from '@/stores/cron'
 import { useConfigStore } from '@/stores/config'
 import { useModelStore } from '@/stores/model'
 import { useSessionStore } from '@/stores/session'
+import { usePermissions } from '@/composables/usePermissions'
 import type {
   CronDelivery,
   CronJob,
@@ -83,6 +84,7 @@ const cronStore = useCronStore()
 const configStore = useConfigStore()
 const modelStore = useModelStore()
 const sessionStore = useSessionStore()
+const { canManageTasks } = usePermissions()
 const router = useRouter()
 const message = useMessage()
 const { t, locale } = useI18n()
@@ -658,6 +660,13 @@ const jobColumns = computed<DataTableColumns<CronJob>>(() => [
     key: 'enabled',
     width: 92,
     render(row) {
+      if (!canManageTasks.value) {
+        return h(
+          NTag,
+          { size: 'small', bordered: false, type: row.enabled ? 'success' : 'default' },
+          { default: () => row.enabled ? t('common.enabled') : t('common.disabled') }
+        )
+      }
       return h(NSwitch, {
         size: 'small',
         value: row.enabled,
@@ -671,27 +680,31 @@ const jobColumns = computed<DataTableColumns<CronJob>>(() => [
   {
     title: t('pages.cron.table.jobs.actions'),
     key: 'actions',
-    width: 336,
+    width: canManageTasks.value ? 336 : 112,
     render(row) {
-      return h(NSpace, { size: 8, wrap: false, class: 'cron-job-actions' }, () => [
-        h(
-          NButton,
-          {
-            size: 'small',
-            type: 'info',
-            secondary: true,
-            strong: true,
-            class: 'cron-action-btn cron-action-btn--detail',
-            onClick: (e: MouseEvent) => {
-              e.stopPropagation()
-              openDetailModal(row)
-            },
+      const detailAction = h(
+        NButton,
+        {
+          size: 'small',
+          type: 'info',
+          secondary: true,
+          strong: true,
+          class: 'cron-action-btn cron-action-btn--detail',
+          onClick: (e: MouseEvent) => {
+            e.stopPropagation()
+            openDetailModal(row)
           },
-          {
-            icon: () => h(NIcon, { component: EyeOutline }),
-            default: () => t('pages.cron.actions.viewDetail'),
-          }
-        ),
+        },
+        {
+          icon: () => h(NIcon, { component: EyeOutline }),
+          default: () => t('pages.cron.actions.viewDetail'),
+        }
+      )
+      if (!canManageTasks.value) {
+        return h(NSpace, { size: 8, wrap: false, class: 'cron-job-actions' }, () => [detailAction])
+      }
+      return h(NSpace, { size: 8, wrap: false, class: 'cron-job-actions' }, () => [
+        detailAction,
         h(
           NButton,
           {
@@ -818,12 +831,15 @@ const runColumns = computed<DataTableColumns<CronRunLogEntry>>(() => [
 ])
 
 onMounted(async () => {
-  await Promise.all([
-    cronStore.fetchOverview(),
-    modelStore.fetchModels(),
-    configStore.fetchConfig(),
-    sessionStore.fetchSessions(),
-  ])
+  const requests: Promise<unknown>[] = [cronStore.fetchOverview()]
+  if (canManageTasks.value) {
+    requests.push(
+      modelStore.fetchModels(),
+      configStore.fetchConfig(),
+      sessionStore.fetchSessions()
+    )
+  }
+  await Promise.all(requests)
   const firstJob = cronStore.jobs[0]
   if (firstJob) {
     await cronStore.fetchRuns(firstJob.id)
@@ -914,6 +930,7 @@ function resetForm() {
 }
 
 function openCreateModal() {
+  if (!canManageTasks.value) return
   modalMode.value = 'create'
   editingJobId.value = ''
   resetForm()
@@ -921,6 +938,7 @@ function openCreateModal() {
 }
 
 function applyQuickTemplate(preset: CronTemplatePreset) {
+  if (!canManageTasks.value) return
   openCreateModal()
   form.name = preset.label
   form.description = preset.description
@@ -940,6 +958,7 @@ function applyQuickTemplate(preset: CronTemplatePreset) {
 }
 
 function openEditModal(job: CronJob) {
+  if (!canManageTasks.value) return
   modalMode.value = 'edit'
   editingJobId.value = job.id
   fillFormByJob(job)
@@ -1428,12 +1447,15 @@ function lastRunText(job: CronJob): string {
 }
 
 async function handleRefresh() {
-  await Promise.all([
-    cronStore.fetchOverview(),
-    modelStore.fetchModels(),
-    configStore.fetchConfig(),
-    sessionStore.fetchSessions(),
-  ])
+  const requests: Promise<unknown>[] = [cronStore.fetchOverview()]
+  if (canManageTasks.value) {
+    requests.push(
+      modelStore.fetchModels(),
+      configStore.fetchConfig(),
+      sessionStore.fetchSessions()
+    )
+  }
+  await Promise.all(requests)
   if (cronStore.selectedJobId) {
     await cronStore.fetchRuns(cronStore.selectedJobId)
   }
@@ -1444,6 +1466,7 @@ async function handleSelectJob(row: CronJob) {
 }
 
 async function handleToggle(job: CronJob, value: boolean) {
+  if (!canManageTasks.value) return
   try {
     await cronStore.updateJob(job.id, { enabled: value })
     message.success(value ? t('pages.cron.messages.jobEnabled') : t('pages.cron.messages.jobDisabled'))
@@ -1453,6 +1476,7 @@ async function handleToggle(job: CronJob, value: boolean) {
 }
 
 async function handleRun(job: CronJob) {
+  if (!canManageTasks.value) return
   try {
     await cronStore.runJob(job.id, 'force')
     message.success(t('pages.cron.messages.jobTriggered'))
@@ -1462,6 +1486,7 @@ async function handleRun(job: CronJob) {
 }
 
 async function handleDelete(job: CronJob) {
+  if (!canManageTasks.value) return
   try {
     await cronStore.deleteJob(job.id)
     message.success(t('pages.cron.messages.jobDeleted'))
@@ -1471,6 +1496,7 @@ async function handleDelete(job: CronJob) {
 }
 
 async function handleSubmit() {
+  if (!canManageTasks.value) return
   try {
     const payload = buildSubmitPayload()
     if (isEditing.value && editingJobId.value) {
@@ -1508,6 +1534,7 @@ function openDetailModal(job: CronJob) {
 }
 
 function openEditFromDetail() {
+  if (!canManageTasks.value) return
   const job = selectedJob.value
   if (!job) return
   showDetailModal.value = false
@@ -1549,7 +1576,7 @@ function runRowProps(row: CronRunLogEntry) {
             <template #icon><NIcon :component="RefreshOutline" /></template>
             {{ t('common.refresh') }}
           </NButton>
-          <NButton size="small" type="primary" @click="openCreateModal">
+          <NButton v-if="canManageTasks" size="small" type="primary" @click="openCreateModal">
             <template #icon><NIcon :component="AddOutline" /></template>
             {{ t('pages.cron.actions.createJob') }}
           </NButton>
@@ -1568,7 +1595,7 @@ function runRowProps(row: CronRunLogEntry) {
         </NAlert>
       </NSpace>
 
-      <div class="cron-template-row">
+      <div v-if="canManageTasks" class="cron-template-row">
         <NText depth="3">{{ t('pages.cron.quickTemplates') }}</NText>
         <NSpace :size="8" wrap>
           <NButton
@@ -1864,11 +1891,11 @@ function runRowProps(row: CronRunLogEntry) {
       <template #footer>
         <NSpace justify="space-between" align="center" wrap>
           <NSpace :size="8" wrap>
-            <NButton size="small" type="primary" :disabled="!selectedJob" @click="selectedJob && handleRun(selectedJob)">
+            <NButton v-if="canManageTasks" size="small" type="primary" :disabled="!selectedJob" @click="selectedJob && handleRun(selectedJob)">
               <template #icon><NIcon :component="PlayOutline" /></template>
               {{ t('pages.cron.actions.runNow') }}
             </NButton>
-            <NButton size="small" :disabled="!selectedJob" @click="openEditFromDetail">
+            <NButton v-if="canManageTasks" size="small" :disabled="!selectedJob" @click="openEditFromDetail">
               <template #icon><NIcon :component="CreateOutline" /></template>
               {{ t('pages.cron.actions.editJob') }}
             </NButton>

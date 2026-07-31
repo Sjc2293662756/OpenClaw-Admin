@@ -34,7 +34,7 @@ import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useAgentStore } from '@/stores/agent'
 import { useConfigStore } from '@/stores/config'
-import { useAuthStore } from '@/stores/auth'
+import { usePermissions } from '@/composables/usePermissions'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { formatRelativeTime, parseSessionKey } from '@/utils/format'
 import {
@@ -63,10 +63,14 @@ type SessionRow = Session & {
 const sessionStore = useSessionStore()
 const agentStore = useAgentStore()
 const configStore = useConfigStore()
-const authStore = useAuthStore()
 const router = useRouter()
 const message = useMessage()
 const { t } = useI18n()
+const {
+  canUseFunctions,
+  canDeleteSessions,
+  canContinueSessions,
+} = usePermissions()
 
 const searchQuery = ref('')
 const channelFilter = ref<string>('all')
@@ -89,10 +93,6 @@ const serverNowReceivedAt = ref(Date.now())
 const timePreset = ref<TimeRangePreset>('last7days')
 const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value))
 const timeRangeTouched = ref(false)
-const canDeleteSessions = computed(() =>
-  ['basic', 'standard', 'admin'].includes(authStore.currentUser?.role || '')
-)
-
 const allSessionKeys = computed(() => filteredSessions.value.map((s) => s.key))
 const isAllSelected = computed(() => {
   if (allSessionKeys.value.length === 0) return false
@@ -439,7 +439,9 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
           },
           {
             icon: () => h(NIcon, { component: ChatbubblesOutline }),
-            default: () => t('pages.sessions.list.continueConversation'),
+            default: () => canContinueSessions.value
+              ? t('pages.sessions.list.continueConversation')
+              : '查看历史',
           }
         ),
       ]
@@ -477,8 +479,10 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
 onMounted(() => {
   void syncServerNow()
   void sessionStore.fetchSessions()
-  void agentStore.fetchAgents()
-  void configStore.fetchConfig()
+  if (canUseFunctions.value) {
+    void agentStore.fetchAgents()
+    void configStore.fetchConfig()
+  }
 })
 
 watch([searchQuery, channelFilter, modelFilter, sortMode, appliedRange], () => {
@@ -605,6 +609,7 @@ function handleSelectAll() {
 }
 
 function openCreateModal() {
+  if (!canUseFunctions.value) return
   createForm.value = {
     agentId: 'main',
     channel: 'webchat',
@@ -615,6 +620,7 @@ function openCreateModal() {
 }
 
 async function handleCreateSession() {
+  if (!canUseFunctions.value) return
   creating.value = true
   try {
     await sessionStore.createSession({
@@ -674,7 +680,7 @@ async function handleCreateSession() {
             </template>
             {{ t('pages.sessions.list.confirmBatchDelete', { count: allSelectedKeys.length }) }}
           </NPopconfirm>
-          <NButton size="small" type="primary" @click="openCreateModal">
+          <NButton v-if="canUseFunctions" size="small" type="primary" @click="openCreateModal">
             <template #icon>
               <NIcon :component="AddOutline" />
             </template>
@@ -781,6 +787,7 @@ async function handleCreateSession() {
     </NCard>
 
     <NModal
+      v-if="canUseFunctions"
       v-model:show="showCreateModal"
       preset="card"
       :title="t('pages.sessions.list.createModal.title')"

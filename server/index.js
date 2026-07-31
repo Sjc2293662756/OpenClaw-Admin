@@ -17,7 +17,12 @@ import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupR
 import { USER_ROLES, USER_STATUSES, getRpcPermissionDecision, isReadOnlyRpcMethod, createRoleMiddleware } from './lib/permissions.js'
 import { isPasswordChangeRequest } from './lib/account-security.js'
 import { sendError } from './lib/api-response.js'
-import { sanitizeGatewayConfigPayload } from './lib/sensitive-data.js'
+import {
+  projectSafeChannelsPayload,
+  projectSafePluginsPayload,
+  projectSafeSkillsPayload,
+  projectStandardGatewayConfig,
+} from './lib/role-projections.js'
 import { missingStaticAssetMiddleware } from './lib/static-assets.js'
 import { createAuditRouter } from './routes/audit.js'
 import { createAuthRouter } from './routes/auth.js'
@@ -34,6 +39,7 @@ import { createAlertIngestionRouter } from './routes/alert-ingestion.js'
 import { createChannelsRouter } from './routes/channels.js'
 import { createSystemUpgradeRouter } from './routes/system-upgrade.js'
 import { createDashboardUsageRouter } from './routes/dashboard-usage.js'
+import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -45,6 +51,7 @@ import {
   extractSessionKeyFromEvent,
   filterHiddenLegacySessions,
   filterSessionListPayload,
+  filterSessionUsagePayload,
   getConversationTitleCandidate,
   getSessionKeyFromParams,
   hideLegacySharedSession,
@@ -55,10 +62,15 @@ import {
   markWorkspaceSessionDeleted,
   setWorkspaceSessionTitleIfEmpty,
 } from './lib/session-ownership-service.js'
+
 import { attachReportProvenance } from './report-provenance-service.js'
 import { decryptDataSourcePassword, encryptDataSourcePassword, isDataSourceEncryptionReady, testNapmDataSource, toPublicDataSource, validateDataSourceInput } from './data-source-service.js'
 import { getDataSourceRuntimeStatus, writeActiveDataSourceRuntime } from './data-source-runtime-service.js'
 import { encryptSensitiveConfigValue, isSensitiveConfigEncryptionReady, toPublicSystemSensitiveConfig, validateSystemSensitiveConfigInput } from './sensitive-config-service.js'
+
+const SAFE_CHANNEL_STATUS_METHODS = new Set(['channels.status', 'channels.list', 'channel.list', 'channel.status'])
+const SAFE_PLUGIN_STATUS_METHODS = new Set(['plugins.list', 'plugin.list', 'plugins.status', 'plugin.status'])
+const SAFE_SKILL_READ_METHODS = new Set(['skills.status', 'skills.list'])
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -449,6 +461,7 @@ function authMiddleware(req, res, next) {
 const adminMiddleware = createRoleMiddleware(authMiddleware, ['admin'], '仅管理员可以执行此操作')
 const operatorMiddleware = createRoleMiddleware(authMiddleware, ['standard', 'admin'], '当前用户仅有查看权限，不能执行此操作')
 const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
+const systemMonitorMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'standard', 'admin'], '当前角色无权查看系统监控')
 
 function recordAudit(user, action, target = '', detail = '') {
   try {
@@ -501,6 +514,12 @@ app.use('/api/system-upgrade', createSystemUpgradeRouter({
 app.use('/api/dashboard/usage', createDashboardUsageRouter({
   authMiddleware,
   getGateway: () => gateway,
+  db,
+}))
+app.use('/api/dashboard/summary', createDashboardSummaryRouter({
+  authMiddleware,
+  getGateway: () => gateway,
+  db,
 }))
 app.use('/api/channels', createChannelsRouter({
   authMiddleware,
@@ -897,7 +916,7 @@ async function getDiskSpace() {
   }
 }
 
-app.get('/api/system/metrics', authMiddleware, async (req, res) => {
+app.get('/api/system/metrics', systemMonitorMiddleware, async (req, res) => {
   try {
     const cpus = os.cpus()
     const totalMem = os.totalmem()
@@ -1568,10 +1587,16 @@ app.post('/api/rpc', authMiddleware, async (req, res) => {
     // Save the first successful WebChat request as its fixed, local title.
     // The title is never model-generated and is not sent to the Gateway.
     if (isConversationSend) setWorkspaceSessionTitleIfEmpty(db, sessionKey, webSessionTitleCandidate)
-    let payload = method === 'config.get' && req.user?.role !== 'admin'
-      ? sanitizeGatewayConfigPayload(result)
-      : result
-    if (isSessionList) {
+    let payload = result
+    if (req.user?.role !== 'admin') {
+      if (method === 'config.get') payload = projectStandardGatewayConfig(result)
+      else if (SAFE_CHANNEL_STATUS_METHODS.has(method)) payload = projectSafeChannelsPayload(result)
+      else if (SAFE_PLUGIN_STATUS_METHODS.has(method)) payload = projectSafePluginsPayload(result)
+      else if (SAFE_SKILL_READ_METHODS.has(method)) payload = projectSafeSkillsPayload(result)
+    }
+    if (method === 'sessions.usage' || method === 'usage.sessions') {
+      payload = filterSessionUsagePayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))
+    } else if (isSessionList) {
       payload = filterSessionListPayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))
       payload = filterHiddenLegacySessions(db, payload)
       payload = enrichSessionPayload(db, payload)
@@ -2911,7 +2936,7 @@ function keyCodeToX11KeySym(keyCode, key) {
 // ============ Wizard API (Scenarios & Tasks) ============
 
 // Scenarios API
-app.get('/api/wizard/scenarios', authMiddleware, (req, res) => {
+app.get('/api/wizard/scenarios', adminMiddleware, (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM scenarios ORDER BY updated_at DESC').all()
     const scenarios = rows.map(row => ({
@@ -2935,7 +2960,7 @@ app.get('/api/wizard/scenarios', authMiddleware, (req, res) => {
   }
 })
 
-app.get('/api/wizard/scenarios/:id', authMiddleware, (req, res) => {
+app.get('/api/wizard/scenarios/:id', adminMiddleware, (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(req.params.id)
     if (!row) {
@@ -2962,7 +2987,7 @@ app.get('/api/wizard/scenarios/:id', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/wizard/scenarios', operatorMiddleware, (req, res) => {
+app.post('/api/wizard/scenarios', adminMiddleware, (req, res) => {
   try {
     const id = randomUUID()
     const now = Date.now()
@@ -3009,7 +3034,7 @@ app.post('/api/wizard/scenarios', operatorMiddleware, (req, res) => {
   }
 })
 
-app.put('/api/wizard/scenarios/:id', operatorMiddleware, (req, res) => {
+app.put('/api/wizard/scenarios/:id', adminMiddleware, (req, res) => {
   try {
     const existing = db.prepare('SELECT id FROM scenarios WHERE id = ?').get(req.params.id)
     if (!existing) {
@@ -3045,7 +3070,7 @@ app.put('/api/wizard/scenarios/:id', operatorMiddleware, (req, res) => {
   }
 })
 
-app.delete('/api/wizard/scenarios/:id', operatorMiddleware, (req, res) => {
+app.delete('/api/wizard/scenarios/:id', adminMiddleware, (req, res) => {
   try {
     db.prepare('DELETE FROM tasks WHERE scenario_id = ?').run(req.params.id)
     db.prepare('DELETE FROM scenarios WHERE id = ?').run(req.params.id)
@@ -3059,7 +3084,7 @@ app.delete('/api/wizard/scenarios/:id', operatorMiddleware, (req, res) => {
 })
 
 // Tasks API
-app.get('/api/wizard/tasks', authMiddleware, (req, res) => {
+app.get('/api/wizard/tasks', adminMiddleware, (req, res) => {
   try {
     const scenarioId = req.query.scenarioId
     let rows
@@ -3090,7 +3115,7 @@ app.get('/api/wizard/tasks', authMiddleware, (req, res) => {
   }
 })
 
-app.get('/api/wizard/tasks/:id', authMiddleware, (req, res) => {
+app.get('/api/wizard/tasks/:id', adminMiddleware, (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id)
     if (!row) {
@@ -3117,7 +3142,7 @@ app.get('/api/wizard/tasks/:id', authMiddleware, (req, res) => {
   }
 })
 
-app.post('/api/wizard/tasks', operatorMiddleware, (req, res) => {
+app.post('/api/wizard/tasks', adminMiddleware, (req, res) => {
   try {
     const id = randomUUID()
     const now = Date.now()
@@ -3164,7 +3189,7 @@ app.post('/api/wizard/tasks', operatorMiddleware, (req, res) => {
   }
 })
 
-app.put('/api/wizard/tasks/:id', operatorMiddleware, (req, res) => {
+app.put('/api/wizard/tasks/:id', adminMiddleware, (req, res) => {
   try {
     const existing = db.prepare('SELECT id FROM tasks WHERE id = ?').get(req.params.id)
     if (!existing) {
@@ -3200,7 +3225,7 @@ app.put('/api/wizard/tasks/:id', operatorMiddleware, (req, res) => {
   }
 })
 
-app.delete('/api/wizard/tasks/:id', operatorMiddleware, (req, res) => {
+app.delete('/api/wizard/tasks/:id', adminMiddleware, (req, res) => {
   try {
     db.prepare('DELETE FROM tasks WHERE id = ?').run(req.params.id)
     

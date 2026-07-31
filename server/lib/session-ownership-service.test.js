@@ -11,6 +11,7 @@ import {
   extractSessionKeyFromEvent,
   filterHiddenLegacySessions,
   filterSessionListPayload,
+  filterSessionUsagePayload,
   getConversationTitleCandidate,
   hideLegacySharedSession,
   isConversationSessionSend,
@@ -57,16 +58,35 @@ function createTestDb() {
 
 const alice = { id: 'user-alice', username: 'alice', role: 'standard' }
 const bob = { id: 'user-bob', username: 'bob', role: 'standard' }
+const auditor = { id: 'user-auditor', username: 'auditor', role: 'auditor' }
+
+it('usage projection removes non-owned rows and global aggregates', () => {
+  const result = filterSessionUsagePayload({
+    sessions: [
+      { key: 'owned', usage: { totalTokens: 12 } },
+      { key: 'other', usage: { totalTokens: 99 } },
+    ],
+    totals: { totalTokens: 111, totalCost: 8 },
+    aggregates: { byModel: [{ model: 'secret' }], daily: [{ tokens: 111 }] },
+  }, new Set(['owned']))
+
+  expect(result.sessions).toHaveLength(1)
+  expect(result.sessions[0].key).toBe('owned')
+  expect(result.totals).toEqual({ totalTokens: 12 })
+  expect(result.aggregates.byModel).toEqual([])
+  expect(result.aggregates.daily).toEqual([])
+})
 const admin = { id: 'user-admin', username: 'admin', role: 'admin' }
 
 describe('workspace session ownership service', () => {
-  it('creates a BFF-issued session that only its owner and an administrator can access', () => {
+  it('creates a BFF-issued session that its owner, auditors and administrators can read', () => {
     const db = createTestDb()
     const sessionKey = createWorkspaceSession(db, alice, 1)
 
     expect(sessionKey).toMatch(/^agent:main:main:dm:webchat-[a-z0-9]{32}$/)
     expect(canAccessWorkspaceSession(db, alice, sessionKey)).toBe(true)
     expect(canAccessWorkspaceSession(db, bob, sessionKey)).toBe(false)
+    expect(canAccessWorkspaceSession(db, auditor, sessionKey)).toBe(true)
     expect(canAccessWorkspaceSession(db, admin, sessionKey)).toBe(true)
   })
 
@@ -79,6 +99,7 @@ describe('workspace session ownership service', () => {
       code: 'SESSION_NOT_FOUND',
     })
     expect(ensureWorkspaceSessionAccess(db, admin, unregistered)).toMatchObject({ ok: true })
+    expect(ensureWorkspaceSessionAccess(db, auditor, unregistered)).toMatchObject({ ok: true })
   })
 
   it('filters session lists and permanently hides a soft-deleted owned session', () => {
@@ -103,6 +124,7 @@ describe('workspace session ownership service', () => {
       sessions: [{ key: aliceSession }],
     })
     expect(filterSessionListPayload(gatewayPayload, listOwnedWorkspaceSessionKeys(db, admin))).toEqual(gatewayPayload)
+    expect(filterSessionListPayload(gatewayPayload, listOwnedWorkspaceSessionKeys(db, auditor))).toEqual(gatewayPayload)
 
     markWorkspaceSessionDeleted(db, aliceSession, 3)
     expect(ensureWorkspaceSessionAccess(db, alice, aliceSession)).toMatchObject({ ok: false })

@@ -31,6 +31,12 @@ export const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       {
+        path: 'no-access',
+        name: 'AccessDenied',
+        component: () => import('@/views/AccessDeniedPage.vue'),
+        meta: { title: '无访问权限', hidden: true },
+      },
+      {
         path: '',
         name: 'Dashboard',
         component: () => import('@/views/Dashboard.vue'),

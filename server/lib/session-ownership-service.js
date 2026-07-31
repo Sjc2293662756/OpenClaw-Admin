@@ -263,7 +263,7 @@ export function findWorkspaceSession(db, sessionKey) {
 }
 
 export function canAccessWorkspaceSession(db, user, sessionKey) {
-  if (user?.role === 'admin') return true
+  if (user?.role === 'admin' || user?.role === 'auditor') return true
   const ownerUserId = getOwnerPrincipal(user)
   if (!ownerUserId) return false
   const row = findWorkspaceSession(db, sessionKey)
@@ -273,7 +273,7 @@ export function canAccessWorkspaceSession(db, user, sessionKey) {
 export function ensureWorkspaceSessionAccess(db, user, sessionKey, { allowCreate = false } = {}) {
   const key = normalizeSessionKey(sessionKey)
   if (!key) return { ok: false, code: 'SESSION_KEY_REQUIRED', message: '缺少会话标识' }
-  if (user?.role === 'admin') return { ok: true, key, created: false }
+  if (user?.role === 'admin' || user?.role === 'auditor') return { ok: true, key, created: false }
 
   const ownerUserId = getOwnerPrincipal(user)
   if (!ownerUserId) return { ok: false, code: 'SESSION_NOT_FOUND', message: '会话不存在或无权访问' }
@@ -299,7 +299,7 @@ export function markWorkspaceSessionDeleted(db, sessionKey, now = Date.now()) {
 }
 
 export function listOwnedWorkspaceSessionKeys(db, user) {
-  if (user?.role === 'admin') return null
+  if (user?.role === 'admin' || user?.role === 'auditor') return null
   const ownerUserId = getOwnerPrincipal(user)
   if (!ownerUserId) return new Set()
   const rows = db.prepare(`
@@ -324,6 +324,32 @@ export function filterSessionListPayload(payload, allowedKeys) {
     }
   }
   return { ...row, sessions: [] }
+}
+
+export function filterSessionUsagePayload(payload, allowedKeys) {
+  if (allowedKeys === null) return payload
+  const filtered = filterSessionListPayload(payload, allowedKeys)
+  if (Array.isArray(filtered)) return filtered
+
+  const rows = extractSessionRows(filtered)
+  const totalTokens = rows.reduce((sum, item) => {
+    const usage = asRecord(asRecord(item).usage)
+    const value = Number(usage.totalTokens || usage.tokens || usage.total || 0)
+    return sum + (Number.isFinite(value) ? value : 0)
+  }, 0)
+  return {
+    ...filtered,
+    totals: { totalTokens },
+    aggregates: {
+      messages: {},
+      tools: { totalCalls: 0, uniqueTools: 0, tools: [] },
+      byModel: [],
+      byProvider: [],
+      byAgent: [],
+      byChannel: [],
+      daily: [],
+    },
+  }
 }
 
 /** Remove locally retired legacy shared sessions from every BFF list response. */

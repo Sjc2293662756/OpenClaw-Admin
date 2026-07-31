@@ -248,10 +248,20 @@ const columns: DataTableColumns<ReportFile> = [
   { title: '文件大小', key: 'size', width: 110, render: row => formatSize(row.size) },
   { title: '状态', key: 'status', width: 100, render: row => h(NTag, { type: statusMap[row.status]?.type || 'default', bordered: false }, { default: () => statusMap[row.status]?.label || row.status }) },
   {
-    title: '操作', key: 'actions', width: 180, minWidth: 180, fixed: 'right', render: row => h('div', { style: { display: 'flex', flexWrap: 'nowrap', gap: '10px', whiteSpace: 'nowrap' } }, [
-      h(NButton, { size: 'small', type: 'primary', secondary: true, disabled: row.status !== 'ready', onClick: () => download(row) }, { icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }), default: () => '下载' }),
-      h(NButton, { size: 'small', type: 'error', ghost: true, disabled: !isAdmin.value, onClick: () => remove(row) }, { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }), default: () => '删除' }),
-    ]),
+    title: '操作',
+    key: 'actions',
+    width: 180,
+    minWidth: 180,
+    fixed: 'right',
+    render: row => {
+      const actions = [
+        h(NButton, { size: 'small', type: 'primary', secondary: true, disabled: row.status !== 'ready', onClick: () => download(row) }, { icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }), default: () => '下载' }),
+      ]
+      if (isAdmin.value) {
+        actions.push(h(NButton, { size: 'small', type: 'error', ghost: true, onClick: () => remove(row) }, { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }), default: () => '删除' }))
+      }
+      return h('div', { style: { display: 'flex', flexWrap: 'nowrap', gap: '10px', whiteSpace: 'nowrap' } }, actions)
+    },
   },
 ]
 

@@ -30,13 +30,20 @@ async function startTestServer() {
   }
   const app = express()
   app.use(express.json())
-  const asUser = (role) => (req, _res, next) => {
+  const asUser = (fallbackRole) => (req, _res, next) => {
+    const role = req.get('x-test-role') || fallbackRole
     req.user = { id: `${role}-1`, username: role, role }
+    next()
+  }
+  const asAdmin = (req, res, next) => {
+    const role = req.get('x-test-role') || 'standard'
+    req.user = { id: `${role}-1`, username: role, role }
+    if (role !== 'admin') return res.status(403).json({ ok: false, code: 'PERMISSION_DENIED' })
     next()
   }
   app.use('/channels', createChannelsRouter({
     authMiddleware: asUser('standard'),
-    adminMiddleware: asUser('admin'),
+    adminMiddleware: asAdmin,
     recordAudit: (_user, action, target, detail) => audits.push({ action, target, detail }),
     gateway,
   }))
@@ -46,10 +53,29 @@ async function startTestServer() {
   return { baseUrl: `http://127.0.0.1:${port}/channels`, calls, audits, server }
 }
 
-test('channel config read masks existing credentials', async () => {
+test('standard channel read returns only safe configuration status', async () => {
   const context = await startTestServer()
   try {
     const response = await fetch(`${context.baseUrl}/config`)
+    const payload = await response.json()
+    assert.equal(response.status, 200)
+    assert.deepEqual(payload.config, {
+      channels: {
+        feishu: { configured: true, enabled: true },
+        wecom: { configured: true, enabled: true },
+      },
+    })
+    assert.equal(JSON.stringify(payload).includes('bot-public'), false)
+    assert.equal(JSON.stringify(payload).includes('existing-feishu-app'), false)
+  } finally {
+    context.server.close()
+  }
+})
+
+test('administrator channel config read masks existing credentials', async () => {
+  const context = await startTestServer()
+  try {
+    const response = await fetch(`${context.baseUrl}/config`, { headers: { 'x-test-role': 'admin' } })
     const payload = await response.json()
     assert.equal(response.status, 200)
     assert.equal(payload.config.channels.wecom.botId, 'bot-public')
@@ -71,7 +97,7 @@ test('channel config write sends a scoped merge patch and audits no credential v
     const newSecret = 'new-private-value'
     const response = await fetch(`${context.baseUrl}/config`, {
       method: 'PUT',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin' },
       body: JSON.stringify({ patches: [
         { path: 'channels.wecom.enabled', value: true },
         { path: 'channels.wecom.secret', value: newSecret },
@@ -108,7 +134,7 @@ test('channel config rejects mask values and non-channel paths', async () => {
     ]) {
       const response = await fetch(`${context.baseUrl}/config`, {
         method: 'PUT',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-test-role': 'admin' },
         body: JSON.stringify({ patches: [patch] }),
       })
       assert.equal(response.status, 400)
@@ -123,7 +149,7 @@ test('Feishu QR onboarding rejects creation of a second app when an existing app
   try {
     const response = await fetch(`${context.baseUrl}/feishu/onboarding`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin' },
       body: JSON.stringify({ appName: 'GAIOP 智能助手', replaceExisting: true }),
     })
     const payload = await response.json()
@@ -131,6 +157,21 @@ test('Feishu QR onboarding rejects creation of a second app when an existing app
     assert.equal(response.status, 409)
     assert.equal(payload.code, 'FEISHU_ONBOARDING_EXISTING_APP_MANUAL_CONFIG_REQUIRED')
     assert.equal(JSON.stringify(payload).includes('existing-feishu-secret'), false)
+    assert.equal(context.calls.some((item) => item.method === 'config.patch'), false)
+  } finally {
+    context.server.close()
+  }
+})
+
+test('standard user cannot write channel configuration directly', async () => {
+  const context = await startTestServer()
+  try {
+    const response = await fetch(`${context.baseUrl}/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-test-role': 'standard' },
+      body: JSON.stringify({ patches: [{ path: 'channels.wecom.enabled', value: false }] }),
+    })
+    assert.equal(response.status, 403)
     assert.equal(context.calls.some((item) => item.method === 'config.patch'), false)
   } finally {
     context.server.close()

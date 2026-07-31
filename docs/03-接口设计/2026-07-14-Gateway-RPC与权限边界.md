@@ -3,7 +3,7 @@
 | 属性 | 内容 |
 |---|---|
 | 创建日期 | 2026-07-14 |
-| 最后更新 | 2026-07-27 |
+| 最后更新 | 2026-07-31 |
 | 代码依据 | `server/index.js` 的 `/api/status`、`/api/rpc`、`/api/events`，`server/lib/permissions.js` |
 
 > **当前边界（2026-07-27）：** WebChat发给Gateway/模型的数据面只包含标准对话参数。登录用户、报告来源、活动数据源等管理信息由Admin/GAIOP控制面通过服务器端签名快照独立处理，不再写入 `chat.send.metadata`。`chat.send` 因Gateway版本兼容需要回退到带 `sessionKey` 的 `agent` 时，仅改变RPC适配，不改变会话归属、标题或报告来源边界。本文第3节旧 metadata 方案只用于解释迁移原因。
@@ -28,12 +28,16 @@ RPC 请求：
 ## 2. 方法权限
 
 - 管理员：全部方法。
-- 所有登录角色：明确只读方法、`.list`、`.get`、`.status` 和 `status/health/config.get`；敏感读取方法被排除。
-- 标准用户：额外允许对话、停止、会话重置/删除/创建/发送/标注、Skills 安装更新、任务增删改执行等白名单。
+- 所有登录角色：`status/health` 和会话读取；基础/标准的会话列表及使用量按本人归属投影，审计和管理员可读取全部。
+- 标准用户：额外允许对话、停止以及本人会话的重置、删除、创建、发送和标注。
+- 审计用户：额外允许任务只读、频道/插件/Skills 安全状态、系统监控和全局费用统计读取。
+- 标准用户：额外允许频道/插件/Skills 安全状态、系统监控及经过白名单投影的模型选择配置读取。
+- 模型明细、智能体、记忆和未显式列入角色集合的管理读取均拒绝；方法名以 `.list/.get/.status` 结尾不再自动获得业务授权。
+- Skills 安装/更新、模型切换、任务增删改执行和 Office/Wizard REST 仅管理员可用。
 - 审计/基础用户：写方法分别返回 `AUDITOR_READ_ONLY`、`BASIC_READ_ONLY`。
 - 标准用户调用未列入白名单的写方法返回 `STANDARD_ROLE_RESTRICTED`。
 
-敏感读取包括日志、执行审批、智能体文件和会话导出等，不因名称像读取就自动放行。非管理员 `config.get` 返回值会对密码、Token、API Key、Secret、Credential 等字段递归掩码。
+敏感读取包括日志、执行审批、智能体文件和会话导出等，不因名称像读取就自动放行。非管理员读取 `config.get`、频道、插件和 Skills 时使用安全字段白名单投影，而不是在完整配置上做泛化掩码。
 
 ## 3. 对话来源
 
@@ -51,9 +55,9 @@ RPC 请求：
 { "ok": true, "sessionKey": "agent:main:main:dm:webchat-<opaque-id>" }
 ```
 
-非管理员访问 `sessions.list`、`sessions.history`、`chat.history`、`chat.send`、`chat.abort`、`sessions.delete` 等受控 RPC 时，BFF 仅允许该用户处于 active 状态的登记会话；不匹配或未登记统一返回 `404 SESSION_NOT_FOUND`，避免枚举他人会话。删除成功后登记记录被软删除，不能由普通用户重新认领。会话列表也会按同一登记集合过滤。
+基础和标准用户访问 `sessions.list`、`sessions.history`、`chat.history`、`sessions.usage`、`chat.send`、`chat.abort`、`sessions.delete` 等受控 RPC 时，BFF 仅允许该用户处于 active 状态的登记会话；不匹配或未登记统一返回 `404 SESSION_NOT_FOUND`，避免枚举他人会话。删除成功后登记记录被软删除，不能由普通用户重新认领。会话列表和使用量也按同一登记集合过滤，全局聚合不会旁路泄露。
 
-管理员保持 Gateway 历史会话的排障访问能力。Gateway SSE 事件仅在事件载荷能解析出当前用户有权访问的会话标识时才下发给非管理员；无会话标识的事件不向非管理员广播。当前规则覆盖 Web 工作台，不为外部渠道会话虚构所有者。
+审计用户保持全部会话只读，管理员保持全部会话管理和 Gateway 排障能力。Gateway SSE 事件仅在事件载荷能解析出当前用户有权访问的会话标识时才下发给基础/标准用户；无会话标识的事件不向这些角色广播。当前规则覆盖 Web 工作台，不为外部渠道会话虚构所有者。
 
 ## 5. 审计与风险
 
@@ -79,4 +83,5 @@ SSE 使用认证后长连接，响应禁用代理缓冲。生产 Nginx 需要关
 
 | 日期 | 内容 |
 |---|---|
+| 2026-07-31 | 四角色改为显式 RPC 集合；会话使用量按归属投影；频道、插件、Skills 和标准配置使用安全白名单投影；移除标准用户任务、Skills 和模型管理写权限 |
 | 2026-07-15 | 发现并修正当前 Gateway 对单独来源路由字段的兼容性问题；浏览器侧移除不完整字段，完整路由适配留待 BFF/真实 Gateway 联调 |

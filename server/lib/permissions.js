@@ -43,12 +43,69 @@ const OWNED_SESSION_DELETE_RPC_METHODS = new Set([
   'session.delete',
 ])
 
+const SESSION_READ_RPC_METHODS = new Set([
+  'sessions.list',
+  'session.list',
+  'sessions.get',
+  'session.get',
+  'sessions.history',
+  'session.history',
+  'chat.history',
+  'sessions.usage',
+  'usage.sessions',
+])
+
+const GLOBAL_USAGE_RPC_METHODS = new Set([
+  'usage.cost',
+  'cost.usage',
+])
+
+const CHANNEL_STATUS_RPC_METHODS = new Set([
+  'channels.status',
+  'channels.list',
+  'channel.list',
+  'channel.status',
+  'plugins.list',
+  'plugin.list',
+  'plugins.status',
+  'plugin.status',
+])
+
+const SKILL_READ_RPC_METHODS = new Set([
+  'skills.status',
+  'skills.list',
+])
+
+const CRON_READ_RPC_METHODS = new Set([
+  'cron.list',
+  'crons.list',
+  'schedule.list',
+  'schedules.list',
+  'cron.status',
+  'crons.status',
+  'schedule.status',
+  'schedules.status',
+  'cron.runs',
+  'crons.runs',
+  'cron.history',
+  'crons.history',
+])
+
+const SYSTEM_STATUS_RPC_METHODS = new Set([
+  'status',
+  'health',
+])
+
+const SYSTEM_MONITOR_RPC_METHODS = new Set([
+  'system-presence',
+  'node.list',
+])
+
 const STANDARD_WRITE_RPC_METHODS = new Set([
   'agent',
   'chat.send',
   'chat.abort',
   'agent.abort',
-  'agent.model.set',
   'sessions.reset',
   'session.reset',
   'sessions.spawn',
@@ -57,26 +114,6 @@ const STANDARD_WRITE_RPC_METHODS = new Set([
   'session.send',
   'sessions.patch',
   'session.patch',
-  'skills.install',
-  'skills.update',
-  'cron.add',
-  'cron.create',
-  'crons.add',
-  'crons.create',
-  'cron.update',
-  'crons.update',
-  'schedule.update',
-  'schedules.update',
-  'cron.remove',
-  'cron.delete',
-  'crons.remove',
-  'crons.delete',
-  'schedule.delete',
-  'schedules.delete',
-  'cron.run',
-  'crons.run',
-  'cron.trigger',
-  'crons.trigger',
 ])
 
 export function isReadOnlyRpcMethod(method) {
@@ -104,7 +141,52 @@ export function getRpcPermissionDecision(user, method) {
     return { allowed: true }
   }
 
-  if (isReadOnlyRpcMethod(normalized)) return { allowed: true }
+  if (isReadOnlyRpcMethod(normalized)) {
+    const role = user?.role
+    if (SESSION_READ_RPC_METHODS.has(normalized) || SYSTEM_STATUS_RPC_METHODS.has(normalized)) {
+      return { allowed: true }
+    }
+    if (GLOBAL_USAGE_RPC_METHODS.has(normalized) && role === 'auditor') {
+      return { allowed: true }
+    }
+    if (
+      SYSTEM_MONITOR_RPC_METHODS.has(normalized) &&
+      (role === 'auditor' || role === 'standard')
+    ) {
+      return { allowed: true }
+    }
+    if (
+      (CHANNEL_STATUS_RPC_METHODS.has(normalized) || SKILL_READ_RPC_METHODS.has(normalized)) &&
+      (role === 'auditor' || role === 'standard')
+    ) {
+      return { allowed: true }
+    }
+    if (CRON_READ_RPC_METHODS.has(normalized) && role === 'auditor') {
+      return { allowed: true }
+    }
+    if (normalized === 'config.get' && role === 'standard') {
+      return { allowed: true }
+    }
+    if (role === 'standard') {
+      return {
+        allowed: false,
+        code: 'STANDARD_ROLE_RESTRICTED',
+        message: '标准用户无权读取此管理模块',
+      }
+    }
+    if (role === 'auditor') {
+      return {
+        allowed: false,
+        code: 'AUDITOR_SCOPE_RESTRICTED',
+        message: '审计用户无权读取此管理模块',
+      }
+    }
+    return {
+      allowed: false,
+      code: 'BASIC_SCOPE_RESTRICTED',
+      message: '基础用户无权读取此管理模块',
+    }
+  }
 
   if (user?.role === 'standard' && STANDARD_WRITE_RPC_METHODS.has(normalized)) {
     return { allowed: true }

@@ -23,7 +23,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
-import { CopyOutline, RefreshOutline, SendOutline, StopCircleOutline, ChevronBackOutline, ChevronForwardOutline, VolumeHighOutline, StopOutline } from '@vicons/ionicons5'
+import { CopyOutline, RefreshOutline, SendOutline, StopCircleOutline, ChevronBackOutline, ChevronForwardOutline, VolumeHighOutline, StopOutline, LockClosedOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
@@ -54,7 +54,12 @@ const sessionStore = useSessionStore()
 const skillStore = useSkillStore()
 const wsStore = useWebSocketStore()
 const { t, locale } = useI18n()
-const { canUseFunctions, readOnlyHint } = usePermissions()
+const {
+  canUseFunctions,
+  readOnlyHint,
+  chatReadOnlyTitle,
+  chatReadOnlyHint,
+} = usePermissions()
 
 const sessionKeyInput = ref('')
 const draft = ref('')
@@ -1014,6 +1019,7 @@ function formatDurationMs(ms: number): string {
 }
 
 async function handleAbort() {
+  if (!canUseFunctions.value) return
   if (aborting.value) return
   if (!agentBusy.value) return
 
@@ -2576,8 +2582,10 @@ onMounted(async () => {
 
   loadQuickReplies()
   consumeAlertAnalysisDraft()
-  void configStore.fetchConfig()
-  void skillStore.fetchSkills()
+  if (canUseFunctions.value) {
+    void configStore.fetchConfig()
+    void skillStore.fetchSkills()
+  }
   document.addEventListener('click', handleCodeCopy)
 
   eventCleanups.push(
@@ -2717,6 +2725,7 @@ async function handleRefreshChatData() {
 }
 
 async function handleSend() {
+  if (!canUseFunctions.value) return
   const content = draft.value.trim()
   if (!content) return
   if (agentBusy.value) return
@@ -3158,9 +3167,9 @@ async function handleSend() {
 
                     <div v-else-if="workspaceMode" class="workspace-welcome">
                       <div class="workspace-welcome__mark">G</div>
-                      <h1>开始智能运维分析</h1>
-                      <p>输入告警、性能或流量分析需求，GAIOP 将结合已接入的数据源协助研判与处置。</p>
-                      <div class="workspace-prompt-list">
+                      <h1>{{ canUseFunctions ? '开始智能运维分析' : chatReadOnlyTitle }}</h1>
+                      <p>{{ canUseFunctions ? '输入告警、性能或流量分析需求，GAIOP 将结合已接入的数据源协助研判与处置。' : '请从左侧历史会话中选择需要查看的记录。' }}</p>
+                      <div v-if="canUseFunctions" class="workspace-prompt-list">
                         <button
                           v-for="prompt in workspacePrompts"
                           :key="prompt"
@@ -3182,7 +3191,16 @@ async function handleSend() {
             </NCard>
 
             <NCard embedded :bordered="false" class="chat-compose-card">
-              <NSpace vertical :size="10">
+              <div v-if="!canUseFunctions" class="chat-read-only-panel">
+                <span class="chat-read-only-panel__icon">
+                  <NIcon :component="LockClosedOutline" />
+                </span>
+                <div>
+                  <strong>{{ chatReadOnlyTitle }}</strong>
+                  <p>{{ chatReadOnlyHint }}</p>
+                </div>
+              </div>
+              <NSpace v-else vertical :size="10">
                 <NInput
                   v-model:value="draft"
                   type="textarea"
@@ -4023,6 +4041,40 @@ async function handleSend() {
   border: 1px solid var(--border-color);
   background: var(--bg-card);
   box-shadow: var(--shadow-sm);
+}
+
+.chat-read-only-panel {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 24%, var(--border-color));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-color) 7%, var(--bg-card));
+}
+
+.chat-read-only-panel__icon {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  place-items: center;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--primary-color) 15%, transparent);
+  color: var(--primary-color);
+  font-size: 20px;
+}
+
+.chat-read-only-panel strong {
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.chat-read-only-panel p {
+  margin: 4px 0 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.65;
 }
 
 .chat-slash-panel {

@@ -23,7 +23,7 @@ import { usePermissions } from '@/composables/usePermissions'
 const skillStore = useSkillStore()
 const { t } = useI18n()
 const searchQuery = ref('')
-const { canEditConfiguration, readOnlyHint } = usePermissions()
+const { canManageSkills } = usePermissions()
 
 onMounted(() => {
   skillStore.fetchSkills()
@@ -122,13 +122,13 @@ const pluginGroups = computed(() => {
     <NCard :title="t('pages.skills.title')" class="app-card">
       <template #header-extra>
         <NSpace :size="8" class="app-toolbar">
-          <NSpace :size="8" align="center">
+          <NSpace v-if="canManageSkills" :size="8" align="center">
             <NText depth="3" style="font-size: 12px;">{{ t('pages.skills.showBundled') }}</NText>
-            <NSwitch v-model:value="skillStore.showBundled" size="small" :disabled="!canEditConfiguration" :title="!canEditConfiguration ? readOnlyHint : undefined" />
+            <NSwitch v-model:value="skillStore.showBundled" size="small" />
           </NSpace>
-          <NSpace :size="8" align="center">
+          <NSpace v-if="canManageSkills" :size="8" align="center">
             <NText depth="3" style="font-size: 12px;">{{ t('pages.skills.showBundledInChat') }}</NText>
-            <NSwitch v-model:value="skillStore.showBundledInChat" size="small" :disabled="!canEditConfiguration" :title="!canEditConfiguration ? readOnlyHint : undefined" />
+            <NSwitch v-model:value="skillStore.showBundledInChat" size="small" />
           </NSpace>
           <NButton size="small" class="app-toolbar-btn app-toolbar-btn--refresh" @click="skillStore.fetchSkills()">
             <template #icon><NIcon :component="RefreshOutline" /></template>
@@ -139,7 +139,7 @@ const pluginGroups = computed(() => {
 
       <NSpace vertical :size="14">
         <NAlert type="info" :show-icon="true" style="border-radius: var(--radius);">
-          {{ t('pages.skills.info') }}
+          {{ canManageSkills ? t('pages.skills.info') : '当前为只读安全视图，仅展示 Skill 名称、说明、版本和可用状态。' }}
         </NAlert>
         <NAlert v-if="skillStore.error" type="error" :show-icon="true" style="border-radius: var(--radius);">
           {{ t('pages.skills.loadFailed', { error: skillStore.error }) }}
@@ -213,13 +213,11 @@ const pluginGroups = computed(() => {
                         {{ skill.version ? t('pages.skills.version', { version: skill.version }) : t('pages.skills.noVersion') }}
                       </NText>
                       <NSpace :size="10" align="center">
-                        <NSpace :size="6" align="center">
+                        <NSpace v-if="canManageSkills" :size="6" align="center">
                           <NText depth="3" style="font-size: 12px;">Chat</NText>
                           <NSwitch
                             size="small"
                             :value="skillStore.isSkillVisibleInChat(skill.name)"
-                            :disabled="!canEditConfiguration"
-                            :title="!canEditConfiguration ? readOnlyHint : undefined"
                             @update:value="(val) => skillStore.setSkillVisibleInChat(skill.name, val)"
                           />
                         </NSpace>

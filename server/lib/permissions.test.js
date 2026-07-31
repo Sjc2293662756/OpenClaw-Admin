@@ -25,6 +25,37 @@ test('RPC permission matrix keeps privileged writes and sensitive reads restrict
   assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'logs.tail').allowed, false)
 })
 
+test('first-stage role matrix restricts management reads and all delegated writes', () => {
+  assert.equal(getRpcPermissionDecision({ role: 'auditor' }, 'cron.list').allowed, true)
+  assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'cron.list').allowed, false)
+  assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'cron.list').allowed, false)
+
+  for (const method of ['skills.list', 'channels.status', 'plugins.list']) {
+    assert.equal(getRpcPermissionDecision({ role: 'auditor' }, method).allowed, true)
+    assert.equal(getRpcPermissionDecision({ role: 'standard' }, method).allowed, true)
+    assert.equal(getRpcPermissionDecision({ role: 'basic' }, method).allowed, false)
+  }
+
+  assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'config.get').allowed, true)
+  assert.equal(getRpcPermissionDecision({ role: 'auditor' }, 'config.get').allowed, false)
+  assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'models.list').allowed, false)
+  assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'agents.list').allowed, false)
+
+  for (const method of [
+    'skills.install',
+    'skills.update',
+    'agent.model.set',
+    'cron.add',
+    'cron.update',
+    'cron.run',
+    'cron.delete',
+  ]) {
+    assert.equal(getRpcPermissionDecision({ role: 'standard' }, method).allowed, false)
+    assert.equal(getRpcPermissionDecision({ role: 'auditor' }, method).allowed, false)
+    assert.equal(getRpcPermissionDecision({ role: 'admin' }, method).allowed, true)
+  }
+})
+
 test('basic and standard users can request deletion while ownership remains enforced separately', () => {
   for (const method of ['sessions.delete', 'session.delete']) {
     assert.equal(getRpcPermissionDecision({ role: 'admin' }, method).allowed, true)
@@ -34,6 +65,20 @@ test('basic and standard users can request deletion while ownership remains enfo
     assert.equal(auditorDecision.allowed, false)
     assert.equal(auditorDecision.code, 'AUDITOR_READ_ONLY')
   }
+})
+
+test('system monitor RPC is unavailable to basic users', () => {
+  assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'status').allowed, true)
+  assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'node.list').allowed, false)
+  assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'node.list').allowed, true)
+  assert.equal(getRpcPermissionDecision({ role: 'auditor' }, 'system-presence').allowed, true)
+})
+
+test('global cost usage is limited to auditor and administrator', () => {
+  assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'usage.cost').allowed, false)
+  assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'cost.usage').allowed, false)
+  assert.equal(getRpcPermissionDecision({ role: 'auditor' }, 'usage.cost').allowed, true)
+  assert.equal(getRpcPermissionDecision({ role: 'admin' }, 'usage.cost').allowed, true)
 })
 
 test('read-only RPC classification is explicit and rejects unsafe lookalikes', () => {

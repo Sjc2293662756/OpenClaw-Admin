@@ -5,6 +5,7 @@ import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, N
 import { CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
+import { usePermissions } from '@/composables/usePermissions'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
 
 type Metric = { name: string; value: string; unit: string }
@@ -23,6 +24,7 @@ type AlertReturnState = {
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const { canUseFunctions, readOnlyHint } = usePermissions()
 const message = useMessage()
 const loading = ref(false)
 const exportLoading = ref(false)
@@ -98,6 +100,10 @@ function alertAnalysisInstruction(alert: Alert): string | null {
 }
 const selectedAnalysisInstruction = computed(() => selectedAlert.value ? alertAnalysisInstruction(selectedAlert.value) : null)
 function openAlertAnalysis() {
+  if (!canUseFunctions.value) {
+    message.warning(readOnlyHint)
+    return
+  }
   const instruction = selectedAnalysisInstruction.value
   if (!instruction) { message.warning('该告警未记录 Event ID 或告警窗口，暂时无法生成分析指令'); return }
   try {
@@ -327,9 +333,21 @@ onMounted(async () => {
           <div class="alert-analysis-card">
             <div>
               <NText strong>分析告警</NText>
-              <code class="alert-analysis-card__instruction">{{ selectedAnalysisInstruction || '未记录：该告警缺少 Event ID 或告警窗口。' }}</code>
+              <code class="alert-analysis-card__instruction">
+                {{ canUseFunctions
+                  ? (selectedAnalysisInstruction || '未记录：该告警缺少 Event ID 或告警窗口。')
+                  : readOnlyHint }}
+              </code>
             </div>
-            <NButton type="primary" size="small" :disabled="!selectedAnalysisInstruction" @click="openAlertAnalysis">告警数据包详细分析</NButton>
+            <NButton
+              v-if="canUseFunctions"
+              type="primary"
+              size="small"
+              :disabled="!selectedAnalysisInstruction"
+              @click="openAlertAnalysis"
+            >
+              告警数据包详细分析
+            </NButton>
           </div>
         </template>
       </NDrawerContent>

@@ -42,12 +42,8 @@ import {
 } from '@/utils/time-range'
 import type {
   CostUsageSummary,
-  CronJob,
-  ModelInfo,
-  OpenClawConfig,
   SessionsUsageResult,
   SessionsUsageTotals,
-  Skill,
 } from '@/api/types'
 
 type UsageMode = 'tokens' | 'cost'
@@ -495,26 +491,18 @@ async function refreshDashboardSummary() {
   summaryLoading.value = true
 
   try {
-    const [sessionsRes, cronsRes, modelsRes, skillsRes, configRes] = await Promise.allSettled([
-      wsStore.rpc.listSessions(),
-      wsStore.rpc.listCrons(),
-      wsStore.rpc.listModels(),
-      wsStore.rpc.listSkills(),
-      wsStore.rpc.getConfig(),
-    ])
-
-    const sessionList = sessionsRes.status === 'fulfilled' ? sessionsRes.value : []
-    const cronList = cronsRes.status === 'fulfilled' ? cronsRes.value : []
-    const modelList = modelsRes.status === 'fulfilled' ? modelsRes.value : []
-    const skillList = skillsRes.status === 'fulfilled' ? skillsRes.value : []
-    const config = configRes.status === 'fulfilled' ? configRes.value : null
-    if (requestId !== summaryRequestId) return
-    stats.value = {
-      sessionCount: sessionList.length,
-      cronCount: cronList.filter((job: CronJob) => job.enabled).length,
-      modelCount: resolveConfiguredModelCount(config, modelList),
-      installedSkills: skillList.filter((s: Skill) => s.installed).length,
+    const response = await fetch('/api/dashboard/summary', {
+      cache: 'no-store',
+      headers: {
+        Authorization: `Bearer ${authStore.getToken() || ''}`,
+      },
+    })
+    const body = await response.json()
+    if (!response.ok || !body?.ok || !body?.summary) {
+      throw new Error(body?.error?.message || body?.error || '仪表盘摘要请求失败')
     }
+    if (requestId !== summaryRequestId) return
+    stats.value = body.summary
     hasSummaryData.value = true
   } finally {
     if (requestId === summaryRequestId) summaryLoading.value = false
@@ -632,144 +620,6 @@ function formatTrendAxisDate(value: number): string {
   const date = formatYmd(value)
   if (trendGrain.value === 'month') return date.slice(0, 7)
   return date.slice(5)
-}
-
-function toRecord(value: unknown): Record<string, unknown> | null {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    return value as Record<string, unknown>
-  }
-  return null
-}
-
-function splitModelRef(value: string): { providerId: string; modelId: string } | null {
-  const modelRef = value.trim()
-  const slashIndex = modelRef.indexOf('/')
-  if (slashIndex <= 0 || slashIndex >= modelRef.length - 1) return null
-
-  const providerId = modelRef.slice(0, slashIndex).trim()
-  const modelId = modelRef.slice(slashIndex + 1).trim()
-  if (!providerId || !modelId) return null
-
-  return { providerId, modelId }
-}
-
-function collectConfiguredModelRefs(input: unknown, refs: Set<string>) {
-  if (!input) return
-
-  if (typeof input === 'string') {
-    const parsed = splitModelRef(input)
-    if (parsed) refs.add(`${parsed.providerId}/${parsed.modelId}`)
-    return
-  }
-
-  if (Array.isArray(input)) {
-    for (const item of input) {
-      collectConfiguredModelRefs(item, refs)
-    }
-    return
-  }
-
-  const row = toRecord(input)
-  if (!row) return
-
-  for (const candidate of [row.id, row.model, row.ref, row.primary]) {
-    if (typeof candidate === 'string') {
-      const parsed = splitModelRef(candidate)
-      if (parsed) refs.add(`${parsed.providerId}/${parsed.modelId}`)
-    }
-  }
-
-  for (const [key, value] of Object.entries(row)) {
-    const keyParsed = splitModelRef(key)
-    if (keyParsed) refs.add(`${keyParsed.providerId}/${keyParsed.modelId}`)
-    if (typeof value === 'string') {
-      const valueParsed = splitModelRef(value)
-      if (valueParsed) refs.add(`${valueParsed.providerId}/${valueParsed.modelId}`)
-    }
-  }
-}
-
-function collectProviderModelIds(provider: unknown, modelIds: Set<string>) {
-  const row = toRecord(provider)
-  if (!row) return
-
-  const extract = (value: unknown) => {
-    if (!value) return
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (typeof item === 'string' && item.trim()) {
-          modelIds.add(item.trim())
-          continue
-        }
-        const itemRow = toRecord(item)
-        if (!itemRow) continue
-        const id =
-          (typeof itemRow.id === 'string' && itemRow.id.trim()) ||
-          (typeof itemRow.name === 'string' && itemRow.name.trim()) ||
-          ''
-        if (id) modelIds.add(id)
-      }
-      return
-    }
-
-    const mapRow = toRecord(value)
-    if (!mapRow) return
-    for (const [key, item] of Object.entries(mapRow)) {
-      const normalizedKey = key.trim()
-      if (!normalizedKey) continue
-      if (typeof item === 'string' && item.trim()) {
-        modelIds.add(item.trim())
-        continue
-      }
-      const itemRow = toRecord(item)
-      if (itemRow) {
-        const id =
-          (typeof itemRow.id === 'string' && itemRow.id.trim()) ||
-          (typeof itemRow.name === 'string' && itemRow.name.trim()) ||
-          normalizedKey
-        if (id) modelIds.add(id)
-      } else {
-        modelIds.add(normalizedKey)
-      }
-    }
-  }
-
-  extract(row.models)
-  extract(row.modelIds)
-  extract(row.availableModels)
-  extract(row.whitelist)
-}
-
-function resolveConfiguredModelCount(config: OpenClawConfig | null, fallbackModels: ModelInfo[]): number {
-  const refs = new Set<string>()
-  const defaultsRaw = toRecord(config?.agents?.defaults)
-  const defaultsModelRaw = toRecord(defaultsRaw?.model)
-  collectConfiguredModelRefs(config?.models?.primary, refs)
-  collectConfiguredModelRefs(config?.models?.fallback, refs)
-  collectConfiguredModelRefs(defaultsRaw?.models, refs)
-  collectConfiguredModelRefs(defaultsModelRaw?.primary, refs)
-  collectConfiguredModelRefs(defaultsModelRaw?.fallback, refs)
-  collectConfiguredModelRefs(defaultsModelRaw?.fallbacks, refs)
-
-  if (refs.size > 0) return refs.size
-
-  const providerModelIds = new Set<string>()
-  const providers = toRecord(config?.models?.providers)
-  if (providers) {
-    for (const provider of Object.values(providers)) {
-      collectProviderModelIds(provider, providerModelIds)
-    }
-  }
-  if (providerModelIds.size > 0) return providerModelIds.size
-
-  const fallbackIds = new Set(
-    fallbackModels
-      .filter((model) => model.available !== false)
-      .map((model) => model.id)
-      .filter((id) => !!id)
-  )
-  return fallbackIds.size
 }
 
 function formatCompactNumber(value: number): string {

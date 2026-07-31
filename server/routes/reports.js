@@ -76,7 +76,7 @@ function archiveDirectorySegment(value, fallback) {
 }
 
 function canReadReport(user, row) {
-  if (!user || user.role === 'admin') return true
+  if (!user || user.role === 'admin' || user.role === 'auditor') return true
   const userId = safeText(user.id)
   return Boolean(userId && row.source_user_id && row.source_user_id === userId)
 }
@@ -344,7 +344,7 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
       }
       const conditions = []
       const values = []
-      if (req.user?.role !== 'admin') {
+      if (req.user?.role !== 'admin' && req.user?.role !== 'auditor') {
         const userId = safeText(req.user?.id)
         if (!userId) {
           conditions.push('1 = 0')

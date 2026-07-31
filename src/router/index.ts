@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { routes } from './routes'
 import { useAuthStore } from '@/stores/auth'
 import { installChunkLoadRecovery } from './chunk-recovery'
+import { canAccessRoute, getPageAccess } from '@/permissions/access-control'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -71,6 +72,20 @@ router.beforeEach(async (to, _from, next) => {
 
   if (authStore.currentUser?.mustChangePassword && to.name !== 'PasswordChange') {
     next({ name: 'PasswordChange' })
+    return
+  }
+
+  const role = authStore.currentUser?.role
+  if (to.name !== 'AccessDenied' && !canAccessRoute(role, to.name)) {
+    const access = getPageAccess(to.name)
+    next({
+      name: 'AccessDenied',
+      query: {
+        module: access?.moduleName || '当前模块',
+        from: to.fullPath,
+      },
+      replace: true,
+    })
     return
   }
 

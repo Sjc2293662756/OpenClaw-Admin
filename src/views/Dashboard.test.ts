@@ -6,11 +6,6 @@ import Dashboard from './Dashboard.vue'
 
 const mocks = vi.hoisted(() => {
   const rpc = {
-    listSessions: vi.fn(),
-    listCrons: vi.fn(),
-    listModels: vi.fn(),
-    listSkills: vi.fn(),
-    getConfig: vi.fn(),
     getUsageCost: vi.fn(),
   }
   const websocket = {
@@ -89,11 +84,6 @@ describe('dashboard initial loading', () => {
       return () => {}
     })
     Object.values(mocks.rpc).forEach((mock) => mock.mockReset())
-    mocks.rpc.listSessions.mockResolvedValue([])
-    mocks.rpc.listCrons.mockResolvedValue([])
-    mocks.rpc.listModels.mockResolvedValue([])
-    mocks.rpc.listSkills.mockResolvedValue([])
-    mocks.rpc.getConfig.mockResolvedValue({})
     mocks.rpc.getUsageCost.mockResolvedValue(null)
 
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
@@ -106,6 +96,15 @@ describe('dashboard initial loading', () => {
       }
       if (url.startsWith('/api/dashboard/usage?')) {
         return new Response(JSON.stringify({ ok: true, usage: usagePayload(), cache: 'miss' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url === '/api/dashboard/summary') {
+        return new Response(JSON.stringify({
+          ok: true,
+          summary: { sessionCount: 0, cronCount: 0, modelCount: 0, installedSkills: 0 },
+        }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -144,11 +143,7 @@ describe('dashboard initial loading', () => {
     expect(usageCalls).toHaveLength(1)
     expect(String(usageCalls[0]?.[0])).toContain('startDate=2026-07-31')
     expect(String(usageCalls[0]?.[0])).toContain('endDate=2026-07-31')
-    expect(mocks.rpc.listSessions).toHaveBeenCalledTimes(1)
-    expect(mocks.rpc.listCrons).toHaveBeenCalledTimes(1)
-    expect(mocks.rpc.listModels).toHaveBeenCalledTimes(1)
-    expect(mocks.rpc.listSkills).toHaveBeenCalledTimes(1)
-    expect(mocks.rpc.getConfig).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url) === '/api/dashboard/summary')).toHaveLength(1)
 
     mocks.stateChangeHandler?.()
     await flushPromises()

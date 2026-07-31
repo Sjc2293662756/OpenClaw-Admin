@@ -26,6 +26,13 @@ function createMemoryDb() {
           },
         }
       }
+      if (sql.includes('SELECT * FROM report_files WHERE id = ?')) {
+        return {
+          get(id) {
+            return [...rows.values()].find((row) => row.id === id) || null
+          },
+        }
+      }
       if (sql.includes('SELECT id FROM data_sources WHERE is_active = 1')) {
         return { all: () => [{ id: 'data-source-a' }] }
       }
@@ -132,9 +139,12 @@ test('formal report archive imports only a matched audit pair and isolates the o
   }))
   process.env.GAIOP_REPORTS_DIR = reportRoot
 
-  const server = (await createReportsApp((req) => (
-    req.get('x-test-user') === 'user-b' ? { id: 'user-b', role: 'user' } : { id: 'user a', role: 'user' }
-  ))).listen(0, '127.0.0.1')
+  const server = (await createReportsApp((req) => {
+    if (req.get('x-test-role') === 'auditor') return { id: 'auditor-1', role: 'auditor' }
+    return req.get('x-test-user') === 'user-b'
+      ? { id: 'user-b', role: 'basic' }
+      : { id: 'user a', role: 'basic' }
+  })).listen(0, '127.0.0.1')
   await once(server, 'listening')
   try {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/reports`)
@@ -148,6 +158,24 @@ test('formal report archive imports only a matched audit pair and isolates the o
     const otherUserPayload = await otherUserResponse.json()
     assert.equal(otherUserResponse.status, 200)
     assert.deepEqual(otherUserPayload.reports, [])
+
+    const auditorResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, {
+      headers: { 'x-test-role': 'auditor' },
+    })
+    const auditorPayload = await auditorResponse.json()
+    assert.equal(auditorResponse.status, 200)
+    assert.equal(auditorPayload.reports.length, 1)
+
+    const deniedDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
+      headers: { 'x-test-user': 'user-b' },
+    })
+    assert.equal(deniedDownload.status, 404)
+
+    const auditorDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
+      headers: { 'x-test-role': 'auditor' },
+    })
+    assert.equal(auditorDownload.status, 200)
+    assert.equal(await auditorDownload.text(), 'report')
   } finally {
     server.close()
     if (previousRoot === undefined) delete process.env.GAIOP_REPORTS_DIR
