@@ -74,7 +74,7 @@ await connected
 
 const now = new Date()
 const ranges = []
-for (const days of [7, 30, 90]) {
+for (const days of [1, 7, 30, 90]) {
   const params = calendarRange(days, now)
   const startedAt = Date.now()
   const result = await gateway.call('sessions.usage', params, 160_000)
