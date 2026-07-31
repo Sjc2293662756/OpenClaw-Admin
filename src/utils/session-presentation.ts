@@ -89,6 +89,29 @@ export function formatSessionConversationTitle(session: Partial<Session> & Pick<
   return `${channel}对话${user ? ` · ${user}` : ''}`
 }
 
+export function sessionMatchesSearch(
+  session: Partial<Session> & Pick<Session, 'key'>,
+  query: string
+): boolean {
+  const search = normalized(query).toLowerCase()
+  if (!search) return true
+  return [
+    formatSessionConversationTitle(session),
+    // The internal key remains searchable for diagnostics, but is deliberately
+    // not advertised or rendered as a user-facing session name.
+    session.key,
+    session.agentId,
+    session.channel,
+    session.peer,
+    session.sourceChannel,
+    session.channelUserId,
+    session.channelUserName,
+    session.ownerUsername,
+    session.model,
+    session.label,
+  ].some((value) => normalized(value).toLowerCase().includes(search))
+}
+
 export function shouldApplyRealtimeEvent(activeSessionKey: unknown, eventSessionKey: unknown): boolean {
   const active = normalized(activeSessionKey)
   const event = normalized(eventSessionKey)

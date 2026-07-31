@@ -48,6 +48,7 @@ import {
   formatSessionConversationTitle,
   isLegacyDefaultSession,
   isWebConversation,
+  sessionMatchesSearch,
 } from '@/utils/session-presentation'
 import type { Session } from '@/api/types'
 
@@ -309,19 +310,7 @@ const filteredSessions = computed<SessionRow[]>(() => {
     if (channelFilter.value !== 'all' && (item.sourceChannel || item.parsed.channel) !== channelFilter.value) return false
     if (modelFilter.value !== 'all' && (item.model || '') !== modelFilter.value) return false
 
-    if (!q) return true
-    return [
-      item.key,
-      item.parsed.agent,
-      item.parsed.channel,
-      item.parsed.peer,
-      item.sourceChannel || '',
-      item.channelUserId || '',
-      item.channelUserName || '',
-      item.ownerUsername || '',
-      item.model || '',
-      item.label || '',
-    ].some((field) => field.toLowerCase().includes(q))
+    return sessionMatchesSearch(item, q)
   })
 
   list = [...list].sort((a, b) => {
@@ -357,6 +346,15 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
     render(row) {
       const title = displaySessionTitle(row)
       return h(NSpace, { vertical: true, size: 3 }, () => [
+        h(
+          'span',
+          {
+            class: 'session-title-ellipsis',
+            title,
+            style: 'display:block; max-width:340px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500;',
+          },
+          title
+        ),
         h(NSpace, { size: 6, align: 'center' }, () => [
           h(NTag, { size: 'small', type: 'info', bordered: false, round: true }, { default: () => row.parsed.agent }),
           h(NTag, { size: 'small', bordered: false, round: true }, { default: () => sessionChannelLabel(row) }),
@@ -364,15 +362,6 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
             ? h(NTag, { size: 'small', bordered: false, type: 'success', round: true }, { default: () => t('pages.sessions.list.badges.active24h') })
             : null,
         ]),
-        h(
-          'span',
-          {
-            class: 'session-title-ellipsis',
-            title,
-            style: 'display:block; max-width:320px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;',
-          },
-          title
-        ),
         // Gateway's historical label is internal transport metadata (for
         // example “OpenClaw Web Backend”), not a GAIOP-facing session name.
         // External channel labels are shown only through 渠道用户 above.

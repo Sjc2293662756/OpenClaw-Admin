@@ -1297,7 +1297,7 @@ export default {
           messages: '条',
           channels: '个',
         },
-        searchPlaceholder: '搜索 key / agent / 渠道 / 对话方 / 模型',
+        searchPlaceholder: '搜索会话名称 / agent / 渠道 / 对话方 / 模型',
         clearFilters: '清空筛选',
         sort: {
           recent: '按最近活动',
@@ -1308,7 +1308,7 @@ export default {
           allModels: '全部模型',
         },
         columns: {
-          session: '会话',
+          session: '会话名称',
           messageCount: '消息数',
           model: '模型',
           tokenTotal: 'Token 总量',

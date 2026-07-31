@@ -1292,7 +1292,7 @@ export default {
           messages: 'msgs',
           channels: 'chs',
         },
-        searchPlaceholder: 'Search key / agent / channel / peer / model',
+        searchPlaceholder: 'Search session name / agent / channel / peer / model',
         clearFilters: 'Reset filters',
         sort: {
           recent: 'Sort by recent activity',
@@ -1303,7 +1303,7 @@ export default {
           allModels: 'All models',
         },
         columns: {
-          session: 'Session',
+          session: 'Session name',
           messageCount: 'Messages',
           model: 'Model',
           tokenTotal: 'Token total',

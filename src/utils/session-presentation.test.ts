@@ -4,6 +4,7 @@ import {
   formatSessionChannelLabel,
   formatSessionConversationTitle,
   isLegacyDefaultSession,
+  sessionMatchesSearch,
   shouldApplyRealtimeEvent,
 } from './session-presentation'
 
@@ -27,12 +28,16 @@ describe('session presentation boundaries', () => {
   })
 
   it('keeps WebChat first-message titles', () => {
-    expect(formatSessionConversationTitle({
+    const session = {
       key: 'agent:main:main:dm:webchat-123456789012',
       sourceChannel: 'web',
       originKind: 'web',
       sessionTitle: '分析最近三小时告警',
-    })).toBe('分析最近三小时告警')
+    } as const
+    expect(formatSessionConversationTitle(session)).toBe('分析最近三小时告警')
+    expect(sessionMatchesSearch(session, '三小时告警')).toBe(true)
+    expect(sessionMatchesSearch(session, 'webchat-123456')).toBe(true)
+    expect(sessionMatchesSearch(session, '不存在的名称')).toBe(false)
   })
 
   it('recognizes both Gateway default-key forms and keeps missing activity at the bottom', () => {
