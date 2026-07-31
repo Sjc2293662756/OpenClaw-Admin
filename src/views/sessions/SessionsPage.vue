@@ -337,7 +337,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: t('pages.sessions.list.columns.session'),
     key: 'session',
-    minWidth: 320,
+    minWidth: 360,
     render(row) {
       const title = displaySessionTitle(row)
       return h(NSpace, { vertical: true, size: 3 }, () => [
@@ -353,7 +353,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
           {
             class: 'session-title-ellipsis',
             title,
-            style: 'display:block; max-width:240px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;',
+            style: 'display:block; max-width:320px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;',
           },
           title
         ),
@@ -366,7 +366,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: '渠道用户',
     key: 'channelUser',
-    minWidth: 170,
+    minWidth: 180,
     ellipsis: { tooltip: true },
     render(row) {
       return h(NSpace, { vertical: true, size: 2 }, () => [
@@ -382,7 +382,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: t('pages.sessions.list.columns.messageCount'),
     key: 'messageCount',
-    width: 100,
+    width: 90,
     sorter: (a, b) => a.messageCount - b.messageCount,
     render(row) {
       return row.messageCount || 0
@@ -391,7 +391,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: t('pages.sessions.list.columns.model'),
     key: 'model',
-    minWidth: 180,
+    minWidth: 160,
     ellipsis: { tooltip: true },
     render(row) {
       return row.model || '-'
@@ -400,7 +400,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: t('pages.sessions.list.columns.tokenTotal'),
     key: 'tokenTotal',
-    width: 120,
+    width: 110,
     render(row) {
       const total = resolveSessionTokenTotal(row)
       if (total === null) return '-'
@@ -410,7 +410,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: t('pages.sessions.list.columns.lastActivity'),
     key: 'lastActivity',
-    width: 150,
+    width: 140,
     sorter: (a, b) => a.lastActivityTs - b.lastActivityTs,
     render(row) {
       return row.lastActivity ? formatRelativeTime(row.lastActivity) : '-'
@@ -419,7 +419,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: t('pages.sessions.list.columns.actions'),
     key: 'actions',
-    width: 170,
+    width: 220,
     render(row) {
       return h(NSpace, { size: 8, wrap: false, class: 'sessions-row-actions' }, () => [
         h(
@@ -709,7 +709,7 @@ async function handleCreateSession() {
         :bordered="false"
         :row-key="(row: SessionRow) => row.key"
         :pagination="{ pageSize, page: currentPage, onChange: handlePageChange }"
-        :scroll-x="1110"
+        :scroll-x="1310"
         :max-height="600"
         striped
         @update:checked-row-keys="onUpdateCheckedRowKeys"

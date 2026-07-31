@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent } from 'naive-ui'
+import { useRoute } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import { useWebSocketStore } from '@/stores/websocket'
 
 const collapsed = ref(false)
 const wsStore = useWebSocketStore()
+const route = useRoute()
+const pageContainerClass = computed(() => ({
+  'page-container--wide': route.meta.wideContent === true,
+}))
 
 onMounted(() => {
   wsStore.connect()
@@ -45,7 +50,7 @@ onUnmounted(() => {
         :native-scrollbar="false"
         content-style="padding: 24px;"
       >
-        <div class="page-container">
+        <div class="page-container" :class="pageContainerClass">
           <RouterView v-slot="{ Component }">
             <transition name="fade" mode="out-in">
               <component :is="Component" />

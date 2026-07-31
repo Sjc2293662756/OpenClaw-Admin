@@ -119,6 +119,10 @@ html, body, #app {
   margin: 0 auto;
 }
 
+.page-container.page-container--wide {
+  max-width: 1560px;
+}
+
 body.wide-mode .page-container {
   max-width: 100%;
   padding-left: 12px;
