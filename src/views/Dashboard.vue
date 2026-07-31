@@ -64,8 +64,8 @@ const usageError = ref<string | null>(null)
 const usageErrorRange = ref<string | null>(null)
 const lastUpdatedAt = ref<number | null>(null)
 const serverNow = ref(Date.now())
-const rangePreset = ref<TimeRangePreset>('last7days')
-const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value))
+const rangePreset = ref<TimeRangePreset>('today')
+const appliedRange = ref<TimeRange>(rangeForPreset('today', serverNow.value))
 const displayedUsageRange = ref<TimeRange>([...appliedRange.value] as TimeRange)
 const pendingUsageRange = ref<TimeRange | null>(null)
 const usageMode = ref<UsageMode>('tokens')
@@ -460,7 +460,7 @@ onMounted(async () => {
     maybeRetryAfterConnect()
   })
   await syncServerNow()
-  appliedRange.value = rangeForPreset('last7days', serverNow.value)
+  appliedRange.value = rangeForPreset('today', serverNow.value)
   displayedUsageRange.value = [...appliedRange.value] as TimeRange
   dashboardReady = true
   retryAfterFirstConnect = wsStore.state !== 'connected'

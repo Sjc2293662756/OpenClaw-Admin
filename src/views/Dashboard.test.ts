@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { config, flushPromises, shallowMount, type VueWrapper } from '@vue/test-utils'
 import Dashboard from './Dashboard.vue'
 
 const mocks = vi.hoisted(() => {
@@ -80,6 +80,7 @@ function usagePayload() {
 
 describe('dashboard initial loading', () => {
   beforeEach(() => {
+    config.global.renderStubDefaultSlot = true
     mocks.websocket.state = 'disconnected'
     mocks.stateChangeHandler = null
     mocks.websocket.subscribe.mockReset()
@@ -114,6 +115,7 @@ describe('dashboard initial loading', () => {
   })
 
   afterEach(() => {
+    config.global.renderStubDefaultSlot = false
     vi.unstubAllGlobals()
   })
 
@@ -138,7 +140,10 @@ describe('dashboard initial loading', () => {
     mocks.stateChangeHandler?.()
     await flushPromises()
 
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/usage?'))).toHaveLength(1)
+    const usageCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/usage?'))
+    expect(usageCalls).toHaveLength(1)
+    expect(String(usageCalls[0]?.[0])).toContain('startDate=2026-07-31')
+    expect(String(usageCalls[0]?.[0])).toContain('endDate=2026-07-31')
     expect(mocks.rpc.listSessions).toHaveBeenCalledTimes(1)
     expect(mocks.rpc.listCrons).toHaveBeenCalledTimes(1)
     expect(mocks.rpc.listModels).toHaveBeenCalledTimes(1)
@@ -148,6 +153,37 @@ describe('dashboard initial loading', () => {
     mocks.stateChangeHandler?.()
     await flushPromises()
     expect(fetchMock.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/usage?'))).toHaveLength(1)
+    wrapper.unmount()
+  })
+
+  it('uses a manually applied range for later queries in the current dashboard instance', async () => {
+    mocks.websocket.state = 'connected'
+    const wrapper = shallowMount(Dashboard, {
+      global: {
+        stubs: {
+          TimeRangePicker: {
+            name: 'TimeRangePicker',
+            template: '<button class="time-range-picker-stub" />',
+            emits: ['apply'],
+          },
+        },
+      },
+    })
+    await flushPromises()
+
+    const manualRange: [number, number] = [
+      new Date(2026, 6, 2, 0, 0, 0, 0).getTime(),
+      new Date(2026, 6, 31, 0, 0, 0, 0).getTime(),
+    ]
+    const picker = wrapper.findComponent('.time-range-picker-stub') as VueWrapper
+    picker.vm.$emit('apply', manualRange, 'last30days')
+    await flushPromises()
+
+    const usageCalls = vi.mocked(fetch).mock.calls
+      .filter(([url]) => String(url).startsWith('/api/dashboard/usage?'))
+    expect(usageCalls).toHaveLength(2)
+    expect(String(usageCalls[1]?.[0])).toContain('startDate=2026-07-02')
+    expect(String(usageCalls[1]?.[0])).toContain('endDate=2026-07-31')
     wrapper.unmount()
   })
 
