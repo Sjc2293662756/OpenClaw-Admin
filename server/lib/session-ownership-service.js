@@ -326,29 +326,169 @@ export function filterSessionListPayload(payload, allowedKeys) {
   return { ...row, sessions: [] }
 }
 
+const USAGE_TOTAL_FIELDS = [
+  'input',
+  'output',
+  'cacheRead',
+  'cacheWrite',
+  'totalTokens',
+  'totalCost',
+  'inputCost',
+  'outputCost',
+  'cacheReadCost',
+  'cacheWriteCost',
+  'missingCostEntries',
+]
+
+function usageNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : 0
+}
+
+function emptyUsageTotals() {
+  return Object.fromEntries(USAGE_TOTAL_FIELDS.map((field) => [field, 0]))
+}
+
+function addUsageTotals(target, source) {
+  const usage = asRecord(source)
+  for (const field of USAGE_TOTAL_FIELDS) {
+    target[field] += usageNumber(usage[field])
+  }
+  if (!usage.totalTokens) {
+    target.totalTokens += usageNumber(usage.tokens || usage.total)
+  }
+}
+
+function aggregateUsageRows(rows) {
+  const totals = emptyUsageTotals()
+  const messages = {
+    total: 0,
+    user: 0,
+    assistant: 0,
+    toolCalls: 0,
+    toolResults: 0,
+    errors: 0,
+  }
+  const tools = new Map()
+  const byModel = new Map()
+  const byProvider = new Map()
+  const byAgent = new Map()
+  const byChannel = new Map()
+  const daily = new Map()
+  let totalToolCalls = 0
+
+  const addGroupedTotals = (map, key, usage) => {
+    if (!key) return
+    let item = map.get(key)
+    if (!item) {
+      item = { count: 0, totals: emptyUsageTotals() }
+      map.set(key, item)
+    }
+    item.count += 1
+    addUsageTotals(item.totals, usage)
+  }
+
+  for (const item of rows) {
+    const session = asRecord(item)
+    const usage = asRecord(session.usage)
+    if (Object.keys(usage).length === 0) continue
+
+    addUsageTotals(totals, usage)
+
+    const messageCounts = asRecord(usage.messageCounts)
+    for (const field of Object.keys(messages)) {
+      messages[field] += usageNumber(messageCounts[field])
+    }
+    if (messageCounts.total === undefined) {
+      messages.total += usageNumber(messageCounts.user) + usageNumber(messageCounts.assistant)
+    }
+
+    const toolUsage = asRecord(usage.toolUsage)
+    const sessionTools = Array.isArray(toolUsage.tools) ? toolUsage.tools : []
+    totalToolCalls += toolUsage.totalCalls === undefined
+      ? sessionTools.reduce((sum, tool) => sum + usageNumber(asRecord(tool).count), 0)
+      : usageNumber(toolUsage.totalCalls)
+    for (const tool of sessionTools) {
+      const row = asRecord(tool)
+      const name = normalizeSessionKey(row.name)
+      if (name) tools.set(name, (tools.get(name) || 0) + usageNumber(row.count))
+    }
+
+    const provider = normalizeSessionKey(
+      session.modelProvider || session.provider || session.providerOverride
+    )
+    const model = normalizeSessionKey(session.model || session.modelOverride)
+    addGroupedTotals(byProvider, provider, usage)
+    if (provider || model) addGroupedTotals(byModel, `${provider}\u0000${model}`, usage)
+    addGroupedTotals(byAgent, normalizeSessionKey(session.agentId || session.agent), usage)
+    addGroupedTotals(
+      byChannel,
+      normalizeSourceChannel(session.channel || session.lastChannel || session.platform),
+      usage
+    )
+
+    for (const item of Array.isArray(usage.dailyBreakdown) ? usage.dailyBreakdown : []) {
+      const row = asRecord(item)
+      const date = normalizeSessionKey(row.date)
+      if (!date) continue
+      let entry = daily.get(date)
+      if (!entry) {
+        entry = { date, tokens: 0, cost: 0, messages: 0, toolCalls: 0, errors: 0 }
+        daily.set(date, entry)
+      }
+      entry.tokens += usageNumber(row.tokens || row.totalTokens)
+      entry.cost += usageNumber(row.cost || row.totalCost)
+      entry.messages += usageNumber(row.messages)
+      entry.toolCalls += usageNumber(row.toolCalls)
+      entry.errors += usageNumber(row.errors)
+    }
+  }
+
+  const grouped = (map, field) => Array.from(map.entries())
+    .map(([key, value]) => ({ [field]: key, count: value.count, totals: value.totals }))
+    .sort((left, right) => (
+      right.totals.totalTokens - left.totals.totalTokens ||
+      String(left[field]).localeCompare(String(right[field]))
+    ))
+
+  return {
+    totals,
+    aggregates: {
+      messages,
+      tools: {
+        totalCalls: totalToolCalls,
+        uniqueTools: tools.size,
+        tools: Array.from(tools.entries())
+          .map(([name, count]) => ({ name, count }))
+          .sort((left, right) => right.count - left.count || left.name.localeCompare(right.name)),
+      },
+      byModel: Array.from(byModel.entries())
+        .map(([key, value]) => {
+          const [provider, model] = key.split('\u0000')
+          return { provider: provider || undefined, model: model || undefined, ...value }
+        })
+        .sort((left, right) => (
+          right.totals.totalTokens - left.totals.totalTokens ||
+          String(left.model || '').localeCompare(String(right.model || ''))
+        )),
+      byProvider: grouped(byProvider, 'provider'),
+      byAgent: grouped(byAgent, 'agentId').map(({ count: _count, ...item }) => item),
+      byChannel: grouped(byChannel, 'channel').map(({ count: _count, ...item }) => item),
+      daily: Array.from(daily.values()).sort((left, right) => left.date.localeCompare(right.date)),
+    },
+  }
+}
+
 export function filterSessionUsagePayload(payload, allowedKeys) {
   if (allowedKeys === null) return payload
   const filtered = filterSessionListPayload(payload, allowedKeys)
   if (Array.isArray(filtered)) return filtered
 
   const rows = extractSessionRows(filtered)
-  const totalTokens = rows.reduce((sum, item) => {
-    const usage = asRecord(asRecord(item).usage)
-    const value = Number(usage.totalTokens || usage.tokens || usage.total || 0)
-    return sum + (Number.isFinite(value) ? value : 0)
-  }, 0)
+  const ownedUsage = aggregateUsageRows(rows)
   return {
     ...filtered,
-    totals: { totalTokens },
-    aggregates: {
-      messages: {},
-      tools: { totalCalls: 0, uniqueTools: 0, tools: [] },
-      byModel: [],
-      byProvider: [],
-      byAgent: [],
-      byChannel: [],
-      daily: [],
-    },
+    ...ownedUsage,
   }
 }
 

@@ -416,7 +416,6 @@ onUnmounted(() => {
 
                 <NCard v-if="!canManageSecurity" size="small" embedded title="安全运行状态">
                   <NSpace vertical :size="8">
-                    <NText>仅展示组件、配置和运行可用状态，不返回或展示频道配置内容。</NText>
                     <NSpace :size="8">
                       <NTag :type="pluginStatusType(card)" :bordered="false">{{ pluginStatusLabel(card) }}</NTag>
                       <NTag :type="card.configured ? 'success' : 'default'" :bordered="false">

@@ -1,10 +1,7 @@
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { createDashboardUsageRuntime } from '../lib/dashboard-usage-runtime.js'
-import {
-  filterSessionUsagePayload,
-  listOwnedWorkspaceSessionKeys,
-} from '../lib/session-ownership-service.js'
+import { listOwnedWorkspaceSessionKeys } from '../lib/session-ownership-service.js'
 
 function readDate(value) {
   const text = String(value || '').trim()
@@ -59,13 +56,8 @@ export function createDashboardUsageRouter({
         startDate,
         endDate,
         force: req.query.force === '1',
+        allowedKeys: db ? listOwnedWorkspaceSessionKeys(db, req.user) : null,
       })
-      if (db) {
-        result.usage = filterSessionUsagePayload(
-          result.usage,
-          listOwnedWorkspaceSessionKeys(db, req.user)
-        )
-      }
       res.setHeader('Cache-Control', 'private, no-store')
       return sendOk(res, result)
     } catch (error) {

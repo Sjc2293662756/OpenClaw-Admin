@@ -60,21 +60,99 @@ const alice = { id: 'user-alice', username: 'alice', role: 'standard' }
 const bob = { id: 'user-bob', username: 'bob', role: 'standard' }
 const auditor = { id: 'user-auditor', username: 'auditor', role: 'auditor' }
 
-it('usage projection removes non-owned rows and global aggregates', () => {
+it('usage projection removes non-owned rows and recomputes all aggregates from owned sessions', () => {
   const result = filterSessionUsagePayload({
     sessions: [
-      { key: 'owned', usage: { totalTokens: 12 } },
-      { key: 'other', usage: { totalTokens: 99 } },
+      {
+        key: 'owned-1',
+        agentId: 'main',
+        channel: 'webchat',
+        modelProvider: 'provider-a',
+        model: 'model-a',
+        usage: {
+          input: 10,
+          output: 2,
+          cacheRead: 3,
+          totalTokens: 15,
+          totalCost: 0.15,
+          messageCounts: { total: 3, user: 1, assistant: 1, toolCalls: 1, toolResults: 0, errors: 0 },
+          toolUsage: { totalCalls: 1, tools: [{ name: 'query', count: 1 }] },
+          dailyBreakdown: [{ date: '2026-07-30', tokens: 15, cost: 0.15 }],
+        },
+      },
+      {
+        key: 'owned-2',
+        agentId: 'main',
+        channel: 'webchat',
+        modelProvider: 'provider-a',
+        model: 'model-b',
+        usage: {
+          input: 20,
+          output: 5,
+          totalTokens: 25,
+          totalCost: 0.25,
+          messageCounts: { total: 4, user: 2, assistant: 2, toolCalls: 0, toolResults: 0, errors: 1 },
+          toolUsage: { totalCalls: 2, tools: [{ name: 'query', count: 1 }, { name: 'report', count: 1 }] },
+          dailyBreakdown: [
+            { date: '2026-07-30', tokens: 5, cost: 0.05 },
+            { date: '2026-07-31', tokens: 20, cost: 0.2 },
+          ],
+        },
+      },
+      {
+        key: 'other',
+        modelProvider: 'secret-provider',
+        model: 'secret-model',
+        usage: {
+          totalTokens: 99,
+          messageCounts: { total: 99 },
+          toolUsage: { totalCalls: 99, tools: [{ name: 'secret-tool', count: 99 }] },
+          dailyBreakdown: [{ date: '2026-07-31', tokens: 99, cost: 9.9 }],
+        },
+      },
     ],
-    totals: { totalTokens: 111, totalCost: 8 },
-    aggregates: { byModel: [{ model: 'secret' }], daily: [{ tokens: 111 }] },
-  }, new Set(['owned']))
+    totals: { totalTokens: 139, totalCost: 10.3 },
+    aggregates: { byModel: [{ model: 'secret-model' }], daily: [{ tokens: 139 }] },
+  }, new Set(['owned-1', 'owned-2']))
 
-  expect(result.sessions).toHaveLength(1)
-  expect(result.sessions[0].key).toBe('owned')
-  expect(result.totals).toEqual({ totalTokens: 12 })
-  expect(result.aggregates.byModel).toEqual([])
-  expect(result.aggregates.daily).toEqual([])
+  expect(result.sessions.map((item) => item.key)).toEqual(['owned-1', 'owned-2'])
+  expect(result.totals).toMatchObject({
+    input: 30,
+    output: 7,
+    cacheRead: 3,
+    totalTokens: 40,
+    totalCost: 0.4,
+  })
+  expect(result.aggregates.messages).toEqual({
+    total: 7,
+    user: 3,
+    assistant: 3,
+    toolCalls: 1,
+    toolResults: 0,
+    errors: 1,
+  })
+  expect(result.aggregates.tools).toEqual({
+    totalCalls: 3,
+    uniqueTools: 2,
+    tools: [
+      { name: 'query', count: 2 },
+      { name: 'report', count: 1 },
+    ],
+  })
+  expect(result.aggregates.byModel.map((item) => ({
+    provider: item.provider,
+    model: item.model,
+    totalTokens: item.totals.totalTokens,
+  }))).toEqual([
+    { provider: 'provider-a', model: 'model-b', totalTokens: 25 },
+    { provider: 'provider-a', model: 'model-a', totalTokens: 15 },
+  ])
+  expect(result.aggregates.daily).toEqual([
+    { date: '2026-07-30', tokens: 20, cost: 0.2, messages: 0, toolCalls: 0, errors: 0 },
+    { date: '2026-07-31', tokens: 20, cost: 0.2, messages: 0, toolCalls: 0, errors: 0 },
+  ])
+  expect(JSON.stringify(result)).not.toContain('secret-model')
+  expect(JSON.stringify(result)).not.toContain('secret-tool')
 })
 const admin = { id: 'user-admin', username: 'admin', role: 'admin' }
 

@@ -1,3 +1,5 @@
+import { filterSessionUsagePayload } from './session-ownership-service.js'
+
 function asRecord(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {}
 }
@@ -52,8 +54,11 @@ export function createDashboardUsageRuntime({
   const cache = new Map()
   const inFlight = new Map()
 
-  function cacheKey({ principal, startDate, endDate }) {
-    return `${principal}\u0000${startDate}\u0000${endDate}`
+  function cacheKey({ principal, startDate, endDate, allowedKeys }) {
+    const scope = allowedKeys === null
+      ? 'all'
+      : Array.from(allowedKeys || []).sort().join('\u0001')
+    return `${principal}\u0000${scope}\u0000${startDate}\u0000${endDate}`
   }
 
   function pruneCache() {
@@ -84,6 +89,7 @@ export function createDashboardUsageRuntime({
         endDate: params.endDate,
         limit: 1000,
       }))
+      .then((usage) => filterSessionUsagePayload(usage, params.allowedKeys ?? null))
       .then(projectDashboardUsage)
       .then((usage) => {
         cache.delete(key)

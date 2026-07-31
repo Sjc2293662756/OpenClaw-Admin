@@ -365,10 +365,11 @@ function handleTrendMouseMove(event: MouseEvent) {
 const usageKpis = computed(() => {
   const totals = usageTotals.value
   const rows = dailyUsage.value
+  const messageTotals = sessionsUsageResult.value?.aggregates?.messages
 
-  const totalMessages = rows.reduce((acc, item) => acc + (item.messages || 0), 0)
-  const totalToolCalls = rows.reduce((acc, item) => acc + (item.toolCalls || 0), 0)
-  const totalErrors = rows.reduce((acc, item) => acc + (item.errors || 0), 0)
+  const totalMessages = messageTotals?.total ?? rows.reduce((acc, item) => acc + (item.messages || 0), 0)
+  const totalToolCalls = messageTotals?.toolCalls ?? rows.reduce((acc, item) => acc + (item.toolCalls || 0), 0)
+  const totalErrors = messageTotals?.errors ?? rows.reduce((acc, item) => acc + (item.errors || 0), 0)
   const activeDays = rows.filter((item) => {
     if (usageMode.value === 'tokens') return item.tokens > 0
     return item.cost > 0

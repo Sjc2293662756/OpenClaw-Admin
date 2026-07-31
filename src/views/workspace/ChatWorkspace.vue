@@ -36,7 +36,7 @@ const wsStore = useWebSocketStore()
 const {
   canUseFunctions,
   canDeleteSessions,
-  chatReadOnlyTitle,
+  chatReadOnlyHint,
 } = usePermissions()
 const message = useMessage()
 
@@ -187,11 +187,12 @@ onUnmounted(() => {
       </div>
 
       <NButton
-        v-if="canUseFunctions"
         class="new-chat-button"
         block
         size="large"
         :loading="creatingSession"
+        :disabled="!canUseFunctions"
+        :title="!canUseFunctions ? chatReadOnlyHint : undefined"
         @click="startNewConversation"
       >
         <template #icon><NIcon :component="AddOutline" /></template>
@@ -267,7 +268,6 @@ onUnmounted(() => {
       <header class="workspace-header">
         <div>
           <span class="workspace-caption">观枢 GAIOP 智能运维分析</span>
-          <span v-if="!canUseFunctions" class="workspace-read-only">{{ chatReadOnlyTitle }}</span>
           <span v-if="!ready" class="workspace-status">正在连接服务…</span>
         </div>
         <div class="workspace-header-actions">
@@ -378,7 +378,6 @@ onUnmounted(() => {
 .workspace-header-actions { display: flex; align-items: center; gap: 10px; }
 .workspace-caption { color: #254c3a; font-size: 14px; font-weight: 600; }
 .workspace-status { margin-left: 10px; color: #83a293; font-size: 12px; }
-.workspace-read-only { margin-left: 10px; padding: 3px 8px; border-radius: 999px; background: #fff4d7; color: #9a6410; font-size: 12px; font-weight: 600; }
 .workspace-chat-host { min-height: 0; flex: 1; padding: 16px 24px 22px; overflow: hidden; }
 .workspace-connecting { display: grid; flex: 1; place-content: center; justify-items: center; gap: 12px; color: #638674; font-size: 14px; }
 .workspace-connecting p { margin: 0; }
@@ -436,7 +435,6 @@ onUnmounted(() => {
 :global([data-theme='dark'] .workspace-caption) { color: #d6e6dc; }
 :global([data-theme='dark'] .workspace-status),
 :global([data-theme='dark'] .workspace-connecting) { color: #94aa9e; }
-:global([data-theme='dark'] .workspace-read-only) { background: #3a3020; color: #f1c46f; }
 
 @media (max-width: 760px) {
   .workspace-page { grid-template-columns: 1fr; }

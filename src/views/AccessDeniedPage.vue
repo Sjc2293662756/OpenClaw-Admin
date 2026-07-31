@@ -21,8 +21,10 @@ const roleLabel = computed(() => {
 })
 
 function goBack() {
-  if (window.history.length > 1) {
-    router.back()
+  const value = route.query.returnTo
+  const returnTo = typeof value === 'string' ? value.trim() : ''
+  if (returnTo.startsWith('/') && !returnTo.startsWith('//')) {
+    void router.push(returnTo)
     return
   }
   void router.push({ name: 'Dashboard' })

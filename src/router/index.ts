@@ -11,7 +11,7 @@ const router = createRouter({
 
 installChunkLoadRecovery(router)
 
-router.beforeEach(async (to, _from, next) => {
+router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
   let authEnabled = false
@@ -82,7 +82,7 @@ router.beforeEach(async (to, _from, next) => {
       name: 'AccessDenied',
       query: {
         module: access?.moduleName || '当前模块',
-        from: to.fullPath,
+        returnTo: from.name === 'AccessDenied' ? '/dashboard' : from.fullPath,
       },
       replace: true,
     })

@@ -71,11 +71,65 @@ test('dashboard usage runtime shares concurrent work and caches by principal and
   assert.equal(calls, 2)
 })
 
+test('dashboard usage runtime filters and fully aggregates owned sessions before projection', async () => {
+  const payload = sampleUsage()
+  payload.sessions.push({
+    key: 'other-session',
+    label: 'other-user',
+    modelProvider: 'secret-provider',
+    model: 'secret-model',
+    usage: {
+      totalTokens: 999,
+      messageCounts: { total: 9, user: 4, assistant: 4, toolCalls: 1, toolResults: 0, errors: 0 },
+      toolUsage: { totalCalls: 1, tools: [{ name: 'secret-tool', count: 1 }] },
+      dailyBreakdown: [{ date: '2026-07-30', tokens: 999, cost: 9.99 }],
+    },
+  })
+  payload.sessions[0].modelProvider = 'provider-a'
+  payload.sessions[0].model = 'model-a'
+  payload.sessions[0].usage.messageCounts = {
+    total: 2,
+    user: 1,
+    assistant: 1,
+    toolCalls: 0,
+    toolResults: 0,
+    errors: 0,
+  }
+  payload.sessions[0].usage.toolUsage = {
+    totalCalls: 1,
+    tools: [{ name: 'query', count: 1 }],
+  }
+
+  const runtime = createDashboardUsageRuntime({ loadUsage: async () => payload })
+  const result = await runtime.read({
+    principal: 'standard:user-1',
+    startDate: '2026-07-01',
+    endDate: '2026-07-30',
+    allowedKeys: new Set(['agent:main:main:dm:webchat-example']),
+  })
+
+  assert.equal(result.usage.totals.totalTokens, 42)
+  assert.equal(result.usage.aggregates.messages.total, 2)
+  assert.deepEqual(result.usage.aggregates.tools.tools, [{ name: 'query', count: 1 }])
+  assert.deepEqual(result.usage.aggregates.byModel.map((item) => item.model), ['model-a'])
+  assert.deepEqual(result.usage.aggregates.daily, [{
+    date: '2026-07-30',
+    tokens: 42,
+    cost: 0,
+    messages: 0,
+    toolCalls: 0,
+    errors: 0,
+  }])
+  assert.equal(JSON.stringify(result.usage).includes('other-user'), false)
+  assert.equal(JSON.stringify(result.usage).includes('secret-model'), false)
+})
+
 test('dashboard usage route validates ranges and returns cache metadata', async () => {
   const app = express()
   const runtime = {
     async read(params) {
       assert.equal(params.principal, 'admin:user-1')
+      assert.equal(params.allowedKeys, null)
       return { usage: projectDashboardUsage(sampleUsage()), cache: 'hit' }
     },
   }
