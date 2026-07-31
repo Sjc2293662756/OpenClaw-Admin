@@ -53,6 +53,13 @@ export function validateTimeRange(
   return null
 }
 
+export function isTimestampWithinRange(timestamp: number, range: TimeRange): boolean {
+  return Number.isFinite(timestamp)
+    && timestamp > 0
+    && timestamp >= range[0]
+    && timestamp <= range[1]
+}
+
 export function formatDateTime(value: number): string {
   const date = new Date(value)
   const year = date.getFullYear()

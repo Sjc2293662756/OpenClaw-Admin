@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -34,7 +34,14 @@ import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useAgentStore } from '@/stores/agent'
 import { useConfigStore } from '@/stores/config'
+import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { formatRelativeTime, parseSessionKey } from '@/utils/format'
+import {
+  isTimestampWithinRange,
+  rangeForPreset,
+  type TimeRange,
+  type TimeRangePreset,
+} from '@/utils/time-range'
 import {
   formatSessionChannelLabel,
   formatSessionConversationTitle,
@@ -74,6 +81,11 @@ const allSelectedKeys = ref<string[]>([])
 const batchDeleting = ref(false)
 const currentPage = ref(1)
 const pageSize = 12
+const serverNow = ref(Date.now())
+const serverNowReceivedAt = ref(Date.now())
+const timePreset = ref<TimeRangePreset>('last7days')
+const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value))
+const timeRangeTouched = ref(false)
 
 const allSessionKeys = computed(() => filteredSessions.value.map((s) => s.key))
 const isAllSelected = computed(() => {
@@ -288,6 +300,7 @@ const filteredSessions = computed<SessionRow[]>(() => {
   const q = searchQuery.value.trim().toLowerCase()
 
   let list = sessionRows.value.filter((item) => {
+    if (!isTimestampWithinRange(item.lastActivityTs, appliedRange.value)) return false
     if (channelFilter.value !== 'all' && (item.sourceChannel || item.parsed.channel) !== channelFilter.value) return false
     if (modelFilter.value !== 'all' && (item.model || '') !== modelFilter.value) return false
 
@@ -464,9 +477,14 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
 ]))
 
 onMounted(() => {
+  void syncServerNow()
   void sessionStore.fetchSessions()
   void agentStore.fetchAgents()
   void configStore.fetchConfig()
+})
+
+watch([searchQuery, channelFilter, modelFilter, sortMode, appliedRange], () => {
+  currentPage.value = 1
 })
 
 function parseTimestamp(value?: string): number {
@@ -500,6 +518,37 @@ function clearFilters() {
   channelFilter.value = 'all'
   modelFilter.value = 'all'
   sortMode.value = 'recent'
+  timePreset.value = 'last7days'
+  timeRangeTouched.value = false
+  appliedRange.value = rangeForPreset('last7days', currentServerNow())
+}
+
+function applyTimeRange(range: TimeRange, preset: TimeRangePreset) {
+  timeRangeTouched.value = true
+  appliedRange.value = [...range] as TimeRange
+  timePreset.value = preset
+}
+
+async function syncServerNow() {
+  try {
+    const response = await fetch('/api/health', { cache: 'no-store' })
+    const responseTime = Date.parse(response.headers.get('date') || '')
+    if (Number.isFinite(responseTime)) {
+      serverNow.value = responseTime
+      serverNowReceivedAt.value = Date.now()
+      if (!timeRangeTouched.value) {
+        appliedRange.value = rangeForPreset('last7days', serverNow.value)
+      }
+    }
+  } catch {
+    serverNow.value = Date.now()
+    serverNowReceivedAt.value = Date.now()
+  }
+}
+
+function currentServerNow(): number {
+  const elapsed = Math.max(0, Date.now() - serverNowReceivedAt.value)
+  return serverNow.value + elapsed
 }
 
 async function handleRefresh() {
@@ -691,13 +740,21 @@ async function handleCreateSession() {
 
     <NCard :title="t('pages.sessions.list.listTitle')" class="sessions-card">
       <template #header-extra>
-        <NSpace align="center" :size="8">
+        <NSpace align="center" wrap :size="8">
           <NTag v-if="sessionStore.usageLoading" size="small" type="info" :bordered="false" round>
             {{ t('pages.sessions.list.usageLoading') }}
           </NTag>
           <NText depth="3" style="font-size: 12px;">
             {{ t('pages.sessions.list.listCount', { current: filteredSessions.length, total: stats.total }) }}
           </NText>
+          <TimeRangePicker
+            v-model="appliedRange"
+            :preset="timePreset"
+            :server-now="serverNow"
+            compact
+            placement="bottom-end"
+            @apply="applyTimeRange"
+          />
         </NSpace>
       </template>
 

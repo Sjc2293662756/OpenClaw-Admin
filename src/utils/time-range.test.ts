@@ -4,6 +4,7 @@ import {
   calendarDayCount,
   createLatestRequestTracker,
   formatYmd,
+  isTimestampWithinRange,
   rangeForPreset,
   timeRangeAxisValues,
   trendPointTime,
@@ -33,6 +34,14 @@ describe('time range', () => {
     expect(validateTimeRange([now, now - 1], now)).toBe('reversed')
     expect(validateTimeRange([now - 1, now + 1], now)).toBe('future')
     expect(validateTimeRange([now - 1, now], now)).toBeNull()
+  })
+
+  it('matches session activity timestamps against inclusive time ranges', () => {
+    const range: [number, number] = [now - 60_000, now]
+    expect(isTimestampWithinRange(range[0], range)).toBe(true)
+    expect(isTimestampWithinRange(range[1], range)).toBe(true)
+    expect(isTimestampWithinRange(range[0] - 1, range)).toBe(false)
+    expect(isTimestampWithinRange(0, range)).toBe(false)
   })
 
   it('selects day, natural-week and month grains', () => {
