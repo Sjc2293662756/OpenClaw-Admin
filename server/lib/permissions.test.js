@@ -25,6 +25,18 @@ test('RPC permission matrix keeps privileged writes and sensitive reads restrict
   assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'logs.tail').allowed, false)
 })
 
+test('only administrators can delete sessions through direct RPC calls', () => {
+  for (const method of ['sessions.delete', 'session.delete']) {
+    assert.equal(getRpcPermissionDecision({ role: 'admin' }, method).allowed, true)
+    for (const role of ['basic', 'auditor', 'standard']) {
+      const decision = getRpcPermissionDecision({ role }, method)
+      assert.equal(decision.allowed, false)
+      assert.equal(decision.code, 'ADMIN_REQUIRED')
+      assert.equal(decision.message, '仅管理员可以删除会话')
+    }
+  }
+})
+
 test('read-only RPC classification is explicit and rejects unsafe lookalikes', () => {
   assert.equal(isReadOnlyRpcMethod('sessions.get'), true)
   assert.equal(isReadOnlyRpcMethod('config.get'), true)

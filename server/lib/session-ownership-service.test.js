@@ -85,11 +85,24 @@ describe('workspace session ownership service', () => {
     const db = createTestDb()
     const aliceSession = createWorkspaceSession(db, alice, 1)
     const bobSession = createWorkspaceSession(db, bob, 2)
-    const allowed = listOwnedWorkspaceSessionKeys(db, alice)
+    const gatewayPayload = {
+      sessions: [
+        { key: aliceSession },
+        { key: bobSession },
+        { key: 'agent:main:feishu:dm:external-user' },
+      ],
+    }
 
-    expect(filterSessionListPayload({ sessions: [{ key: aliceSession }, { key: bobSession }] }, allowed)).toEqual({
+    expect(filterSessionListPayload(gatewayPayload, listOwnedWorkspaceSessionKeys(db, alice))).toEqual({
       sessions: [{ key: aliceSession }],
     })
+    expect(filterSessionListPayload(
+      gatewayPayload,
+      listOwnedWorkspaceSessionKeys(db, { ...alice, role: 'basic' }),
+    )).toEqual({
+      sessions: [{ key: aliceSession }],
+    })
+    expect(filterSessionListPayload(gatewayPayload, listOwnedWorkspaceSessionKeys(db, admin))).toEqual(gatewayPayload)
 
     markWorkspaceSessionDeleted(db, aliceSession, 3)
     expect(ensureWorkspaceSessionAccess(db, alice, aliceSession)).toMatchObject({ ok: false })

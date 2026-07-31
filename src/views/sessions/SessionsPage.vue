@@ -34,6 +34,7 @@ import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useAgentStore } from '@/stores/agent'
 import { useConfigStore } from '@/stores/config'
+import { useAuthStore } from '@/stores/auth'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { formatRelativeTime, parseSessionKey } from '@/utils/format'
 import {
@@ -61,6 +62,7 @@ type SessionRow = Session & {
 const sessionStore = useSessionStore()
 const agentStore = useAgentStore()
 const configStore = useConfigStore()
+const authStore = useAuthStore()
 const router = useRouter()
 const message = useMessage()
 const { t } = useI18n()
@@ -86,6 +88,7 @@ const serverNowReceivedAt = ref(Date.now())
 const timePreset = ref<TimeRangePreset>('last7days')
 const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value))
 const timeRangeTouched = ref(false)
+const canDeleteSessions = computed(() => authStore.isAdmin)
 
 const allSessionKeys = computed(() => filteredSessions.value.map((s) => s.key))
 const isAllSelected = computed(() => {
@@ -343,10 +346,8 @@ const stats = computed(() => {
   }
 })
 
-const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
-  {
-    type: 'selection',
-  },
+const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
+  const columns: DataTableColumns<SessionRow> = [
   {
     title: t('pages.sessions.list.columns.session'),
     key: 'session',
@@ -432,9 +433,9 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
   {
     title: t('pages.sessions.list.columns.actions'),
     key: 'actions',
-    width: 220,
+    width: canDeleteSessions.value ? 220 : 130,
     render(row) {
-      return h(NSpace, { size: 8, wrap: false, class: 'sessions-row-actions' }, () => [
+      const actions = [
         h(
           NButton,
           {
@@ -450,7 +451,9 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
             default: () => t('pages.sessions.list.continueConversation'),
           }
         ),
-        h(
+      ]
+      if (canDeleteSessions.value) {
+        actions.push(h(
           NPopconfirm,
           { onPositiveClick: () => handleDelete(row) },
           {
@@ -470,11 +473,15 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => ([
             ),
             default: () => t('pages.sessions.detail.confirmDelete'),
           }
-        ),
-      ])
+        ))
+      }
+      return h(NSpace, { size: 8, wrap: false, class: 'sessions-row-actions' }, () => actions)
     },
   },
-]))
+  ]
+  if (canDeleteSessions.value) columns.unshift({ type: 'selection' })
+  return columns
+})
 
 onMounted(() => {
   void syncServerNow()
@@ -560,6 +567,10 @@ function handleContinueConversation(session: SessionRow) {
 }
 
 async function handleDelete(session: SessionRow) {
+  if (!canDeleteSessions.value) {
+    message.error('仅管理员可以删除会话')
+    return
+  }
   try {
     await sessionStore.deleteSession(session.key)
     message.success(t('pages.sessions.detail.deleteSuccess'))
@@ -569,6 +580,10 @@ async function handleDelete(session: SessionRow) {
 }
 
 async function handleBatchDelete() {
+  if (!canDeleteSessions.value) {
+    message.error('仅管理员可以删除会话')
+    return
+  }
   if (allSelectedKeys.value.length === 0) return
   batchDeleting.value = true
   try {
@@ -590,6 +605,7 @@ async function handleBatchDelete() {
 }
 
 function handleSelectAll() {
+  if (!canDeleteSessions.value) return
   if (isAllSelected.value) {
     allSelectedKeys.value = []
   } else {
@@ -635,7 +651,7 @@ async function handleCreateSession() {
       <template #header-extra>
         <NSpace :size="8">
           <NButton
-            v-if="filteredSessions.length > 0"
+            v-if="canDeleteSessions && filteredSessions.length > 0"
             size="small"
             :type="isAllSelected ? 'warning' : 'default'"
             :ghost="!isAllSelected && !isPartialSelected"
@@ -648,7 +664,7 @@ async function handleCreateSession() {
             ({{ filteredSessions.length }})
           </NButton>
           <NPopconfirm
-            v-if="allSelectedKeys.length > 0"
+            v-if="canDeleteSessions && allSelectedKeys.length > 0"
             :disabled="batchDeleting"
             @positive-click="handleBatchDelete"
           >
