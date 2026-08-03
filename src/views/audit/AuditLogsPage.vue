@@ -361,27 +361,29 @@ onBeforeUnmount(() => activeController?.abort())
         </div>
 
         <div class="filters">
-          <div class="filter-main">
-            <NSpace wrap :size="10">
-              <NInput v-model:value="filters.keyword" clearable placeholder="关键词：操作、对象、说明或历史用户" style="width: 250px" @keyup.enter="queryFromFirstPage">
-                <template #prefix><NIcon><SearchOutline /></NIcon></template>
-              </NInput>
-              <NSelect v-model:value="filters.username" clearable filterable placeholder="全部用户" :options="userOptions" style="width: 220px" />
-              <NSelect v-model:value="filters.role" clearable placeholder="全部角色" :options="roleOptions" style="width: 140px" />
-              <NSelect v-model:value="filters.category" clearable placeholder="全部分类" :options="categoryOptions" style="width: 150px" />
-              <NSelect v-model:value="filters.result" clearable placeholder="全部结果" :options="resultOptions" style="width: 128px" />
-              <NSelect v-model:value="filters.source" clearable placeholder="全部来源" :options="sourceOptions" style="width: 140px" />
-              <NInput v-model:value="filters.errorCode" clearable placeholder="错误码" style="width: 150px" @keyup.enter="queryFromFirstPage" />
-              <NButton type="primary" :disabled="loading" @click="queryFromFirstPage">查询</NButton>
-              <NButton secondary :disabled="loading" @click="resetFilters">重置</NButton>
-            </NSpace>
+          <div class="filter-keyword">
+            <NInput v-model:value="filters.keyword" clearable class="audit-keyword" placeholder="关键词：操作、对象、说明或历史用户" @keyup.enter="queryFromFirstPage">
+              <template #prefix><NIcon><SearchOutline /></NIcon></template>
+            </NInput>
           </div>
-          <NSpace class="display-controls" wrap :size="10">
+
+          <div class="filter-conditions">
+            <NSelect v-model:value="filters.username" clearable filterable placeholder="全部用户" :options="userOptions" style="width: 220px" />
+            <NSelect v-model:value="filters.role" clearable placeholder="全部角色" :options="roleOptions" style="width: 140px" />
+            <NSelect v-model:value="filters.category" clearable placeholder="全部分类" :options="categoryOptions" style="width: 150px" />
+            <NSelect v-model:value="filters.result" clearable placeholder="全部结果" :options="resultOptions" style="width: 128px" />
+            <NSelect v-model:value="filters.source" clearable placeholder="全部来源" :options="sourceOptions" style="width: 140px" />
+            <NInput v-model:value="filters.errorCode" clearable placeholder="错误码" style="width: 150px" @keyup.enter="queryFromFirstPage" />
+            <NButton type="primary" :disabled="loading" @click="queryFromFirstPage">查询</NButton>
+            <NButton secondary :disabled="loading" @click="resetFilters">重置</NButton>
+          </div>
+
+          <div class="display-controls">
             <NSelect :value="pageSize" :options="pageSizeOptions" style="width: 112px" @update:value="applyPageSize" />
             <NSelect :value="resultLimitChoice" :options="resultLimitOptions" style="width: 148px" @update:value="handleResultLimitChoice" />
             <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="MAX_RESULTS" :precision="0" placeholder="最高 3000 条" style="width: 150px" />
             <NButton v-if="isCustomLimit" type="primary" :disabled="loading" @click="applyCustomResultLimit">应用 TOP</NButton>
-          </NSpace>
+          </div>
         </div>
 
         <NDataTable :columns="columns" :data="logs" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1400" :pagination="false">
@@ -435,15 +437,17 @@ onBeforeUnmount(() => activeController?.abort())
 .summary-denied { border-top-color: var(--warning-color, #f0a020); }
 .summary-unclassified { border-top-color: #8b8b8b; }
 .summary-hint-icon { margin-left: 4px; color: var(--text-color-3, #909399); cursor: help; vertical-align: -2px; }
-.filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; padding: 14px; border: 1px solid var(--border-color, #e8edf0); border-radius: 10px; background: var(--bg-card, #fff); }
-.filter-main { min-width: 0; }
-.display-controls { justify-content: flex-end; }
+.filters { display: grid; grid-template-areas: "keyword display" "conditions conditions"; grid-template-columns: minmax(420px, 1fr) auto; gap: 12px 20px; margin: 16px 0; padding: 16px; border: 1px solid var(--border-color, #e8edf0); border-radius: 10px; background: var(--bg-card, #fff); }
+.filter-keyword { grid-area: keyword; min-width: 0; }
+.audit-keyword { width: min(100%, 520px); min-width: 360px; }
+.filter-conditions { grid-area: conditions; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.display-controls { grid-area: display; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
 .audit-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
 .audit-operation { min-width: 0; cursor: help; }
 .audit-operation__action, .audit-operation__detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audit-operation__detail { margin-top: 2px; color: var(--text-color-3, #909399); font-size: 12px; }
 .audit-detail-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .audit-request-id { overflow-wrap: anywhere; }
-@media (max-width: 1120px) { .audit-summary { grid-template-columns: repeat(3, minmax(140px, 1fr)); } .filters { align-items: flex-start; flex-direction: column; } .display-controls { justify-content: flex-start; } }
-@media (max-width: 720px) { .audit-summary { grid-template-columns: repeat(2, minmax(140px, 1fr)); } .time-toolbar { max-width: 100%; } .audit-pagination { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 1120px) { .audit-summary { grid-template-columns: repeat(3, minmax(140px, 1fr)); } .filters { grid-template-areas: "keyword" "conditions" "display"; grid-template-columns: minmax(0, 1fr); } .display-controls { justify-content: flex-start; } }
+@media (max-width: 720px) { .audit-summary { grid-template-columns: repeat(2, minmax(140px, 1fr)); } .time-toolbar { max-width: 100%; } .audit-keyword { width: 100%; min-width: 0; } .audit-pagination { align-items: flex-start; flex-direction: column; } }
 </style>

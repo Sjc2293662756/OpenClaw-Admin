@@ -113,6 +113,9 @@ describe('AuditLogsPage', () => {
     expect(wrapper.text()).toContain('早期审计记录没有结果分类字段，不代表操作失败。')
     expect(wrapper.text()).toContain('system（系统事件）')
     expect(wrapper.text()).toContain('auditor（审计用户，已激活）')
+    expect(wrapper.find('.filter-keyword').exists()).toBe(true)
+    expect(wrapper.find('.filter-conditions').findAll('select')).toHaveLength(5)
+    expect(wrapper.find('.display-controls').findAll('select')).toHaveLength(2)
     wrapper.unmount()
   })
 
