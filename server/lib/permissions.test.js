@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import test from 'node:test'
 import express from 'express'
-import { createRoleMiddleware, getRpcPermissionDecision, isReadOnlyRpcMethod, rpcPermissionMiddleware } from './permissions.js'
+import { FORMAL_RPC_METHODS, createRoleMiddleware, getRpcPermissionDecision, isReadOnlyRpcMethod, rpcPermissionMiddleware } from './permissions.js'
 
 test('RPC permission matrix keeps privileged writes and sensitive reads restricted', () => {
   assert.equal(getRpcPermissionDecision({ role: 'admin' }, 'config.set').allowed, true)
@@ -103,6 +103,38 @@ test('unknown read-like RPC names are denied for every role including administra
       assert.equal(decision.allowed, false, `${role} ${method}`)
       assert.equal(decision.code, 'RPC_METHOD_NOT_SUPPORTED')
     }
+  }
+
+  const basicMethods = new Set([
+    'sessions.list', 'session.list', 'sessions.get', 'session.get',
+    'sessions.history', 'session.history', 'chat.history', 'sessions.usage', 'usage.sessions',
+    'sessions.delete', 'session.delete', 'status', 'health',
+    'channels.status', 'channels.list', 'channel.list', 'channel.status',
+    'plugins.list', 'plugin.list', 'plugins.status', 'plugin.status',
+  ])
+  const standardMethods = new Set([
+    ...basicMethods,
+    'agent', 'chat.send', 'chat.abort', 'agent.abort',
+    'sessions.reset', 'session.reset', 'sessions.spawn', 'session.spawn',
+    'sessions.send', 'session.send', 'sessions.patch', 'session.patch',
+    'skills.status', 'skills.list', 'system-presence', 'node.list', 'config.get',
+  ])
+  const auditorMethods = new Set([
+    'sessions.list', 'session.list', 'sessions.get', 'session.get',
+    'sessions.history', 'session.history', 'chat.history', 'sessions.usage', 'usage.sessions',
+    'usage.cost', 'cost.usage', 'status', 'health', 'system-presence', 'node.list',
+    'channels.status', 'channels.list', 'channel.list', 'channel.status',
+    'plugins.list', 'plugin.list', 'plugins.status', 'plugin.status',
+    'skills.status', 'skills.list',
+    'cron.list', 'crons.list', 'schedule.list', 'schedules.list',
+    'cron.status', 'crons.status', 'schedule.status', 'schedules.status',
+    'cron.runs', 'crons.runs', 'cron.history', 'crons.history',
+  ])
+  for (const method of FORMAL_RPC_METHODS) {
+    assert.equal(getRpcPermissionDecision({ role: 'admin' }, method).allowed, true, `admin ${method}`)
+    assert.equal(getRpcPermissionDecision({ role: 'basic' }, method).allowed, basicMethods.has(method), `basic ${method}`)
+    assert.equal(getRpcPermissionDecision({ role: 'standard' }, method).allowed, standardMethods.has(method), `standard ${method}`)
+    assert.equal(getRpcPermissionDecision({ role: 'auditor' }, method).allowed, auditorMethods.has(method), `auditor ${method}`)
   }
 })
 
