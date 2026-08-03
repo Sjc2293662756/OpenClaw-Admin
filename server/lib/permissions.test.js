@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import test from 'node:test'
 import express from 'express'
-import { createRoleMiddleware, getRpcPermissionDecision, isReadOnlyRpcMethod } from './permissions.js'
+import { createRoleMiddleware, getRpcPermissionDecision, isReadOnlyRpcMethod, rpcPermissionMiddleware } from './permissions.js'
 
 test('RPC permission matrix keeps privileged writes and sensitive reads restricted', () => {
   assert.equal(getRpcPermissionDecision({ role: 'admin' }, 'config.set').allowed, true)
@@ -96,6 +96,16 @@ test('read-only RPC classification is explicit and rejects unsafe lookalikes', (
   assert.equal(isReadOnlyRpcMethod(''), false)
 })
 
+test('unknown read-like RPC names are denied for every role including administrator', () => {
+  for (const role of ['basic', 'standard', 'auditor', 'admin']) {
+    for (const method of ['unknown.list', 'unknown.get', 'unknown.status']) {
+      const decision = getRpcPermissionDecision({ role }, method)
+      assert.equal(decision.allowed, false, `${role} ${method}`)
+      assert.equal(decision.code, 'RPC_METHOD_NOT_SUPPORTED')
+    }
+  }
+})
+
 test('HTTP role middleware rejects direct privileged requests', async () => {
   const app = express()
   const authMiddleware = (req, _res, next) => {
@@ -118,6 +128,33 @@ test('HTTP role middleware rejects direct privileged requests', async () => {
     assert.equal((await fetch(`${baseUrl}/operator`, { method: 'POST', headers: { 'x-test-role': 'standard' } })).status, 200)
     assert.equal((await fetch(`${baseUrl}/operator`, { method: 'POST', headers: { 'x-test-role': 'auditor' } })).status, 403)
     assert.equal((await fetch(`${baseUrl}/admin-only`, { method: 'POST', headers: { 'x-test-role': 'admin' } })).status, 200)
+  } finally {
+    server.close()
+    await once(server, 'close')
+  }
+})
+
+test('direct /api/rpc requests cannot bypass the registered method and role matrix', async () => {
+  const app = express()
+  app.use(express.json())
+  app.post('/api/rpc', (req, _res, next) => {
+    req.user = { role: req.get('x-test-role') || 'basic' }
+    next()
+  }, rpcPermissionMiddleware, (_req, res) => res.json({ ok: true }))
+  const server = app.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const url = `http://127.0.0.1:${server.address().port}/api/rpc`
+  const call = (role, method) => fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-test-role': role },
+    body: JSON.stringify({ method }),
+  })
+  try {
+    assert.equal((await call('standard', 'chat.send')).status, 200)
+    assert.equal((await call('standard', 'skills.update')).status, 403)
+    assert.equal((await call('auditor', 'chat.send')).status, 403)
+    assert.equal((await call('admin', 'unknown.status')).status, 403)
+    assert.equal((await call('admin', '')).status, 400)
   } finally {
     server.close()
     await once(server, 'close')

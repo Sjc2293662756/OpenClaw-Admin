@@ -19,7 +19,8 @@ const DEFAULT_CONFIG: Required<ApiClientConfig> = {
 export class ApiClient {
   private config: Required<ApiClientConfig>
   private listeners = new Map<string, Set<EventHandler>>()
-  private eventSource: EventSource | null = null
+  private abortController: AbortController | null = null
+  private connectionGeneration = 0
   private reconnectAttempts = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _state: ConnectionState = ConnectionState.DISCONNECTED
@@ -34,54 +35,80 @@ export class ApiClient {
   }
 
   connect(): void {
+    if (this.abortController || this.reconnectTimer) return
+    const generation = ++this.connectionGeneration
     this._state = ConnectionState.CONNECTING
     this.emit('stateChange', ConnectionState.CONNECTING)
     this.reconnectAttempts = 0
-    this.createEventSource()
+    void this.createEventStream(generation)
   }
 
   disconnect(): void {
+    this.connectionGeneration++
     this.clearTimers()
     this._state = ConnectionState.DISCONNECTED
-    if (this.eventSource) {
-      this.eventSource.close()
-      this.eventSource = null
-    }
+    this.abortController?.abort()
+    this.abortController = null
     this.emit('stateChange', ConnectionState.DISCONNECTED)
   }
 
-  private createEventSource(): void {
+  private async createEventStream(generation: number): Promise<void> {
+    if (generation !== this.connectionGeneration || this.abortController) return
+    const controller = new AbortController()
+    this.abortController = controller
     try {
-      let url = this.config.baseUrl
+      const url = this.config.baseUrl
         ? `${this.config.baseUrl}/api/events`
         : '/api/events'
-
       const token = this.config.getToken()
-      if (token) {
-        url += `?token=${encodeURIComponent(token)}`
+      const headers: Record<string, string> = { Accept: 'text/event-stream' }
+      if (token) headers.Authorization = `Bearer ${token}`
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+        signal: controller.signal,
+      })
+      if (response.status === 401) {
+        this._state = ConnectionState.FAILED
+        this.emit('stateChange', ConnectionState.FAILED)
+        this.emit('unauthorized')
+        this.emit('disconnected', 401, 'Unauthorized')
+        return
       }
-
-      console.log('[ApiClient] Creating EventSource:', url)
-
-      this.eventSource = new EventSource(url)
-
-      this.eventSource.onopen = () => {
-        console.log('[ApiClient] EventSource opened')
-        this.reconnectAttempts = 0
+      if (!response.ok || !response.body) {
+        throw new Error(`SSE request failed (${response.status})`)
       }
+      this.reconnectAttempts = 0
 
-      this.eventSource.onmessage = (event: MessageEvent) => {
-        this.handleMessage(event.data)
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      while (generation === this.connectionGeneration) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n')
+        let boundary = buffer.indexOf('\n\n')
+        while (boundary >= 0) {
+          const frame = buffer.slice(0, boundary)
+          buffer = buffer.slice(boundary + 2)
+          const data = frame.split('\n')
+            .filter((line) => line === 'data:' || line.startsWith('data:'))
+            .map((line) => line.slice(5).replace(/^ /, ''))
+            .join('\n')
+          if (data) this.handleMessage(data)
+          boundary = buffer.indexOf('\n\n')
+        }
       }
-
-      this.eventSource.onerror = (error) => {
-        console.error('[ApiClient] EventSource error:', error)
-        console.error('[ApiClient] EventSource readyState:', this.eventSource?.readyState)
-        this.handleDisconnect()
+      if (generation === this.connectionGeneration) this.handleDisconnect(generation)
+    } catch (error) {
+      if (generation === this.connectionGeneration && !controller.signal.aborted) {
+        console.error('[ApiClient] SSE connection failed:', error)
+        this.handleDisconnect(generation)
       }
-    } catch (e) {
-      console.error('[ApiClient] Connection failed:', e)
-      this.scheduleReconnect()
+    } finally {
+      if (this.abortController === controller) this.abortController = null
     }
   }
 
@@ -136,14 +163,8 @@ export class ApiClient {
     }
   }
 
-  private handleDisconnect(): void {
-    console.log('[ApiClient] Disconnected, current state:', this._state)
-    
-    if (this.eventSource) {
-      this.eventSource.close()
-      this.eventSource = null
-    }
-
+  private handleDisconnect(generation: number): void {
+    if (generation !== this.connectionGeneration) return
     this.emit('disconnected', 0, 'SSE disconnected')
 
     const shouldReconnect =
@@ -151,14 +172,12 @@ export class ApiClient {
       this._state !== ConnectionState.FAILED
 
     if (shouldReconnect) {
-      console.log('[ApiClient] Scheduling reconnect...')
-      this.scheduleReconnect()
-    } else {
-      console.log('[ApiClient] Not reconnecting, state:', this._state)
+      this.scheduleReconnect(generation)
     }
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(generation: number): void {
+    if (generation !== this.connectionGeneration || this.reconnectTimer) return
     if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
       console.error('[ApiClient] Max reconnect attempts reached:', this.reconnectAttempts)
       this._state = ConnectionState.FAILED
@@ -176,10 +195,9 @@ export class ApiClient {
     )
     this.reconnectAttempts++
     
-    console.log('[ApiClient] Reconnecting in', delay, 'ms, attempt', this.reconnectAttempts)
-
     this.reconnectTimer = setTimeout(() => {
-      this.createEventSource()
+      this.reconnectTimer = null
+      void this.createEventStream(generation)
     }, delay)
 
     this.emit('reconnecting', this.reconnectAttempts, delay)

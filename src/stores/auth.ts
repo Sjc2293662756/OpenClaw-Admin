@@ -135,6 +135,11 @@ export const useAuthStore = defineStore('auth', () => {
     setCurrentUser(null)
   }
 
+  function expireSession() {
+    setToken(null)
+    setCurrentUser(null)
+  }
+
   function getToken(): string | null {
     return token.value
   }
@@ -151,6 +156,7 @@ export const useAuthStore = defineStore('auth', () => {
     checkAuth,
     login,
     logout,
+    expireSession,
     getToken,
   }
 })

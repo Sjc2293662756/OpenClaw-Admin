@@ -61,6 +61,10 @@ export class OpenClawWebSocket {
       this.emit('failed', reason)
     })
 
+    this.apiClient.on('unauthorized', () => {
+      this.emit('unauthorized')
+    })
+
     this.apiClient.on('connected', (payload: unknown) => {
       this.emit('connected', payload)
     })

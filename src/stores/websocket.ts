@@ -70,6 +70,12 @@ export const useWebSocketStore = defineStore('websocket', () => {
       lastError.value = reason as string
     })
 
+    ws.value.on('unauthorized', () => {
+      useAuthStore().expireSession()
+      lastError.value = '登录状态已失效，请重新登录'
+      disconnect()
+    })
+
     ws.value.on('connected', (payload: unknown) => {
       console.log('[WebSocketStore] Connected payload:', payload)
       gatewayMethods.value = normalizeGatewayMethods(payload)
@@ -100,8 +106,8 @@ export const useWebSocketStore = defineStore('websocket', () => {
 
   function connect(url?: string) {
     lastError.value = null
-    
-    const authStore = useAuthStore()
+
+    ws.value.disconnect()
     ws.value = createWebSocket()
     rpc.value = new RPCClient(ws.value)
     listenersBound = false

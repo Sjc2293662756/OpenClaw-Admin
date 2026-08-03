@@ -13,117 +13,80 @@ export function createRoleMiddleware(authMiddleware, roles, message) {
   }
 }
 
-const SENSITIVE_READ_RPC_METHODS = new Set([
-  'exec.approvals.get',
-  'exec.approvals.node.get',
-  'logs.tail',
-  'agents.files.get',
-  'agent.files.get',
-  'sessions.export',
-  'session.export',
-])
-
-const EXPLICIT_READ_RPC_METHODS = new Set([
-  'system-presence',
-  'sessions.history',
-  'session.history',
-  'chat.history',
-  'sessions.usage',
-  'usage.sessions',
-  'usage.cost',
-  'cost.usage',
-  'cron.runs',
-  'crons.runs',
-  'cron.history',
-  'crons.history',
-])
-
-const OWNED_SESSION_DELETE_RPC_METHODS = new Set([
-  'sessions.delete',
-  'session.delete',
-])
-
 const SESSION_READ_RPC_METHODS = new Set([
-  'sessions.list',
-  'session.list',
-  'sessions.get',
-  'session.get',
-  'sessions.history',
-  'session.history',
-  'chat.history',
-  'sessions.usage',
-  'usage.sessions',
+  'sessions.list', 'session.list', 'sessions.get', 'session.get',
+  'sessions.history', 'session.history', 'chat.history',
+  'sessions.usage', 'usage.sessions',
 ])
 
-const GLOBAL_USAGE_RPC_METHODS = new Set([
-  'usage.cost',
-  'cost.usage',
+const SESSION_WRITE_RPC_METHODS = new Set([
+  'agent', 'chat.send', 'chat.abort', 'agent.abort',
+  'sessions.delete', 'session.delete', 'sessions.reset', 'session.reset',
+  'sessions.spawn', 'session.spawn', 'sessions.send', 'session.send',
+  'sessions.patch', 'session.patch',
 ])
+const OWNED_SESSION_DELETE_RPC_METHODS = new Set(['sessions.delete', 'session.delete'])
+
+const GLOBAL_USAGE_RPC_METHODS = new Set(['usage.cost', 'cost.usage'])
 
 const CHANNEL_STATUS_RPC_METHODS = new Set([
-  'channels.status',
-  'channels.list',
-  'channel.list',
-  'channel.status',
-  'plugins.list',
-  'plugin.list',
-  'plugins.status',
-  'plugin.status',
+  'channels.status', 'channels.list', 'channel.list', 'channel.status',
+  'plugins.list', 'plugin.list', 'plugins.status', 'plugin.status',
 ])
 
-const SKILL_READ_RPC_METHODS = new Set([
-  'skills.status',
-  'skills.list',
-])
+const SKILL_READ_RPC_METHODS = new Set(['skills.status', 'skills.list'])
 
 const CRON_READ_RPC_METHODS = new Set([
-  'cron.list',
-  'crons.list',
-  'schedule.list',
-  'schedules.list',
-  'cron.status',
-  'crons.status',
-  'schedule.status',
-  'schedules.status',
-  'cron.runs',
-  'crons.runs',
-  'cron.history',
-  'crons.history',
+  'cron.list', 'crons.list', 'schedule.list', 'schedules.list',
+  'cron.status', 'crons.status', 'schedule.status', 'schedules.status',
+  'cron.runs', 'crons.runs', 'cron.history', 'crons.history',
 ])
 
-const SYSTEM_STATUS_RPC_METHODS = new Set([
-  'status',
-  'health',
+const SYSTEM_STATUS_RPC_METHODS = new Set(['status', 'health'])
+const SYSTEM_MONITOR_RPC_METHODS = new Set(['system-presence', 'node.list'])
+
+const EXPLICIT_READ_RPC_METHODS = new Set([
+  ...SESSION_READ_RPC_METHODS,
+  ...GLOBAL_USAGE_RPC_METHODS,
+  ...CHANNEL_STATUS_RPC_METHODS,
+  ...SKILL_READ_RPC_METHODS,
+  ...CRON_READ_RPC_METHODS,
+  ...SYSTEM_STATUS_RPC_METHODS,
+  ...SYSTEM_MONITOR_RPC_METHODS,
+  'config.get', 'tools.list', 'models.list', 'model.list',
+  'agents.list', 'agent.list', 'agents.files.list', 'agent.files.list',
+  'agents.files.get', 'agent.files.get',
 ])
 
-const SYSTEM_MONITOR_RPC_METHODS = new Set([
-  'system-presence',
-  'node.list',
+export const ADMIN_DIAGNOSTIC_RPC_METHODS = new Set([
+  'logs.tail',
+  'exec.approvals.get', 'exec.approvals.node.get',
+  'exec.approvals.set', 'exec.approvals.node.set',
+  'node.invoke', 'node.pair.request', 'node.pair.approve',
 ])
 
-const STANDARD_WRITE_RPC_METHODS = new Set([
-  'agent',
-  'chat.send',
-  'chat.abort',
-  'agent.abort',
-  'sessions.reset',
-  'session.reset',
-  'sessions.spawn',
-  'session.spawn',
-  'sessions.send',
-  'session.send',
-  'sessions.patch',
-  'session.patch',
+export const FORMAL_RPC_METHODS = new Set([
+  ...EXPLICIT_READ_RPC_METHODS,
+  ...SESSION_WRITE_RPC_METHODS,
+  'agent.model.set',
+  'sessions.export', 'session.export',
+  'config.patch', 'config.apply', 'config.set',
+  'channel.auth', 'channels.auth', 'web.login.start', 'channel.pair', 'channels.pair',
+  'skills.install', 'skills.update',
+  'agents.create', 'agents.update', 'agents.delete',
+  'agents.files.set', 'agent.files.set',
+  'cron.add', 'cron.create', 'crons.add', 'crons.create',
+  'cron.update', 'crons.update', 'schedule.update', 'schedules.update',
+  'cron.remove', 'cron.delete', 'crons.remove', 'crons.delete', 'schedule.delete', 'schedules.delete',
+  'cron.run', 'crons.run', 'cron.trigger', 'crons.trigger',
+  'update.run',
+  ...ADMIN_DIAGNOSTIC_RPC_METHODS,
 ])
 
 export function isReadOnlyRpcMethod(method) {
   if (typeof method !== 'string') return false
   const normalized = method.trim()
-  if (!normalized || SENSITIVE_READ_RPC_METHODS.has(normalized)) return false
-  return normalized === 'status' || normalized === 'health' ||
-    normalized === 'config.get' ||
-    EXPLICIT_READ_RPC_METHODS.has(normalized) ||
-    normalized.endsWith('.list') || normalized.endsWith('.get') || normalized.includes('.status')
+  return EXPLICIT_READ_RPC_METHODS.has(normalized)
 }
 
 export function getRpcPermissionDecision(user, method) {
@@ -132,12 +95,17 @@ export function getRpcPermissionDecision(user, method) {
     return { allowed: false, code: 'INVALID_RPC_METHOD', message: 'RPC 方法无效' }
   }
 
+  if (!FORMAL_RPC_METHODS.has(normalized)) {
+    return { allowed: false, code: 'RPC_METHOD_NOT_SUPPORTED', message: 'RPC 方法未登记或不受 GAIOP 支持' }
+  }
+
   if (user?.role === 'admin') return { allowed: true }
 
-  if (
-    OWNED_SESSION_DELETE_RPC_METHODS.has(normalized) &&
-    (user?.role === 'basic' || user?.role === 'standard')
-  ) {
+  if (OWNED_SESSION_DELETE_RPC_METHODS.has(normalized) && user?.role === 'basic') {
+    return { allowed: true }
+  }
+
+  if (SESSION_WRITE_RPC_METHODS.has(normalized) && user?.role === 'standard') {
     return { allowed: true }
   }
 
@@ -194,10 +162,6 @@ export function getRpcPermissionDecision(user, method) {
     }
   }
 
-  if (user?.role === 'standard' && STANDARD_WRITE_RPC_METHODS.has(normalized)) {
-    return { allowed: true }
-  }
-
   if (user?.role === 'standard') {
     return {
       allowed: false,
@@ -215,4 +179,17 @@ export function getRpcPermissionDecision(user, method) {
 
 export function canCallRpc(user, method) {
   return getRpcPermissionDecision(user, method).allowed
+}
+
+export function rpcPermissionMiddleware(req, res, next) {
+  const method = typeof req.body?.method === 'string' ? req.body.method.trim() : ''
+  if (!method) {
+    return res.status(400).json({ ok: false, code: 'RPC_METHOD_REQUIRED', error: { message: '必须提供 RPC 方法' } })
+  }
+  const permission = getRpcPermissionDecision(req.user, method)
+  if (!permission.allowed) {
+    return res.status(403).json({ ok: false, code: permission.code, error: { message: permission.message } })
+  }
+  req.rpcMethod = method
+  next()
 }

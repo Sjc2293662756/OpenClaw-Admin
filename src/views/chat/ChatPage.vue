@@ -37,6 +37,7 @@ import { loadSelectedSessionWithBackgroundList } from '@/utils/session-loading'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { usePermissions } from '@/composables/usePermissions'
+import AuthenticatedMediaImage from '@/components/common/AuthenticatedMediaImage.vue'
 import type { AgentInstance, ChatMessage, ChatMessageContent, SessionsUsageSession, Skill } from '@/api/types'
 
 const props = withDefaults(defineProps<{ workspace?: boolean; initialDraft?: string }>(), {
@@ -461,32 +462,6 @@ function buildImageUrl(part: ChatMessageContent): string | undefined {
     const mimeType = part.mimeType || 'image/png'
     return `data:${mimeType};base64,${part.data}`
   }
-  if (part.mediaPath) {
-    let mediaPath = part.mediaPath
-    
-    // 处理 MEDIA: 前缀
-    if (mediaPath.startsWith('MEDIA:')) {
-      mediaPath = mediaPath.slice(6)
-    }
-    
-    // 从 file:// URL 中提取相对路径
-    // 例如: file:///C:/Users/xxx/.openclaw/media/browser/xxx.png -> browser/xxx.png
-    if (mediaPath.startsWith('file://')) {
-      // 查找 .openclaw/media/ 后面的相对路径
-      const mediaIndex = mediaPath.indexOf('.openclaw/media/')
-      if (mediaIndex !== -1) {
-        mediaPath = mediaPath.slice(mediaIndex + '.openclaw/media/'.length)
-      } else {
-        // 如果没有找到标准路径，尝试提取文件名
-        const lastSlash = mediaPath.lastIndexOf('/')
-        if (lastSlash !== -1) {
-          mediaPath = `browser/${mediaPath.slice(lastSlash + 1)}`
-        }
-      }
-    }
-    
-    return `/api/media?path=${encodeURIComponent(mediaPath)}`
-  }
   return undefined
 }
 
@@ -526,10 +501,9 @@ function extractImageFromText(text: string): { images: ImageItemView[]; cleanedT
     const imagePath = match[2]
     if (imagePath && imagePath.match(/\.(png|jpg|jpeg|gif|webp|bmp)$/i)) {
       const normalizedPath = normalizeMediaPath(imagePath)
-      const imageUrl = `/api/media?path=${encodeURIComponent(normalizedPath)}`
       images.push({
         mimeType: `image/${imagePath.split('.').pop()?.toLowerCase() || 'png'}`,
-        url: imageUrl,
+        mediaPath: normalizedPath,
       })
       cleanedText = cleanedText.replace(match[0], '').trim()
     }
@@ -540,10 +514,9 @@ function extractImageFromText(text: string): { images: ImageItemView[]; cleanedT
     const imagePath = match[1]
     if (imagePath && imagePath.match(/\.(png|jpg|jpeg|gif|webp|bmp)$/i)) {
       const normalizedPath = normalizeMediaPath(imagePath)
-      const imageUrl = `/api/media?path=${encodeURIComponent(normalizedPath)}`
       images.push({
         mimeType: `image/${imagePath.split('.').pop()?.toLowerCase() || 'png'}`,
-        url: imageUrl,
+        mediaPath: normalizedPath,
       })
       cleanedText = cleanedText.replace(match[0], '').trim()
     }
@@ -568,10 +541,9 @@ function parseRawContent(rawContent: ChatMessageContent[]): StructuredMessageVie
       if (trimmedText.match(/\.(png|jpg|jpeg|gif|webp|bmp)$/i)) {
         // Add "browser/" prefix for image filenames without a path
         const imagePath = trimmedText.includes('/') ? trimmedText : `browser/${trimmedText}`
-        const imageUrl = `/api/media?path=${encodeURIComponent(imagePath)}`
         images.push({
           mimeType: `image/${trimmedText.split('.').pop()?.toLowerCase() || 'png'}`,
-          url: imageUrl,
+          mediaPath: imagePath,
         })
         // Also add the image filename to plainTexts to display it as text
         plainTexts.push(cleanedText)
@@ -635,7 +607,7 @@ function parseRawContent(rawContent: ChatMessageContent[]): StructuredMessageVie
         mimeType: part.mimeType,
         bytes: part.bytes,
         data: part.data,
-        mediaPath: part.mediaPath,
+        mediaPath: part.mediaPath ? normalizeMediaPath(part.mediaPath) : undefined,
         url: imageUrl,
       })
     }
@@ -2104,10 +2076,9 @@ function parseStructuredMessage(content: string): StructuredMessageView | null {
     
     const trimmedLine = cleanedText.trim()
     if (trimmedLine.match(/\.(png|jpg|jpeg|gif|webp|bmp)$/i)) {
-      const imageUrl = `/api/media?path=${encodeURIComponent(trimmedLine)}`
       images.push({
         mimeType: `image/${trimmedLine.split('.').pop()?.toLowerCase() || 'png'}`,
-        url: imageUrl,
+        mediaPath: normalizeMediaPath(trimmedLine),
       })
     } else if (trimmedLine) {
       imagePlainTexts.push(cleanedText)
@@ -3149,6 +3120,13 @@ async function handleSend() {
                                 loading="lazy"
                                 @click="openImagePreview(img.url)"
                               />
+                              <AuthenticatedMediaImage
+                                v-else-if="img.mediaPath"
+                                :media-path="img.mediaPath"
+                                :session-key="chatStore.sessionKey"
+                                class="chat-image"
+                                @preview="openImagePreview"
+                              >{{ t('pages.chat.image.unavailable') }}</AuthenticatedMediaImage>
                               <span v-else class="chat-image-placeholder">{{ t('pages.chat.image.unavailable') }}</span>
                             </div>
                           </div>

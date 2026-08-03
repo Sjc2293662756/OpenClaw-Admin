@@ -14,7 +14,7 @@ import checkDiskSpace from 'check-disk-space'
 import { execSync } from 'child_process'
 import pty from 'node-pty'
 import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord } from './database.js'
-import { USER_ROLES, USER_STATUSES, getRpcPermissionDecision, isReadOnlyRpcMethod, createRoleMiddleware } from './lib/permissions.js'
+import { USER_ROLES, USER_STATUSES, isReadOnlyRpcMethod, createRoleMiddleware, rpcPermissionMiddleware } from './lib/permissions.js'
 import { isPasswordChangeRequest } from './lib/account-security.js'
 import { sendError } from './lib/api-response.js'
 import {
@@ -40,6 +40,8 @@ import { createChannelsRouter } from './routes/channels.js'
 import { createSystemUpgradeRouter } from './routes/system-upgrade.js'
 import { createDashboardUsageRouter } from './routes/dashboard-usage.js'
 import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
+import { createMediaRouter } from './routes/media.js'
+import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -133,18 +135,7 @@ app.use(compression({
   filter: (req, res) => req.path !== '/api/events' && compression.filter(req, res),
 }))
 app.use(express.json())
-
-// Hermes 相关源码按产品迁移需要保留，但当前 GAIOP 正式运行态不启用该模式。
-// 这里在路由入口直接拦截，避免通过旧地址绕过前端菜单进入已停用能力。
-function disabledHermesApi(_req, res) {
-  return sendError(res, {
-    status: 404,
-    code: 'FEATURE_DISABLED',
-    message: '该功能当前未启用',
-  })
-}
-app.use('/api/hermes', disabledHermesApi)
-app.use('/api/hermes-cli', disabledHermesApi)
+registerRetiredApiBarriers(app)
 
 let gateway = new OpenClawGateway(envConfig.OPENCLAW_WS_URL, envConfig.OPENCLAW_AUTH_TOKEN, envConfig.OPENCLAW_AUTH_PASSWORD, envConfig.LOG_LEVEL)
 
@@ -417,10 +408,8 @@ ensureInitialAdmin()
 
 function checkAuth(req) {
   if (!isAuthEnabled()) return { username: 'anonymous', role: 'admin' }
-  let token = req.headers.authorization?.replace('Bearer ', '') || req.cookies?.session
-  if (!token && req.query && req.query.token) {
-    token = req.query.token
-  }
+  const authorization = String(req.headers.authorization || '')
+  const token = authorization.startsWith('Bearer ') ? authorization.slice(7).trim() : ''
   if (!token) return null
   const session = sessions.get(token)
   if (!session) return null
@@ -670,6 +659,21 @@ app.use('/api/system-config/environment', createSensitiveConfigRouter({
   validateSystemSensitiveConfigInput,
 }))
 app.use('/api/reports', createReportsRouter({ db, authMiddleware, adminMiddleware, recordAudit }))
+app.use('/api/media', createMediaRouter({
+  authMiddleware,
+  roots: () => {
+    const candidates = [
+      envConfig.MEDIA_DIR,
+      process.env.OPENCLAW_HOME ? join(process.env.OPENCLAW_HOME, '.openclaw', 'media') : '',
+      join(os.homedir(), '.openclaw', 'media'),
+    ]
+    if (process.platform !== 'win32') {
+      candidates.push('/home/ubuntu/.openclaw/media', '/home/user/.openclaw/media')
+    }
+    return [...new Set(candidates.filter(Boolean))]
+  },
+  authorizeSession: (user, sessionKey) => ensureWorkspaceSessionAccess(db, user, sessionKey),
+}))
 
 // 报告文件管理已替代旧的通用工作区文件浏览器。保留旧实现代码便于回归，
 // 但所有 /api/files/* 外部访问统一停用，防止绕过报告目录边界。
@@ -1524,18 +1528,9 @@ app.get('/api/status', authMiddleware, async (req, res) => {
   }
 })
 
-app.post('/api/rpc', authMiddleware, async (req, res) => {
-  const method = typeof req.body?.method === 'string' ? req.body.method.trim() : ''
+app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) => {
+  const method = req.rpcMethod
   const params = req.body?.params
-
-  if (!method) {
-    return sendError(res, { status: 400, code: 'RPC_METHOD_REQUIRED', message: '必须提供 RPC 方法' })
-  }
-
-  const permission = getRpcPermissionDecision(req.user, method)
-  if (!permission.allowed) {
-    return sendError(res, { status: 403, code: permission.code, message: permission.message })
-  }
 
   if (!gateway.isConnected) {
     return sendError(res, { status: 503, code: 'GATEWAY_UNAVAILABLE', message: 'GAIOP 智能体服务暂未连接' })
@@ -1639,7 +1634,12 @@ app.get('/api/events', authMiddleware, (req, res) => {
     updateAvailable: initialState === 'connected' ? updateInfo : null
   })}\n\n`)
 
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded && !res.destroyed) res.write(': heartbeat\n\n')
+  }, 15_000)
+
   req.on('close', () => {
+    clearInterval(heartbeat)
     sseClients.delete(clientId)
     debug('[SSE] Client disconnected:', clientId, 'remaining clients:', sseClients.size)
   })
@@ -3235,114 +3235,6 @@ app.delete('/api/wizard/tasks/:id', adminMiddleware, (req, res) => {
     res.json({ ok: true })
   } catch (err) {
     console.error('[Wizard] Delete task error:', err)
-    res.status(500).json({ ok: false, error: { message: err.message } })
-  }
-})
-
-// Media API endpoint
-app.get('/api/media', (req, res) => {
-  try {
-    const path = req.query.path
-    if (!path) {
-      return res.status(400).json({ ok: false, error: { message: 'Path parameter is required' } })
-    }
-    
-    console.log('[Media] Request path:', path)
-    
-    // Prevent directory traversal
-    const safePath = path.replace(/\.\./g, '').replace(/\//g, sep)
-    console.log('[Media] Safe path:', safePath)
-    
-    // 支持多个可能的媒体目录，按优先级搜索
-    const possibleMediaDirs = []
-    
-    // 1. .env 文件中的 MEDIA_DIR（最高优先级）
-    if (envConfig.MEDIA_DIR) {
-      possibleMediaDirs.push(envConfig.MEDIA_DIR)
-    }
-    
-    // 2. 系统环境变量 MEDIA_DIR
-    if (process.env.MEDIA_DIR) {
-      possibleMediaDirs.push(process.env.MEDIA_DIR)
-    }
-    
-    // 3. OPENCLAW_HOME 推导的媒体目录
-    const openclawHome = process.env.OPENCLAW_HOME
-    if (openclawHome) {
-      possibleMediaDirs.push(join(openclawHome, '.openclaw', 'media'))
-    }
-    
-    // 4. 当前用户主目录
-    possibleMediaDirs.push(join(os.homedir(), '.openclaw', 'media'))
-    
-    // 5. 常见的其他用户目录（适用于 root 运行但文件在 ubuntu 用户目录的情况）
-    if (process.platform !== 'win32') {
-      possibleMediaDirs.push('/home/ubuntu/.openclaw/media')
-      possibleMediaDirs.push('/home/user/.openclaw/media')
-    }
-    
-    // 去重
-    const uniqueMediaDirs = [...new Set(possibleMediaDirs)]
-    console.log('[Media] Searching in dirs:', uniqueMediaDirs)
-    
-    let foundFile = null
-    let usedMediaDir = null
-    
-    for (const mediaDir of uniqueMediaDirs) {
-      const fullPath = resolve(mediaDir, safePath)
-      
-      // 安全检查：确保路径在媒体目录内
-      if (!fullPath.startsWith(mediaDir)) {
-        continue
-      }
-      
-      if (existsSync(fullPath)) {
-        const stats = statSync(fullPath)
-        if (stats.isFile()) {
-          foundFile = fullPath
-          usedMediaDir = mediaDir
-          break
-        }
-      }
-    }
-    
-    if (!foundFile) {
-      console.log('[Media] File not found in any media dir:', safePath)
-      return res.status(404).json({ ok: false, error: { message: 'File not found' } })
-    }
-    
-    console.log('[Media] File found:', foundFile, '| Media dir:', usedMediaDir)
-    
-    const stats = statSync(foundFile)
-    if (!stats.isFile()) {
-      return res.status(400).json({ ok: false, error: { message: 'Not a file' } })
-    }
-    
-    // Set appropriate content type based on file extension
-    const ext = extname(foundFile).toLowerCase()
-    const contentTypeMap = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif',
-      '.webp': 'image/webp',
-      '.svg': 'image/svg+xml'
-    }
-    
-    const contentType = contentTypeMap[ext] || 'application/octet-stream'
-    res.setHeader('Content-Type', contentType)
-    res.setHeader('Content-Length', stats.size)
-    
-    // Stream the file
-    const stream = createReadStream(foundFile)
-    stream.pipe(res)
-    
-    stream.on('error', (err) => {
-      console.error('[Media] Error streaming file:', err.message)
-      res.status(500).json({ ok: false, error: { message: 'Internal server error' } })
-    })
-  } catch (err) {
-    console.error('[Media] Error:', err.message)
     res.status(500).json({ ok: false, error: { message: err.message } })
   }
 })
