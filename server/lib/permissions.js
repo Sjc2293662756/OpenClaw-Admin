@@ -156,7 +156,13 @@ export function getRpcPermissionDecision(user, method) {
       return { allowed: true }
     }
     if (
-      (CHANNEL_STATUS_RPC_METHODS.has(normalized) || SKILL_READ_RPC_METHODS.has(normalized)) &&
+      CHANNEL_STATUS_RPC_METHODS.has(normalized) &&
+      (role === 'basic' || role === 'auditor' || role === 'standard')
+    ) {
+      return { allowed: true }
+    }
+    if (
+      SKILL_READ_RPC_METHODS.has(normalized) &&
       (role === 'auditor' || role === 'standard')
     ) {
       return { allowed: true }

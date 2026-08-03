@@ -30,7 +30,13 @@ test('first-stage role matrix restricts management reads and all delegated write
   assert.equal(getRpcPermissionDecision({ role: 'standard' }, 'cron.list').allowed, false)
   assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'cron.list').allowed, false)
 
-  for (const method of ['skills.list', 'channels.status', 'plugins.list']) {
+  for (const method of ['channels.status', 'channels.list', 'plugins.list', 'plugins.status']) {
+    assert.equal(getRpcPermissionDecision({ role: 'auditor' }, method).allowed, true)
+    assert.equal(getRpcPermissionDecision({ role: 'standard' }, method).allowed, true)
+    assert.equal(getRpcPermissionDecision({ role: 'basic' }, method).allowed, true)
+  }
+
+  for (const method of ['skills.list', 'skills.status']) {
     assert.equal(getRpcPermissionDecision({ role: 'auditor' }, method).allowed, true)
     assert.equal(getRpcPermissionDecision({ role: 'standard' }, method).allowed, true)
     assert.equal(getRpcPermissionDecision({ role: 'basic' }, method).allowed, false)
