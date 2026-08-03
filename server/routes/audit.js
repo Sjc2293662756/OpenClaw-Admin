@@ -1,6 +1,8 @@
 import { Router } from 'express'
 
 const MAX_PAGE_SIZE = 200
+const DEFAULT_MAX_RESULTS = 200
+const MAX_RESULTS = 3000
 
 function parseTimestamp(value) {
   const text = String(value || '').trim()
@@ -21,6 +23,14 @@ function parseText(value, maxLength = 160) {
 function parsePositiveInteger(value, fallback, max) {
   const parsed = Number.parseInt(String(value || ''), 10)
   return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), max) : fallback
+}
+
+function parseMaxResults(value, pageSize) {
+  const text = String(value ?? '').trim()
+  if (!/^\d+$/.test(text)) return Math.max(DEFAULT_MAX_RESULTS, pageSize)
+  const parsed = Number(text)
+  if (!Number.isSafeInteger(parsed)) return Math.max(DEFAULT_MAX_RESULTS, pageSize)
+  return Math.min(Math.max(parsed, pageSize), MAX_RESULTS)
 }
 
 function publicAuditLog(log) {
@@ -52,7 +62,8 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
     const hasExplicitPaging = req.query.page !== undefined || req.query.pageSize !== undefined
     const legacyLimit = parsePositiveInteger(req.query.limit, 100, MAX_PAGE_SIZE)
     const pageSize = parsePositiveInteger(req.query.pageSize, legacyLimit, MAX_PAGE_SIZE)
-    const page = hasExplicitPaging ? parsePositiveInteger(req.query.page, 1, 1_000_000) : 1
+    const requestedPage = hasExplicitPaging ? parsePositiveInteger(req.query.page, 1, 1_000_000) : 1
+    const maxResults = parseMaxResults(req.query.maxResults, pageSize)
     const filters = {
       from: parseTimestamp(req.query.from),
       to: parseTimestamp(req.query.to),
@@ -80,6 +91,11 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
     }
     const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : ''
     const total = db.prepare(`SELECT COUNT(*) AS count FROM audit_logs${where}`).get(...values).count
+    const browseTotal = Math.min(total, maxResults)
+    const totalPages = Math.ceil(browseTotal / pageSize)
+    const page = Math.min(requestedPage, Math.max(totalPages, 1))
+    const offset = (page - 1) * pageSize
+    const visibleLimit = Math.max(0, Math.min(pageSize, browseTotal - offset))
     const summary = db.prepare(`
       SELECT COUNT(*) AS total,
         COALESCE(SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END), 0) AS success,
@@ -93,12 +109,12 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
         category, result, source, rest_method, rest_path, rpc_method, error_code, request_id, source_address
       FROM audit_logs${where}
       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
-    `).all(...values, pageSize, (page - 1) * pageSize)
+    `).all(...values, visibleLimit, offset)
     res.json({
       ok: true,
       logs: logs.map(publicAuditLog),
-      filters,
-      pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+      filters: { ...filters, maxResults },
+      pagination: { page, pageSize, total, browseTotal, maxResults, totalPages },
       summary: { total: summary.total, success: summary.success, failed: summary.failed, denied: summary.denied, unclassified: summary.unclassified },
     })
   })
@@ -106,4 +122,4 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
   return router
 }
 
-export const __test__ = { parseTimestamp, parsePositiveInteger, publicAuditLog }
+export const __test__ = { parseTimestamp, parsePositiveInteger, parseMaxResults, publicAuditLog }

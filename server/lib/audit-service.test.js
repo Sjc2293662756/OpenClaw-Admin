@@ -71,6 +71,69 @@ test('structured recorder remains compatible with recordAudit and redacts sensit
   }
 })
 
+test('audit query bounds browsable pages by server-side TOP without changing real totals or summaries', async () => {
+  const db = createAuditDatabase()
+  migrateAuditLogColumns(db)
+  const app = express()
+  app.use('/api/audit-logs', createAuditRouter({
+    db,
+    auditViewerMiddleware: (_req, _res, next) => next(),
+  }))
+  const insert = db.prepare(`INSERT INTO audit_logs (
+    id, actor_user_id, actor_username, actor_role, action, target, detail, created_at,
+    category, result, source, rest_method, rest_path, rpc_method, error_code, request_id, source_address
+  ) VALUES (
+    @id, @actor_user_id, @actor_username, @actor_role, @action, @target, @detail, @created_at,
+    @category, @result, @source, @rest_method, @rest_path, @rpc_method, @error_code, @request_id, @source_address
+  )`)
+  for (let index = 1; index <= 25; index += 1) {
+    insert.run({
+      id: `top-${index}`, actor_user_id: `user-${index}`, actor_username: `user-${index}`, actor_role: 'auditor',
+      action: '查询边界测试', target: '', detail: '', created_at: index,
+      category: 'operation', result: index % 5 === 0 ? 'failed' : 'success', source: 'rest',
+      rest_method: 'GET', rest_path: '/api/audit-logs', rpc_method: null, error_code: null,
+      request_id: `request-${index}`, source_address: '127.0.0.1',
+    })
+  }
+  const server = app.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const baseUrl = `http://127.0.0.1:${server.address().port}`
+  try {
+    const first = await fetch(`${baseUrl}/api/audit-logs?page=1&pageSize=10&maxResults=12`)
+    const firstBody = await first.json()
+    assert.equal(firstBody.pagination.total, 25)
+    assert.equal(firstBody.pagination.browseTotal, 12)
+    assert.equal(firstBody.pagination.maxResults, 12)
+    assert.equal(firstBody.pagination.totalPages, 2)
+    assert.equal(firstBody.logs.length, 10)
+    assert.equal(firstBody.summary.total, 25)
+    assert.equal(firstBody.summary.total, firstBody.summary.success + firstBody.summary.failed + firstBody.summary.denied + firstBody.summary.unclassified)
+
+    const last = await fetch(`${baseUrl}/api/audit-logs?page=9&pageSize=10&maxResults=12`)
+    const lastBody = await last.json()
+    assert.equal(lastBody.pagination.page, 2)
+    assert.equal(lastBody.logs.length, 2)
+
+    const invalid = await fetch(`${baseUrl}/api/audit-logs?page=1&pageSize=100&maxResults=invalid`)
+    const invalidBody = await invalid.json()
+    assert.equal(invalidBody.pagination.maxResults, 200)
+    assert.equal(invalidBody.pagination.browseTotal, 25)
+
+    const oversized = await fetch(`${baseUrl}/api/audit-logs?page=1&pageSize=50&maxResults=999999`)
+    const oversizedBody = await oversized.json()
+    assert.equal(oversizedBody.pagination.maxResults, 3000)
+    assert.equal(oversizedBody.pagination.browseTotal, 25)
+
+    const belowPageSize = await fetch(`${baseUrl}/api/audit-logs?page=1&pageSize=50&maxResults=1`)
+    const belowPageSizeBody = await belowPageSize.json()
+    assert.equal(belowPageSizeBody.pagination.maxResults, 50)
+  } finally {
+    server.close()
+    await once(server, 'close')
+    db.close()
+  }
+})
+
 test('rejection auditing covers four roles, hidden resources, retired endpoints, bounded anonymous noise, and server filtering', async () => {
   const db = createAuditDatabase()
   migrateAuditLogColumns(db)

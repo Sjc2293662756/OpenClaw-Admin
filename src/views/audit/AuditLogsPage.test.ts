@@ -10,7 +10,7 @@ vi.mock('naive-ui', async () => {
   const slotComponent = (name: string) => component({ name, setup: (_, { slots }) => () => h('div', slots.default?.()) })
   const buttonComponent = component({ name: 'NButton', emits: ['click'], setup: (_, { emit, slots }) => () => h('button', { onClick: () => emit('click') }, slots.default?.()) })
   const inputComponent = component({
-    name: 'NInput', props: { value: { type: String, default: '' } }, emits: ['update:value', 'keyup'],
+    name: 'NInput', props: { value: { type: [String, Number], default: '' } }, emits: ['update:value', 'keyup'],
     setup(props, { emit }) { return () => h('input', { value: props.value, onInput: (event: Event) => emit('update:value', (event.target as HTMLInputElement).value), onKeyup: (event: KeyboardEvent) => emit('keyup', event) }) },
   })
   const selectComponent = component({
@@ -19,18 +19,25 @@ vi.mock('naive-ui', async () => {
   })
   const dataTableComponent = component({
     name: 'NDataTable', props: { data: { type: Array, default: () => [] }, columns: { type: Array, default: () => [] } },
-    setup(props) { return () => h('div', { class: 'audit-table-stub' }, (props.data as Array<Record<string, unknown>>).map((row) => { const detailColumn = (props.columns as Array<{ key?: string; render?: (value: Record<string, unknown>) => unknown }>).find((column) => column.key === 'detailEntry'); return h('div', { class: 'audit-row-stub' }, [h('span', String(row.action)), detailColumn?.render?.(row)] as any) })) },
+    setup(props) {
+      return () => h('div', { class: 'audit-table-stub' }, (props.data as Array<Record<string, unknown>>).map((row) => {
+        const columns = props.columns as Array<{ key?: string; render?: (value: Record<string, unknown>) => unknown }>
+        const visible = ['action', 'target', 'source', 'errorCode', 'detailEntry'].map((key) => columns.find((column) => column.key === key)?.render?.(row))
+        return h('div', { class: 'audit-row-stub' }, visible as any)
+      }))
+    },
   })
   const drawerComponent = component({ name: 'NDrawer', props: { show: Boolean }, setup: (props, { slots }) => () => props.show ? h('div', { class: 'drawer-stub' }, slots.default?.()) : null })
   const paginationComponent = component({ name: 'NPagination', props: { page: { type: Number, default: 1 } }, emits: ['update:page'], setup: (props, { emit }) => () => h('button', { class: 'next-page', onClick: () => emit('update:page', props.page + 1) }, '下一页') })
   const descriptionsItem = component({ name: 'NDescriptionsItem', props: { label: String }, setup: (props, { slots }) => () => h('div', [h('span', props.label), slots.default?.()]) })
+  const statisticComponent = component({ name: 'NStatistic', props: { value: Number }, setup: (props, { slots }) => () => h('span', [slots.label?.(), ':', String(props.value)]) })
   return {
     NAlert: slotComponent('NAlert'), NButton: buttonComponent, NCard: slotComponent('NCard'), NDataTable: dataTableComponent,
     NDescriptions: slotComponent('NDescriptions'), NDescriptionsItem: descriptionsItem, NDrawer: drawerComponent,
     NDrawerContent: slotComponent('NDrawerContent'), NEmpty: slotComponent('NEmpty'), NIcon: slotComponent('NIcon'),
-    NInput: inputComponent, NPagination: paginationComponent, NSelect: selectComponent, NSpace: slotComponent('NSpace'),
-    NStatistic: component({ name: 'NStatistic', props: { label: String, value: Number }, template: '<span>{{ label }}:{{ value }}</span>' }),
-    NTag: slotComponent('NTag'), NText: slotComponent('NText'), useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
+    NInput: inputComponent, NInputNumber: inputComponent, NPagination: paginationComponent, NSelect: selectComponent, NSpace: slotComponent('NSpace'),
+    NStatistic: statisticComponent, NTag: slotComponent('NTag'), NText: slotComponent('NText'), NTooltip: slotComponent('NTooltip'),
+    useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
   }
 })
 
@@ -40,10 +47,19 @@ vi.mock('@/components/common/TimeRangePicker.vue', async () => {
   return { default: defineComponent({ name: 'TimePickerStub', emits: ['apply'], setup: () => () => h('button', { class: 'time-picker-stub' }) }) }
 })
 
-function responseFor(url: string, action = '查询结果') {
+function usersResponse() {
+  return new Response(JSON.stringify({ ok: true, users: [
+    { id: 'auditor-id', username: 'auditor', role: 'auditor', status: 'active' },
+    { id: 'inactive-id', username: 'former-user', role: 'basic', status: 'inactive' },
+  ] }), { status: 200, headers: { 'content-type': 'application/json' } })
+}
+
+function responseFor(url: string, action = '查询结果', total = 81, overrides: Record<string, unknown> = {}) {
   const params = new URL(url, 'http://audit.local').searchParams
   const currentPage = Number(params.get('page') || '1')
   const currentPageSize = Number(params.get('pageSize') || '20')
+  const maxResults = Number(params.get('maxResults') || '200')
+  const browseTotal = Math.min(total, maxResults)
   return new Response(JSON.stringify({
     ok: true,
     logs: [{
@@ -51,9 +67,10 @@ function responseFor(url: string, action = '查询结果') {
       target: '报告 report-42', detail: '隔离测试说明', createdAt: new Date(2026, 7, 3, 10, 5, 6).getTime(),
       category: 'authorization', result: 'denied', source: 'rpc', restMethod: null, restPath: null,
       rpcMethod: 'config.set', errorCode: 'RPC_METHOD_FORBIDDEN', requestId: 'request-42', sourceAddress: '127.0.0.1',
+      ...overrides,
     }],
-    pagination: { page: currentPage, pageSize: currentPageSize, total: 81, totalPages: Math.ceil(81 / currentPageSize) },
-    summary: { total: 81, success: 50, failed: 10, denied: 20, unclassified: 1 },
+    pagination: { page: currentPage, pageSize: currentPageSize, total, browseTotal, maxResults, totalPages: Math.ceil(browseTotal / currentPageSize) },
+    summary: { total, success: total - 31, failed: 10, denied: 20, unclassified: 1 },
   }), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
@@ -68,7 +85,10 @@ describe('AuditLogsPage', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 7, 3, 10, 30, 0))
-    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => Promise.resolve(responseFor(String(input)))))
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      return Promise.resolve(url === '/api/users' ? usersResponse() : responseFor(url))
+    }))
   })
 
   afterEach(() => {
@@ -76,7 +96,7 @@ describe('AuditLogsPage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('queries today by default and renders the five server summaries', async () => {
+  it('queries today with the default server-side TOP and renders the five summaries', async () => {
     const wrapper = mountPage()
     await flushPromises()
 
@@ -86,40 +106,41 @@ describe('AuditLogsPage', () => {
     expect(firstUrl).toContain(`to=${today[1]}`)
     expect(firstUrl).toContain('page=1')
     expect(firstUrl).toContain('pageSize=20')
+    expect(firstUrl).toContain('maxResults=200')
     expect(wrapper.text()).toContain('总记录:81')
     expect(wrapper.text()).toContain('成功:50')
-    expect(wrapper.text()).toContain('失败:10')
-    expect(wrapper.text()).toContain('已记录拒绝:20')
-    expect(wrapper.text()).toContain('历史未分类:1')
+    expect(wrapper.text()).toContain('历史未结构化')
+    expect(wrapper.text()).toContain('早期审计记录没有结果分类字段，不代表操作失败。')
+    expect(wrapper.text()).toContain('system（系统事件）')
+    expect(wrapper.text()).toContain('auditor（审计用户，已激活）')
     wrapper.unmount()
   })
 
-  it('sends filters to the server, resets them, and resets paging when the range or page size changes', async () => {
+  it('uses the selected system user and all server filters, then resets filters and time to today', async () => {
     const wrapper = mountPage()
     await flushPromises()
     const inputs = wrapper.findAll('input')
     await inputs[0]!.setValue('拒绝记录')
-    await inputs[1]!.setValue('auditor')
-    await inputs[2]!.setValue('RPC_METHOD_FORBIDDEN')
+    await inputs[1]!.setValue('RPC_METHOD_FORBIDDEN')
     const selects = wrapper.findAll('select')
-    await selects[0]!.setValue('auditor')
-    await selects[1]!.setValue('authorization')
-    await selects[2]!.setValue('denied')
-    await selects[3]!.setValue('rpc')
+    await selects[0]!.setValue('system')
+    await selects[1]!.setValue('auditor')
+    await selects[2]!.setValue('authorization')
+    await selects[3]!.setValue('denied')
+    await selects[4]!.setValue('rpc')
     await inputs[0]!.trigger('keyup.enter')
     await flushPromises()
 
     let requestUrl = lastFetchUrl()
+    expect(requestUrl).toContain('username=system')
     expect(requestUrl).toContain('keyword=%E6%8B%92%E7%BB%9D%E8%AE%B0%E5%BD%95')
-    expect(requestUrl).toContain('username=auditor')
     expect(requestUrl).toContain('role=auditor')
     expect(requestUrl).toContain('category=authorization')
     expect(requestUrl).toContain('result=denied')
     expect(requestUrl).toContain('source=rpc')
     expect(requestUrl).toContain('errorCode=RPC_METHOD_FORBIDDEN')
-    expect(requestUrl).toContain('page=1')
 
-    await selects[selects.length - 1]!.setValue('50')
+    await selects[5]!.setValue('50')
     await flushPromises()
     requestUrl = lastFetchUrl()
     expect(requestUrl).toContain('pageSize=50')
@@ -127,28 +148,51 @@ describe('AuditLogsPage', () => {
 
     await wrapper.get('.next-page').trigger('click')
     await flushPromises()
+    expect(lastFetchUrl()).toContain('page=2')
+
+    await selects[6]!.setValue('50')
+    await flushPromises()
     requestUrl = lastFetchUrl()
-    expect(requestUrl).toContain('page=2')
-    expect(requestUrl).toContain('pageSize=50')
+    expect(requestUrl).toContain('maxResults=50')
+    expect(requestUrl).toContain('page=1')
+    expect(wrapper.text()).toContain('当前筛选结果超过 TOP 50，可提高 TOP 值继续查看。')
+    expect(wrapper.text()).toContain('匹配 81 条，当前最多查看 TOP 50。')
 
     const reset = wrapper.findAll('button').find((button) => button.text() === '重置')
     await reset!.trigger('click')
     await flushPromises()
     requestUrl = lastFetchUrl()
-    expect(requestUrl).not.toContain('keyword=')
+    const today = rangeForPreset('today', new Date(2026, 7, 3, 10, 30, 0).getTime())
+    expect(requestUrl).toContain(`from=${today[0]}`)
     expect(requestUrl).not.toContain('username=')
+    expect(requestUrl).not.toContain('keyword=')
     expect(requestUrl).not.toContain('role=')
-    expect(requestUrl).not.toContain('category=')
-    expect(requestUrl).not.toContain('result=')
-    expect(requestUrl).not.toContain('source=')
-    expect(requestUrl).not.toContain('errorCode=')
     expect(requestUrl).toContain('page=1')
+    expect(requestUrl).toContain('pageSize=50')
+    expect(requestUrl).toContain('maxResults=50')
+    wrapper.unmount()
+  })
+
+  it('bounds custom TOP client input before sending it to the server', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    const top = wrapper.findAll('select')[6]!
+    await top.setValue('custom')
+    const customInput = wrapper.findAll('input')[2]!
+    await customInput.setValue('5000')
+    const apply = wrapper.findAll('button').find((button) => button.text() === '应用 TOP')
+    await apply!.trigger('click')
+    await flushPromises()
+    expect(lastFetchUrl()).toContain('maxResults=3000')
     wrapper.unmount()
   })
 
   it('keeps the newest response when fast consecutive requests complete out of order', async () => {
     const resolvers: Array<(response: Response) => void> = []
-    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => resolvers.push(resolve))))
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      if (String(input) === '/api/users') return Promise.resolve(usersResponse())
+      return new Promise<Response>((resolve) => resolvers.push(resolve))
+    }))
     const wrapper = mountPage()
     await Promise.resolve()
     const keyword = wrapper.findAll('input')[0]!
@@ -156,9 +200,9 @@ describe('AuditLogsPage', () => {
     await keyword.trigger('keyup.enter')
     expect(resolvers).toHaveLength(2)
 
-    resolvers[1]!(responseFor('/api/audit-logs?page=1&pageSize=20', '最新结果'))
+    resolvers[1]!(responseFor('/api/audit-logs?page=1&pageSize=20&maxResults=200', '最新结果'))
     await flushPromises()
-    resolvers[0]!(responseFor('/api/audit-logs?page=1&pageSize=20', '旧结果'))
+    resolvers[0]!(responseFor('/api/audit-logs?page=1&pageSize=20&maxResults=200', '旧结果'))
     await flushPromises()
 
     expect(wrapper.text()).toContain('最新结果')
@@ -166,19 +210,24 @@ describe('AuditLogsPage', () => {
     wrapper.unmount()
   })
 
-  it('shows complete safe details and copies the request id', async () => {
+  it('uses compact dashes in the table while retaining historical missing values in the detail drawer', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      return Promise.resolve(url === '/api/users' ? usersResponse() : responseFor(url, '无说明操作', 1, { target: '', detail: '', source: null, errorCode: null, restMethod: null, restPath: null, rpcMethod: null }))
+    }))
     const copy = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: copy } })
     const wrapper = mountPage()
     await flushPromises()
+
+    expect(wrapper.find('.audit-table-stub').text()).toContain('无说明操作')
+    expect(wrapper.find('.audit-table-stub').text()).toContain('—')
+    expect(wrapper.find('.audit-table-stub').text()).not.toContain('历史未记录')
     await wrapper.get('.audit-table-stub button').trigger('click')
     await flushPromises()
-
-    expect(wrapper.text()).toContain('用户 IDuser-42')
-    expect(wrapper.text()).toContain('权限校验')
-    expect(wrapper.text()).toContain('Gateway RPC')
-    expect(wrapper.text()).toContain('RPC_METHOD_FORBIDDEN')
-    expect(wrapper.text()).toContain('来源地址127.0.0.1')
+    expect(wrapper.text()).toContain('完整说明历史未记录')
+    expect(wrapper.text()).toContain('REST 方法历史未记录')
+    expect(wrapper.text()).toContain('错误码历史未记录')
     const copyButton = wrapper.findAll('button').find((button) => button.text() === '复制')
     await copyButton!.trigger('click')
     expect(copy).toHaveBeenCalledWith('request-42')

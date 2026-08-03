@@ -12,16 +12,18 @@ import {
   NEmpty,
   NIcon,
   NInput,
+  NInputNumber,
   NPagination,
   NSelect,
   NSpace,
   NStatistic,
   NTag,
   NText,
+  NTooltip,
   type DataTableColumns,
   useMessage,
 } from 'naive-ui'
-import { CopyOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { CopyOutline, InformationCircleOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
@@ -46,12 +48,12 @@ type AuditLog = {
   requestId: string | null
   sourceAddress: string | null
 }
-
+type ManagedUser = { id: string; username: string; role: string; status: string }
 type AuditSummary = { total: number; success: number; failed: number; denied: number; unclassified: number }
-type AuditPagination = { page: number; pageSize: number; total: number; totalPages: number }
+type AuditPagination = { page: number; pageSize: number; total: number; browseTotal: number; maxResults: number; totalPages: number }
 type AuditFilters = {
   keyword: string
-  username: string
+  username: string | null
   role: string | null
   category: string | null
   result: string | null
@@ -60,25 +62,33 @@ type AuditFilters = {
 }
 type AuditResponse = { ok: boolean; logs: AuditLog[]; pagination: AuditPagination; summary: AuditSummary; error?: string }
 
+const DEFAULT_MAX_RESULTS = 200
+const MAX_RESULTS = 3000
 const authStore = useAuthStore()
 const message = useMessage()
 const loading = ref(false)
 const forbidden = ref(false)
 const loadError = ref('')
 const logs = ref<AuditLog[]>([])
+const users = ref<ManagedUser[]>([])
 const selectedLog = ref<AuditLog | null>(null)
 const detailVisible = ref(false)
 const timePreset = ref<TimeRangePreset>('today')
 const timeRange = ref<TimeRange>(rangeForPreset('today', Date.now()))
 const page = ref(1)
 const pageSize = ref(20)
-const pagination = ref<AuditPagination>({ page: 1, pageSize: 20, total: 0, totalPages: 0 })
+const maxResults = ref(DEFAULT_MAX_RESULTS)
+const resultLimitChoice = ref(String(DEFAULT_MAX_RESULTS))
+const customResultLimit = ref<number | null>(DEFAULT_MAX_RESULTS)
+const pagination = ref<AuditPagination>({ page: 1, pageSize: 20, total: 0, browseTotal: 0, maxResults: DEFAULT_MAX_RESULTS, totalPages: 0 })
 const summary = ref<AuditSummary>({ total: 0, success: 0, failed: 0, denied: 0, unclassified: 0 })
-const filters = ref<AuditFilters>({ keyword: '', username: '', role: null, category: null, result: null, source: null, errorCode: '' })
+const filters = ref<AuditFilters>({ keyword: '', username: null, role: null, category: null, result: null, source: null, errorCode: '' })
 const auditTimeRangePresets: readonly TimeRangePreset[] = ['today', 'yesterday', 'last7days', 'last30days', 'custom']
-const pageSizeOptions = [20, 50, 100].map((value) => ({ label: `${value} 条/页`, value }))
+const pageSizeOptions = [10, 20, 50, 100].map((value) => ({ label: `${value} 条/页`, value }))
+const resultLimitOptions = [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: '自定义 TOP', value: 'custom' }])
 const roleLabels: Record<string, string> = { basic: '基础用户', auditor: '审计用户', standard: '标准用户', admin: '管理员', system: '系统' }
 const roleTypes: Record<string, 'default' | 'info' | 'success' | 'warning'> = { basic: 'default', auditor: 'info', standard: 'success', admin: 'warning', system: 'default' }
+const statusLabels: Record<string, string> = { active: '已激活', inactive: '未激活' }
 const categoryLabels: Record<string, string> = { authentication: '身份认证', authorization: '权限校验', resource_access: '资源访问', operation: '业务操作', system: '系统事件' }
 const sourceLabels: Record<string, string> = { auth: '登录认证', rest: 'REST接口', rpc: 'Gateway RPC', system: '系统' }
 const resultLabels: Record<Exclude<AuditValue, null>, string> = { success: '成功', failed: '失败', denied: '拒绝' }
@@ -91,16 +101,29 @@ const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => ({ va
 let requestSequence = 0
 let activeController: AbortController | null = null
 
+const isCustomLimit = computed(() => resultLimitChoice.value === 'custom')
+const effectiveMaxResults = computed(() => pagination.value.maxResults || maxResults.value)
+const topLimited = computed(() => pagination.value.total > effectiveMaxResults.value)
+const userOptions = computed(() => [
+  { label: 'system（系统事件）', value: 'system' },
+  ...users.value
+    .filter((user) => user.username !== 'system')
+    .map((user) => ({ label: `${user.username}（${displayRole(user.role)}，${statusLabels[user.status] || user.status}）`, value: user.username })),
+])
 const summaryItems = computed(() => [
   { label: '总记录', value: summary.value.total, className: 'summary-total' },
   { label: '成功', value: summary.value.success, className: 'summary-success' },
   { label: '失败', value: summary.value.failed, className: 'summary-failed' },
   { label: '已记录拒绝', value: summary.value.denied, className: 'summary-denied' },
-  { label: '历史未分类', value: summary.value.unclassified, className: 'summary-unclassified' },
+  { label: '历史未结构化', value: summary.value.unclassified, className: 'summary-unclassified', hint: '早期审计记录没有结果分类字段，不代表操作失败。' },
 ])
 
 function displayValue(value: unknown) {
   return value === null || value === undefined || String(value).trim() === '' ? '历史未记录' : String(value)
+}
+
+function displayTableValue(value: unknown) {
+  return value === null || value === undefined || String(value).trim() === '' ? '—' : String(value)
 }
 
 function displayRole(role: string | null | undefined) {
@@ -130,12 +153,24 @@ function addTextParameter(params: URLSearchParams, name: string, value: string |
   if (text) params.set(name, text)
 }
 
+function boundedMaxResults(value: unknown) {
+  const numeric = Math.trunc(Number(value))
+  const fallback = Math.max(DEFAULT_MAX_RESULTS, pageSize.value)
+  return Math.min(Math.max(Number.isFinite(numeric) ? numeric : fallback, pageSize.value), MAX_RESULTS)
+}
+
+function synchronizeResultLimitChoice(value: number) {
+  resultLimitChoice.value = [50, 100, 200, 500, 1000].includes(value) ? String(value) : 'custom'
+  if (resultLimitChoice.value === 'custom') customResultLimit.value = value
+}
+
 function buildRequestUrl() {
   const params = new URLSearchParams({
     from: String(timeRange.value[0]),
     to: String(timeRange.value[1]),
     page: String(page.value),
     pageSize: String(pageSize.value),
+    maxResults: String(maxResults.value),
   })
   addTextParameter(params, 'keyword', filters.value.keyword)
   addTextParameter(params, 'username', filters.value.username)
@@ -145,6 +180,16 @@ function buildRequestUrl() {
   addTextParameter(params, 'source', filters.value.source)
   addTextParameter(params, 'errorCode', filters.value.errorCode)
   return `/api/audit-logs?${params.toString()}`
+}
+
+async function loadUsers() {
+  try {
+    const response = await fetch('/api/users', { headers: { Authorization: `Bearer ${authStore.getToken()}` } })
+    const data = await response.json()
+    if (response.ok && data.ok && Array.isArray(data.users)) users.value = data.users
+  } catch {
+    // 审计查询仍可用；历史用户名继续可由关键词检索。
+  }
 }
 
 async function loadLogs() {
@@ -171,6 +216,8 @@ async function loadLogs() {
     pagination.value = data.pagination
     summary.value = data.summary
     page.value = data.pagination.page
+    maxResults.value = data.pagination.maxResults
+    synchronizeResultLimitChoice(data.pagination.maxResults)
     selectedLog.value = null
     detailVisible.value = false
   } catch (error) {
@@ -194,12 +241,36 @@ function applyTimeRange(range: TimeRange, preset: TimeRangePreset) {
 }
 
 function resetFilters() {
-  filters.value = { keyword: '', username: '', role: null, category: null, result: null, source: null, errorCode: '' }
+  filters.value = { keyword: '', username: null, role: null, category: null, result: null, source: null, errorCode: '' }
+  timePreset.value = 'today'
+  timeRange.value = rangeForPreset('today', Date.now())
   queryFromFirstPage()
 }
 
 function applyPageSize(value: number) {
-  pageSize.value = value
+  pageSize.value = Number(value)
+  if (maxResults.value < pageSize.value) {
+    maxResults.value = pageSize.value
+    synchronizeResultLimitChoice(maxResults.value)
+  }
+  queryFromFirstPage()
+}
+
+function handleResultLimitChoice(value: string) {
+  resultLimitChoice.value = value
+  if (value === 'custom') {
+    customResultLimit.value = maxResults.value
+    return
+  }
+  maxResults.value = boundedMaxResults(value)
+  synchronizeResultLimitChoice(maxResults.value)
+  queryFromFirstPage()
+}
+
+function applyCustomResultLimit() {
+  maxResults.value = boundedMaxResults(customResultLimit.value)
+  customResultLimit.value = maxResults.value
+  synchronizeResultLimitChoice(maxResults.value)
   queryFromFirstPage()
 }
 
@@ -235,20 +306,31 @@ async function copyRequestId(requestId: string | null) {
   }
 }
 
+function renderOperation(row: AuditLog) {
+  const detail = String(row.detail || '').trim()
+  return h('div', { class: 'audit-operation', title: detail ? `${displayTableValue(row.action)}\n${detail}` : displayTableValue(row.action) }, [
+    h('div', { class: 'audit-operation__action' }, displayTableValue(row.action)),
+    detail ? h('div', { class: 'audit-operation__detail' }, detail) : null,
+  ])
+}
+
 const columns: DataTableColumns<AuditLog> = [
   { title: '时间', key: 'createdAt', width: 174, render: (row) => formatTime(row.createdAt) },
   { title: '结果', key: 'result', width: 96, render: (row) => h(NTag, { type: row.result ? resultTypes[row.result] : 'default', bordered: false }, { default: () => displayResult(row.result) }) },
-  { title: '操作用户', key: 'username', width: 118, ellipsis: { tooltip: true }, render: (row) => displayValue(row.username) },
+  { title: '操作用户', key: 'username', width: 118, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.username) },
   { title: '用户角色', key: 'role', width: 112, render: (row) => h(NTag, { type: roleTypes[row.role] || 'default', bordered: false }, { default: () => displayRole(row.role) }) },
   { title: '分类', key: 'category', width: 112, ellipsis: { tooltip: true }, render: (row) => displayCategory(row.category) },
-  { title: '操作 / 说明', key: 'action', minWidth: 210, render: (row) => h('div', { class: 'audit-operation', title: `${displayValue(row.action)}\n${displayValue(row.detail)}` }, [h('div', { class: 'audit-operation__action' }, displayValue(row.action)), h('div', { class: 'audit-operation__detail' }, displayValue(row.detail))]) },
-  { title: '对象', key: 'target', minWidth: 150, ellipsis: { tooltip: true }, render: (row) => displayValue(row.target) },
-  { title: '来源', key: 'source', width: 104, ellipsis: { tooltip: true }, render: (row) => displaySource(row.source) },
-  { title: '错误码', key: 'errorCode', width: 138, ellipsis: { tooltip: true }, render: (row) => displayValue(row.errorCode) },
+  { title: '操作 / 说明', key: 'action', minWidth: 210, render: renderOperation },
+  { title: '对象', key: 'target', minWidth: 150, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.target) },
+  { title: '来源', key: 'source', width: 104, ellipsis: { tooltip: true }, render: (row) => row.source ? displaySource(row.source) : '—' },
+  { title: '错误码', key: 'errorCode', width: 138, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.errorCode) },
   { title: '详情', key: 'detailEntry', width: 76, fixed: 'right', render: (row) => h(NButton, { size: 'small', tertiary: true, onClick: () => openDetail(row) }, { default: () => '查看' }) },
 ]
 
-onMounted(() => { void loadLogs() })
+onMounted(() => {
+  void loadLogs()
+  void loadUsers()
+})
 onBeforeUnmount(() => activeController?.abort())
 </script>
 
@@ -256,34 +338,50 @@ onBeforeUnmount(() => activeController?.abort())
   <section class="audit-page">
     <NCard title="审计信息" :bordered="false" class="audit-card">
       <template #header-extra>
-        <NSpace align="center" wrap>
-          <TimeRangePicker v-model="timeRange" :preset="timePreset" :presets="auditTimeRangePresets" @apply="applyTimeRange" />
-          <NButton :loading="loading" @click="loadLogs"><template #icon><NIcon><RefreshOutline /></NIcon></template>刷新</NButton>
+        <NSpace class="time-toolbar" align="center" wrap :size="8">
+          <TimeRangePicker v-model="timeRange" :preset="timePreset" :presets="auditTimeRangePresets" compact placement="bottom-end" @apply="applyTimeRange" />
+          <NButton size="small" :loading="loading" @click="loadLogs"><template #icon><NIcon><RefreshOutline /></NIcon></template>刷新</NButton>
         </NSpace>
       </template>
 
       <NAlert v-if="forbidden" type="warning" :bordered="false">审计信息仅审计用户和管理员可查看。</NAlert>
       <template v-else>
+        <NAlert v-if="topLimited" type="warning" :bordered="false" class="audit-alert">当前筛选结果超过 TOP {{ effectiveMaxResults }}，可提高 TOP 值继续查看。</NAlert>
         <NAlert v-if="loadError" type="error" :bordered="false" class="audit-alert">{{ loadError }}；已保留上次查询结果。</NAlert>
 
         <div class="audit-summary" aria-label="当前筛选范围汇总">
           <NCard v-for="item in summaryItems" :key="item.label" :bordered="true" size="small" :class="['audit-summary__item', item.className]">
-            <NStatistic :label="item.label" :value="item.value" />
+            <NStatistic :value="item.value">
+              <template #label>
+                <span>{{ item.label }}</span>
+                <NTooltip v-if="item.hint"><template #trigger><NIcon class="summary-hint-icon" :component="InformationCircleOutline" /></template>{{ item.hint }}</NTooltip>
+              </template>
+            </NStatistic>
           </NCard>
         </div>
 
-        <div class="audit-filters">
-          <NInput v-model:value="filters.keyword" clearable placeholder="关键词：用户、操作、对象或说明" style="width: 250px" @keyup.enter="queryFromFirstPage">
-            <template #prefix><NIcon><SearchOutline /></NIcon></template>
-          </NInput>
-          <NInput v-model:value="filters.username" clearable placeholder="用户名" style="width: 150px" />
-          <NSelect v-model:value="filters.role" clearable placeholder="全部角色" :options="roleOptions" style="width: 140px" />
-          <NSelect v-model:value="filters.category" clearable placeholder="全部分类" :options="categoryOptions" style="width: 150px" />
-          <NSelect v-model:value="filters.result" clearable placeholder="全部结果" :options="resultOptions" style="width: 128px" />
-          <NSelect v-model:value="filters.source" clearable placeholder="全部来源" :options="sourceOptions" style="width: 140px" />
-          <NInput v-model:value="filters.errorCode" clearable placeholder="错误码" style="width: 150px" />
-          <NButton type="primary" @click="queryFromFirstPage">查询</NButton>
-          <NButton @click="resetFilters">重置</NButton>
+        <div class="filters">
+          <div class="filter-main">
+            <NSpace wrap :size="10">
+              <NInput v-model:value="filters.keyword" clearable placeholder="关键词：操作、对象、说明或历史用户" style="width: 250px" @keyup.enter="queryFromFirstPage">
+                <template #prefix><NIcon><SearchOutline /></NIcon></template>
+              </NInput>
+              <NSelect v-model:value="filters.username" clearable filterable placeholder="全部用户" :options="userOptions" style="width: 220px" />
+              <NSelect v-model:value="filters.role" clearable placeholder="全部角色" :options="roleOptions" style="width: 140px" />
+              <NSelect v-model:value="filters.category" clearable placeholder="全部分类" :options="categoryOptions" style="width: 150px" />
+              <NSelect v-model:value="filters.result" clearable placeholder="全部结果" :options="resultOptions" style="width: 128px" />
+              <NSelect v-model:value="filters.source" clearable placeholder="全部来源" :options="sourceOptions" style="width: 140px" />
+              <NInput v-model:value="filters.errorCode" clearable placeholder="错误码" style="width: 150px" @keyup.enter="queryFromFirstPage" />
+              <NButton type="primary" :disabled="loading" @click="queryFromFirstPage">查询</NButton>
+              <NButton secondary :disabled="loading" @click="resetFilters">重置</NButton>
+            </NSpace>
+          </div>
+          <NSpace class="display-controls" wrap :size="10">
+            <NSelect :value="pageSize" :options="pageSizeOptions" style="width: 112px" @update:value="applyPageSize" />
+            <NSelect :value="resultLimitChoice" :options="resultLimitOptions" style="width: 148px" @update:value="handleResultLimitChoice" />
+            <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="MAX_RESULTS" :precision="0" placeholder="最高 3000 条" style="width: 150px" />
+            <NButton v-if="isCustomLimit" type="primary" :disabled="loading" @click="applyCustomResultLimit">应用 TOP</NButton>
+          </NSpace>
         </div>
 
         <NDataTable :columns="columns" :data="logs" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1400" :pagination="false">
@@ -291,11 +389,8 @@ onBeforeUnmount(() => activeController?.abort())
         </NDataTable>
 
         <div class="audit-pagination">
-          <NText depth="3">共 {{ pagination.total }} 条记录</NText>
-          <NSpace align="center" wrap>
-            <NSelect :value="pageSize" :options="pageSizeOptions" style="width: 112px" @update:value="applyPageSize" />
-            <NPagination :page="page" :page-count="pagination.totalPages" :disabled="loading || pagination.totalPages <= 1" @update:page="changePage" />
-          </NSpace>
+          <NText depth="3">匹配 {{ pagination.total }} 条，当前最多查看 TOP {{ effectiveMaxResults }}。</NText>
+          <NPagination :page="page" :page-count="pagination.totalPages" :disabled="loading || pagination.totalPages <= 1" @update:page="changePage" />
         </div>
       </template>
     </NCard>
@@ -331,6 +426,7 @@ onBeforeUnmount(() => activeController?.abort())
 .audit-page { display: grid; gap: 16px; }
 .audit-card { min-height: 420px; }
 .audit-alert { margin-bottom: 14px; }
+.time-toolbar { justify-content: flex-end; }
 .audit-summary { display: grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .audit-summary__item { border-top-width: 3px; }
 .summary-total { border-top-color: var(--primary-color, #2080f0); }
@@ -338,13 +434,16 @@ onBeforeUnmount(() => activeController?.abort())
 .summary-failed { border-top-color: var(--error-color, #d03050); }
 .summary-denied { border-top-color: var(--warning-color, #f0a020); }
 .summary-unclassified { border-top-color: #8b8b8b; }
-.audit-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; padding: 14px; border: 1px solid var(--border-color, #e8edf0); border-radius: 10px; background: var(--bg-card, #fff); }
+.summary-hint-icon { margin-left: 4px; color: var(--text-color-3, #909399); cursor: help; vertical-align: -2px; }
+.filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; padding: 14px; border: 1px solid var(--border-color, #e8edf0); border-radius: 10px; background: var(--bg-card, #fff); }
+.filter-main { min-width: 0; }
+.display-controls { justify-content: flex-end; }
 .audit-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; }
 .audit-operation { min-width: 0; cursor: help; }
 .audit-operation__action, .audit-operation__detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audit-operation__detail { margin-top: 2px; color: var(--text-color-3, #909399); font-size: 12px; }
 .audit-detail-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .audit-request-id { overflow-wrap: anywhere; }
-@media (max-width: 1120px) { .audit-summary { grid-template-columns: repeat(3, minmax(140px, 1fr)); } }
-@media (max-width: 720px) { .audit-summary { grid-template-columns: repeat(2, minmax(140px, 1fr)); } .audit-pagination { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 1120px) { .audit-summary { grid-template-columns: repeat(3, minmax(140px, 1fr)); } .filters { align-items: flex-start; flex-direction: column; } .display-controls { justify-content: flex-start; } }
+@media (max-width: 720px) { .audit-summary { grid-template-columns: repeat(2, minmax(140px, 1fr)); } .time-toolbar { max-width: 100%; } .audit-pagination { align-items: flex-start; flex-direction: column; } }
 </style>
