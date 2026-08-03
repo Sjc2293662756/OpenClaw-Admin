@@ -26,6 +26,7 @@ function parsePositiveInteger(value, fallback, max) {
 function publicAuditLog(log) {
   return {
     id: log.id,
+    actorUserId: log.actor_user_id || null,
     username: log.actor_username,
     role: log.actor_role,
     action: log.action,
@@ -83,11 +84,12 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
       SELECT COUNT(*) AS total,
         COALESCE(SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END), 0) AS success,
         COALESCE(SUM(CASE WHEN result = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
-        COALESCE(SUM(CASE WHEN result = 'denied' THEN 1 ELSE 0 END), 0) AS denied
+        COALESCE(SUM(CASE WHEN result = 'denied' THEN 1 ELSE 0 END), 0) AS denied,
+        COALESCE(SUM(CASE WHEN result IS NULL OR result NOT IN ('success', 'failed', 'denied') THEN 1 ELSE 0 END), 0) AS unclassified
       FROM audit_logs${where}
     `).get(...values)
     const logs = db.prepare(`
-      SELECT id, actor_username, actor_role, action, target, detail, created_at,
+      SELECT id, actor_user_id, actor_username, actor_role, action, target, detail, created_at,
         category, result, source, rest_method, rest_path, rpc_method, error_code, request_id, source_address
       FROM audit_logs${where}
       ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
@@ -97,7 +99,7 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
       logs: logs.map(publicAuditLog),
       filters,
       pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
-      summary: { total: summary.total, success: summary.success, failed: summary.failed, denied: summary.denied },
+      summary: { total: summary.total, success: summary.success, failed: summary.failed, denied: summary.denied, unclassified: summary.unclassified },
     })
   })
 

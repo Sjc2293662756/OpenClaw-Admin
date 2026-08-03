@@ -18,12 +18,14 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   compact?: boolean
   placement?: 'bottom-start' | 'bottom-end'
+  presets?: readonly TimeRangePreset[]
 }>(), {
   preset: 'custom',
   serverNow: () => Date.now(),
   disabled: false,
   compact: false,
   placement: 'bottom-start',
+  presets: () => ['lastHour', 'today', 'yesterday', 'last7days', 'last30days', 'thisMonth', 'custom'],
 })
 
 const emit = defineEmits<{
@@ -38,15 +40,18 @@ const customVisible = ref(false)
 const draftRange = ref<TimeRange | null>(null)
 const serverNowReceivedAt = ref(Date.now())
 
-const options = computed<Array<{ label: string; value: TimeRangePreset }>>(() => [
-  { label: t('pages.dashboard.range.lastHour'), value: 'lastHour' },
-  { label: t('pages.dashboard.range.today'), value: 'today' },
-  { label: t('pages.dashboard.range.yesterday'), value: 'yesterday' },
-  { label: t('pages.dashboard.range.last7days'), value: 'last7days' },
-  { label: t('pages.dashboard.range.last30days'), value: 'last30days' },
-  { label: t('pages.dashboard.range.thisMonth'), value: 'thisMonth' },
-  { label: t('pages.dashboard.range.custom'), value: 'custom' },
-])
+const optionLabels: Record<TimeRangePreset, string> = {
+  lastHour: 'pages.dashboard.range.lastHour',
+  today: 'pages.dashboard.range.today',
+  yesterday: 'pages.dashboard.range.yesterday',
+  last7days: 'pages.dashboard.range.last7days',
+  last30days: 'pages.dashboard.range.last30days',
+  thisMonth: 'pages.dashboard.range.thisMonth',
+  custom: 'pages.dashboard.range.custom',
+}
+const options = computed<Array<{ label: string; value: TimeRangePreset }>>(() =>
+  props.presets.map((value) => ({ label: t(optionLabels[value]), value }))
+)
 
 const rangeLabel = computed(() => formatTimeRange(props.modelValue))
 

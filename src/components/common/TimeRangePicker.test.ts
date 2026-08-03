@@ -89,6 +89,27 @@ describe('TimeRangePicker', () => {
     wrapper.unmount()
   })
 
+  it('can limit the visible presets for pages with a narrower query contract', async () => {
+    const now = new Date(2026, 6, 28, 15, 30).getTime()
+    const wrapper = mount(TimeRangePicker, {
+      attachTo: document.body,
+      props: {
+        modelValue: rangeForPreset('today', now),
+        preset: 'today',
+        serverNow: now,
+        presets: ['today', 'yesterday', 'custom'],
+      },
+      global: { plugins: [i18n] },
+    })
+
+    await wrapper.get('.time-range-trigger').trigger('click')
+    await nextTick()
+    const labels = [...document.querySelectorAll<HTMLButtonElement>('.time-range-option')]
+      .map((button) => button.textContent?.trim())
+    expect(labels).toEqual(['今日', '昨日', '自定义'])
+    wrapper.unmount()
+  })
+
   it('keeps the quick jump open for a year choice and closes it after a month choice', async () => {
     const now = new Date(2026, 6, 28, 15, 30).getTime()
     const wrapper = mount(TimeRangePicker, {

@@ -128,6 +128,17 @@ test('rejection auditing covers four roles, hidden resources, retired endpoints,
     assert.equal(rows.filter((row) => row.error_code === 'ENDPOINT_RETIRED').length, 8)
     assert.equal(rows.every((row) => row.request_id && row.source_address), true)
 
+    db.prepare(`INSERT INTO audit_logs (id, actor_user_id, actor_username, actor_role, action, target, detail, created_at)
+      VALUES ('historical-unclassified', 'historical-user', 'old-user', 'admin', '历史审计操作', '历史对象', '历史说明', 100)`).run()
+
+    for (const role of ['basic', 'standard']) {
+      assert.equal((await request('/api/audit-logs?page=1&pageSize=20', { headers: headersFor(role) })).status, 403)
+    }
+    const auditReadCount = db.prepare('SELECT COUNT(*) AS count FROM audit_logs').get().count
+    assert.equal((await request('/api/audit-logs?page=1&pageSize=20', { headers: headersFor('auditor') })).status, 200)
+    assert.equal((await request('/api/audit-logs?page=1&pageSize=20', { headers: headersFor('admin') })).status, 200)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM audit_logs').get().count, auditReadCount)
+
     const filtered = await request('/api/audit-logs?source=rpc&result=denied&page=1&pageSize=2', { headers: headersFor('auditor') })
     assert.equal(filtered.status, 200)
     const body = await filtered.json()
@@ -136,7 +147,12 @@ test('rejection auditing covers four roles, hidden resources, retired endpoints,
     assert.equal(body.summary.denied, 4)
     assert.equal(body.logs.every((row) => row.source === 'rpc' && row.result === 'denied'), true)
     const legacy = await request('/api/audit-logs?limit=200', { headers: headersFor('auditor') })
-    assert.equal((await legacy.json()).logs.length <= 200, true)
+    const legacyBody = await legacy.json()
+    assert.equal(legacyBody.logs.length <= 200, true)
+    assert.equal(legacyBody.summary.unclassified, 1)
+    assert.equal(legacyBody.summary.total, legacyBody.summary.success + legacyBody.summary.failed + legacyBody.summary.denied + legacyBody.summary.unclassified)
+    const historical = legacyBody.logs.find((row) => row.id === 'historical-unclassified')
+    assert.equal(historical.actorUserId, 'historical-user')
   } finally {
     server.close()
     await once(server, 'close')
