@@ -3,6 +3,7 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { mkdirSync } from 'fs'
 import { migrateUserSecurityColumns } from './lib/account-security.js'
+import { migrateAuditLogColumns } from './lib/audit-service.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -218,6 +219,7 @@ db.exec(`
 `)
 
 migrateUserSecurityColumns(db)
+migrateAuditLogColumns(db)
 
 try {
   db.exec('ALTER TABLE scenarios ADD COLUMN execution_log TEXT DEFAULT \'[]\'')

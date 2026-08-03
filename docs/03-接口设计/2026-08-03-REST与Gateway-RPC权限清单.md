@@ -128,7 +128,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 
 | 路径 | 源码现状 | 实际命中 | 安全结论 |
 |---|---|---|---|
-| `GET /api/audit-logs` | `server/index.js` 直接 handler 与 `createAuditRouter()` 都存在 | 先注册的直接 handler | 两者均使用 `auditViewerMiddleware`；审计/管理员读边界一致 |
+| `GET /api/audit-logs` | `server/index.js` 保留未注册的旧 handler，正式入口为 `createAuditRouter()` | `createAuditRouter()` | 审计/管理员读边界不变；2026-08-03 审计第一阶段已补充服务端筛选、分页、汇总与拒绝记录 |
 | `/api/data-sources` 列表、创建、编辑、删除、测试 | 直接 handler 和 `createDataSourcesRouter()` 有重复 | 先注册的直接 handler | 读使用安全投影，写/测试为管理员；后续物理清理可合并为单一 Router |
 | `POST /api/data-sources/:id/activate` | 仅 `createDataSourcesRouter()` 提供 | Router handler | 管理员专属 |
 | `/api/files/*` | 前置退役屏障、中部二次屏障和后部文件 handler 并存 | 最前置 410 | 认证中间件和后续 handler 都不再可达 |
@@ -331,5 +331,5 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 ## 7. 后续边界
 
 - “遗留代码依赖评估与分阶段整理”：当前模块、页面和入口已隐藏，服务端前置 410 与自动化不可达测试已经满足安全要求；源码物理删除不再作为当前待办。后期仅在确认无正式依赖且具备完整回归条件时逐组整理，不进行一次性删除，数据库结构和生产数据另行决策。
-- “权限拒绝审计”：记录 401/403/410 拒绝事件并改造审计信息；本次不做。
+- “权限拒绝审计”：2026-08-03 审计第一阶段已完成 401/403/410、RPC 拒绝和归属隐藏 404 的结构化记录及查询契约；第二阶段仅剩审计信息页面交互改造。
 - 不建设动态 RBAC/ABAC，不修改 GAIOP 后端、OpenClaw 核心或频道插件。

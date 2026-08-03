@@ -20,7 +20,7 @@ async function startTestServer(readAlertSource) {
   return { baseUrl: `http://127.0.0.1:${server.address().port}/alerts`, audits, server }
 }
 
-test('alert list uses the formal receiver read model without changing the browser response shape', async () => {
+test('alert list uses the formal receiver read model without changing the browser response shape or adding refresh audit noise', async () => {
   const context = await startTestServer(async () => ({
     alerts: [{ id: 'event-1', occurredAt: '2026-07-16T01:00:00.000Z', sourceHost: '10.0.0.8', category: 'appAlerts', severity: 'major', name: 'timeout', metrics: [] }],
     availableCount: 1,
@@ -34,7 +34,7 @@ test('alert list uses the formal receiver read model without changing the browse
     assert.equal(payload.alerts.length, 1)
     assert.equal(payload.alerts[0].id, 'event-1')
     assert.equal(payload.pagination.availableCount, 1)
-    assert.equal(context.audits.length, 1)
+    assert.equal(context.audits.length, 0)
   } finally {
     context.server.close()
   }

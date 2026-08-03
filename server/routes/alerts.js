@@ -57,7 +57,6 @@ export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSourc
       const startIndex = (page - 1) * pageSize
       const alerts = capped.slice(startIndex, startIndex + pageSize)
       const hasMore = startIndex + pageSize < capped.length
-      recordAudit(req.user, '查看 GAIOP 告警', '告警通知', `第 ${page} 页，每页 ${pageSize} 条，返回 ${alerts.length} 条；来源：正式接收器`)
       sendOk(res, {
         alerts,
         categoryOptions: Object.entries(ALERT_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),

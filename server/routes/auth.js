@@ -33,7 +33,10 @@ export function createAuthRouter({
 
     const failureState = loginFailures.getState(username)
     if (failureState.locked) {
-      recordAudit({ username, role: 'unknown' }, '登录失败', '管理平台', '账户处于临时锁定期')
+      recordAudit({ username, role: 'unknown' }, '登录失败', '管理平台', '账户处于临时锁定期', {
+        req, category: 'authentication', result: 'failed', source: 'auth', errorCode: 'INVALID_CREDENTIALS',
+      })
+      res.locals.auditRejectionRecorded = true
       return sendError(res, { status: 401, code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' })
     }
 
@@ -46,7 +49,9 @@ export function createAuthRouter({
         result.justLocked ? '登录锁定' : '登录失败',
         '管理平台',
         result.justLocked ? '连续登录失败达到限制，临时锁定5分钟' : `连续失败次数：${result.failures}`,
+        { req, category: 'authentication', result: 'failed', source: 'auth', errorCode: 'INVALID_CREDENTIALS' },
       )
+      res.locals.auditRejectionRecorded = true
       return sendError(res, { status: 401, code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' })
     }
 
@@ -67,7 +72,7 @@ export function createAuthRouter({
       lastActiveAt: now,
       expires: now + policy.loginSessionHours * 60 * 60 * 1000,
     })
-    recordAudit(sessionUser, '登录', '管理平台', '登录成功')
+    recordAudit(sessionUser, '登录', '管理平台', '登录成功', { req, category: 'authentication', result: 'success', source: 'auth' })
     sendOk(res, { token, user: sessionUser })
   })
 
@@ -75,7 +80,7 @@ export function createAuthRouter({
     const token = req.headers.authorization?.replace('Bearer ', '')
     if (token) {
       const session = sessions.get(token)
-      if (session) recordAudit(session, '退出登录', '管理平台', '用户主动退出')
+      if (session) recordAudit(session, '退出登录', '管理平台', '用户主动退出', { req, category: 'authentication', result: 'success', source: 'auth' })
       sessions.delete(token)
     }
     sendOk(res)

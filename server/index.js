@@ -42,6 +42,7 @@ import { createDashboardUsageRouter } from './routes/dashboard-usage.js'
 import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
 import { createMediaRouter } from './routes/media.js'
 import { registerRetiredApiBarriers } from './lib/legacy-api.js'
+import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -128,6 +129,7 @@ const distPath = join(__dirname, '../dist')
 const hasDist = existsSync(join(distPath, 'index.html'))
 
 const sessions = new Map()
+const { recordAudit, recordAuditEvent } = createAuditRecorder(db)
 
 app.use(cors())
 app.use(compression({
@@ -135,6 +137,7 @@ app.use(compression({
   filter: (req, res) => req.path !== '/api/events' && compression.filter(req, res),
 }))
 app.use(express.json())
+app.use(createAuditRejectionMiddleware({ recordAuditEvent }))
 registerRetiredApiBarriers(app)
 
 let gateway = new OpenClawGateway(envConfig.OPENCLAW_WS_URL, envConfig.OPENCLAW_AUTH_TOKEN, envConfig.OPENCLAW_AUTH_PASSWORD, envConfig.LOG_LEVEL)
@@ -438,6 +441,10 @@ function authMiddleware(req, res, next) {
   req.user = session
   const path = String(req.originalUrl || '').split('?')[0]
   if (session.mustChangePassword && path !== '/api/auth/check' && !isPasswordChangeRequest(req, session)) {
+    recordAudit(session, '拒绝受保护请求', path, '', {
+      req, category: 'authentication', result: 'denied', source: 'auth', errorCode: 'PASSWORD_CHANGE_REQUIRED',
+    })
+    res.locals.auditRejectionRecorded = true
     return sendError(res, {
       status: 403,
       code: 'PASSWORD_CHANGE_REQUIRED',
@@ -452,18 +459,6 @@ const operatorMiddleware = createRoleMiddleware(authMiddleware, ['standard', 'ad
 const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
 const accountViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '账户信息仅审计用户和管理员可查看')
 const systemMonitorMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'standard', 'admin'], '当前角色无权查看系统监控')
-
-function recordAudit(user, action, target = '', detail = '') {
-  try {
-    db.prepare(`INSERT INTO audit_logs (id, actor_user_id, actor_username, actor_role, action, target, detail, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(
-      randomUUID(), user?.id || null, String(user?.username || 'system').slice(0, 200), user?.role || 'system', action,
-      String(target || '').slice(0, 200), String(detail || '').slice(0, 500), Date.now()
-    )
-  } catch (error) {
-    console.error('[Audit] Failed to record event:', error.message)
-  }
-}
 
 // 设置 Hermes 代理的认证中间件
 
