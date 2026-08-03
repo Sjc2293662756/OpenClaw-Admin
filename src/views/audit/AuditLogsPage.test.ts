@@ -5,10 +5,12 @@ import { flushPromises, mount } from '@vue/test-utils'
 import AuditLogsPage from './AuditLogsPage.vue'
 import { rangeForPreset } from '@/utils/time-range'
 
+const messageApi = { error: vi.fn(), success: vi.fn(), warning: vi.fn() }
+
 vi.mock('naive-ui', async () => {
   const { defineComponent: component, h } = await import('vue')
   const slotComponent = (name: string) => component({ name, setup: (_, { slots }) => () => h('div', slots.default?.()) })
-  const buttonComponent = component({ name: 'NButton', emits: ['click'], setup: (_, { emit, slots }) => () => h('button', { onClick: () => emit('click') }, slots.default?.()) })
+  const buttonComponent = component({ name: 'NButton', props: { disabled: Boolean, loading: Boolean }, emits: ['click'], setup: (props, { emit, slots }) => () => h('button', { disabled: props.disabled, onClick: () => { if (!props.disabled) emit('click') } }, slots.default?.()) })
   const inputComponent = component({
     name: 'NInput', props: { value: { type: [String, Number], default: '' } }, emits: ['update:value', 'keyup'],
     setup(props, { emit }) { return () => h('input', { value: props.value, onInput: (event: Event) => emit('update:value', (event.target as HTMLInputElement).value), onKeyup: (event: KeyboardEvent) => emit('keyup', event) }) },
@@ -37,7 +39,7 @@ vi.mock('naive-ui', async () => {
     NDrawerContent: slotComponent('NDrawerContent'), NEmpty: slotComponent('NEmpty'), NIcon: slotComponent('NIcon'),
     NInput: inputComponent, NInputNumber: inputComponent, NPagination: paginationComponent, NSelect: selectComponent, NSpace: slotComponent('NSpace'),
     NStatistic: statisticComponent, NTag: slotComponent('NTag'), NText: slotComponent('NText'), NTooltip: slotComponent('NTooltip'),
-    useMessage: () => ({ error: vi.fn(), success: vi.fn() }),
+    useMessage: () => messageApi,
   }
 })
 
@@ -85,6 +87,9 @@ describe('AuditLogsPage', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 7, 3, 10, 30, 0))
+    messageApi.error.mockReset()
+    messageApi.success.mockReset()
+    messageApi.warning.mockReset()
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
       return Promise.resolve(url === '/api/users' ? usersResponse() : responseFor(url))
@@ -234,6 +239,76 @@ describe('AuditLogsPage', () => {
     const copyButton = wrapper.findAll('button').find((button) => button.text() === '复制')
     await copyButton!.trigger('click')
     expect(copy).toHaveBeenCalledWith('request-42')
+    wrapper.unmount()
+  })
+
+  it('exports the active server filter and TOP once without changing the current list', async () => {
+    let resolveExport: ((response: Response) => void) | null = null
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/users') return Promise.resolve(usersResponse())
+      if (url === '/api/audit-logs/export') return new Promise<Response>((resolve) => { resolveExport = resolve })
+      return Promise.resolve(responseFor(url, '保留的列表结果', 81))
+    }))
+    const createObjectUrl = vi.fn(() => 'blob:audit-export')
+    const revokeObjectUrl = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectUrl })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectUrl })
+    const linkClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const wrapper = mountPage()
+    await flushPromises()
+
+    const keyword = wrapper.findAll('input')[0]!
+    await keyword.setValue('保留')
+    await keyword.trigger('keyup.enter')
+    await flushPromises()
+    const exportButton = wrapper.findAll('button').find((button) => button.text() === '导出 Excel')!
+    await exportButton.trigger('click')
+    await exportButton.trigger('click')
+    const exportCalls = vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === '/api/audit-logs/export')
+    expect(exportCalls).toHaveLength(1)
+    const options = exportCalls[0]![1] as RequestInit
+    expect(options.method).toBe('POST')
+    expect(options.headers).toMatchObject({ Authorization: 'Bearer isolated-test-token', 'Content-Type': 'application/json' })
+    expect(JSON.parse(String(options.body))).toMatchObject({ keyword: '保留', maxResults: 200 })
+
+    resolveExport!(new Response(new Blob(['xlsx']), { status: 200, headers: { 'x-gaiop-export-count': '81' } }))
+    await flushPromises()
+    expect(createObjectUrl).toHaveBeenCalled()
+    expect(linkClick).toHaveBeenCalled()
+    expect(revokeObjectUrl).toHaveBeenCalledWith('blob:audit-export')
+    expect(wrapper.text()).toContain('保留的列表结果')
+    linkClick.mockRestore()
+    wrapper.unmount()
+  })
+
+  it('does not send an export request when the current filters have no data', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      return Promise.resolve(url === '/api/users' ? usersResponse() : responseFor(url, '空结果', 0))
+    }))
+    const wrapper = mountPage()
+    await flushPromises()
+    const exportButton = wrapper.findAll('button').find((button) => button.text() === '导出 Excel')!
+    expect(exportButton.attributes('disabled')).toBeDefined()
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input) === '/api/audit-logs/export')).toBe(false)
+    wrapper.unmount()
+  })
+
+  it('keeps the current list and reports an export API failure', async () => {
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/users') return Promise.resolve(usersResponse())
+      if (url === '/api/audit-logs/export') return Promise.resolve(new Response(JSON.stringify({ ok: false, error: '导出服务暂不可用' }), { status: 500, headers: { 'content-type': 'application/json' } }))
+      return Promise.resolve(responseFor(url, '仍保留的审计列表', 1))
+    }))
+    const wrapper = mountPage()
+    await flushPromises()
+    const exportButton = wrapper.findAll('button').find((button) => button.text() === '导出 Excel')!
+    await exportButton.trigger('click')
+    await flushPromises()
+    expect(messageApi.error).toHaveBeenCalledWith('导出服务暂不可用')
+    expect(wrapper.text()).toContain('仍保留的审计列表')
     wrapper.unmount()
   })
 })

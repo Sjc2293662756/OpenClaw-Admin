@@ -23,7 +23,7 @@ import {
   type DataTableColumns,
   useMessage,
 } from 'naive-ui'
-import { CopyOutline, InformationCircleOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { CopyOutline, DownloadOutline, InformationCircleOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
@@ -67,6 +67,7 @@ const MAX_RESULTS = 3000
 const authStore = useAuthStore()
 const message = useMessage()
 const loading = ref(false)
+const exportLoading = ref(false)
 const forbidden = ref(false)
 const loadError = ref('')
 const logs = ref<AuditLog[]>([])
@@ -182,6 +183,27 @@ function buildRequestUrl() {
   return `/api/audit-logs?${params.toString()}`
 }
 
+function buildExportPayload() {
+  return {
+    from: timeRange.value[0],
+    to: timeRange.value[1],
+    maxResults: effectiveMaxResults.value,
+    keyword: filters.value.keyword.trim(),
+    username: filters.value.username,
+    role: filters.value.role,
+    category: filters.value.category,
+    result: filters.value.result,
+    source: filters.value.source,
+    errorCode: filters.value.errorCode.trim(),
+  }
+}
+
+function exportFileName(timestamp = Date.now()) {
+  const date = new Date(timestamp)
+  const two = (value: number) => String(value).padStart(2, '0')
+  return `GAIOP-审计信息-${date.getFullYear()}${two(date.getMonth() + 1)}${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}${two(date.getSeconds())}.xlsx`
+}
+
 async function loadUsers() {
   try {
     const response = await fetch('/api/users', { headers: { Authorization: `Bearer ${authStore.getToken()}` } })
@@ -278,6 +300,40 @@ function changePage(value: number) {
   if (value === page.value || value < 1 || value > pagination.value.totalPages) return
   page.value = value
   void loadLogs()
+}
+
+async function exportAuditLogs() {
+  if (exportLoading.value) return
+  if (!pagination.value.browseTotal) {
+    message.warning('当前筛选条件没有可导出的审计记录')
+    return
+  }
+  exportLoading.value = true
+  try {
+    const response = await fetch('/api/audit-logs/export', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authStore.getToken()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildExportPayload()),
+    })
+    if (!response.ok) {
+      const data = await response.json().catch(() => null) as { error?: string } | null
+      throw new Error(data?.error || '导出审计信息失败')
+    }
+    const downloadUrl = URL.createObjectURL(await response.blob())
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = exportFileName()
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(downloadUrl)
+    const count = Number(response.headers.get('x-gaiop-export-count'))
+    message.success(`已导出 ${Number.isFinite(count) && count > 0 ? count : pagination.value.browseTotal} 条审计记录`)
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '导出审计信息失败')
+  } finally {
+    exportLoading.value = false
+  }
 }
 
 function openDetail(log: AuditLog) {
@@ -383,6 +439,7 @@ onBeforeUnmount(() => activeController?.abort())
             <NSelect :value="resultLimitChoice" :options="resultLimitOptions" style="width: 148px" @update:value="handleResultLimitChoice" />
             <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="MAX_RESULTS" :precision="0" placeholder="最高 3000 条" style="width: 150px" />
             <NButton v-if="isCustomLimit" type="primary" :disabled="loading" @click="applyCustomResultLimit">应用 TOP</NButton>
+            <NButton :loading="exportLoading" :disabled="!pagination.browseTotal || exportLoading" @click="exportAuditLogs"><template #icon><NIcon><DownloadOutline /></NIcon></template>导出 Excel</NButton>
           </div>
         </div>
 

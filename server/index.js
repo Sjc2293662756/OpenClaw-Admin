@@ -628,7 +628,7 @@ app.use('/api/users', createUsersRouter({
   userStatuses: USER_STATUSES,
   createId: randomUUID,
 }))
-app.use('/api/audit-logs', createAuditRouter({ db, auditViewerMiddleware }))
+app.use('/api/audit-logs', createAuditRouter({ db, auditViewerMiddleware, recordAudit }))
 app.use('/api/data-sources', createDataSourcesRouter({
   db,
   authMiddleware,

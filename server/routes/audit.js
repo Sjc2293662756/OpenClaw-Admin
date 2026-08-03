@@ -1,4 +1,6 @@
 import { Router } from 'express'
+import { sendError } from '../lib/api-response.js'
+import { createAuditExportWorkbook } from '../lib/audit-export.js'
 
 const MAX_PAGE_SIZE = 200
 const DEFAULT_MAX_RESULTS = 200
@@ -55,7 +57,55 @@ function publicAuditLog(log) {
   }
 }
 
-export function createAuditRouter({ db, auditViewerMiddleware }) {
+function buildAuditQuery(input, pageSize = 1) {
+  const filters = {
+    from: parseTimestamp(input.from),
+    to: parseTimestamp(input.to),
+    username: parseText(input.username),
+    role: parseText(input.role, 32),
+    category: parseText(input.category, 64),
+    result: parseText(input.result, 16),
+    source: parseText(input.source, 16),
+    errorCode: parseText(input.errorCode, 80),
+    keyword: parseText(input.keyword),
+  }
+  const conditions = []
+  const values = []
+  if (filters.from !== null) { conditions.push('created_at >= ?'); values.push(filters.from) }
+  if (filters.to !== null) { conditions.push('created_at <= ?'); values.push(filters.to) }
+  for (const [key, column] of Object.entries({
+    username: 'actor_username', role: 'actor_role', category: 'category', result: 'result', source: 'source', errorCode: 'error_code',
+  })) {
+    if (filters[key]) { conditions.push(`${column} = ?`); values.push(filters[key]) }
+  }
+  if (filters.keyword) {
+    conditions.push("(actor_username LIKE ? ESCAPE '\\' OR action LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')")
+    const keyword = `%${filters.keyword.replace(/[\\%_]/g, '\\$&')}%`
+    values.push(keyword, keyword, keyword, keyword)
+  }
+  return { filters, where: conditions.length ? ` WHERE ${conditions.join(' AND ')}` : '', values, maxResults: parseMaxResults(input.maxResults, pageSize) }
+}
+
+function formatAuditRange(filters) {
+  const format = (value) => {
+    if (value === null) return '未限定'
+    const date = new Date(value)
+    return Number.isFinite(date.getTime()) ? date.toISOString().replace('T', ' ').replace('.000Z', 'Z') : '未限定'
+  }
+  return `${format(filters.from)} 至 ${format(filters.to)}`
+}
+
+function recordExportAudit(recordAudit, req, filters, maxResults, result, count, errorCode = null) {
+  if (typeof recordAudit !== 'function') return
+  const detail = result === 'success'
+    ? `时间范围：${formatAuditRange(filters)}；TOP：${maxResults}；实际导出：${count}条`
+    : `时间范围：${formatAuditRange(filters)}；TOP：${maxResults}；导出失败`
+  recordAudit(req.user, '导出审计信息', '审计信息', detail, {
+    req, category: 'operation', result, source: 'rest', errorCode,
+  })
+}
+
+export function createAuditRouter({ db, auditViewerMiddleware, recordAudit }) {
   const router = Router()
 
   router.get('/', auditViewerMiddleware, (req, res) => {
@@ -63,33 +113,7 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
     const legacyLimit = parsePositiveInteger(req.query.limit, 100, MAX_PAGE_SIZE)
     const pageSize = parsePositiveInteger(req.query.pageSize, legacyLimit, MAX_PAGE_SIZE)
     const requestedPage = hasExplicitPaging ? parsePositiveInteger(req.query.page, 1, 1_000_000) : 1
-    const maxResults = parseMaxResults(req.query.maxResults, pageSize)
-    const filters = {
-      from: parseTimestamp(req.query.from),
-      to: parseTimestamp(req.query.to),
-      username: parseText(req.query.username),
-      role: parseText(req.query.role, 32),
-      category: parseText(req.query.category, 64),
-      result: parseText(req.query.result, 16),
-      source: parseText(req.query.source, 16),
-      errorCode: parseText(req.query.errorCode, 80),
-      keyword: parseText(req.query.keyword),
-    }
-    const conditions = []
-    const values = []
-    if (filters.from !== null) { conditions.push('created_at >= ?'); values.push(filters.from) }
-    if (filters.to !== null) { conditions.push('created_at <= ?'); values.push(filters.to) }
-    for (const [key, column] of Object.entries({
-      username: 'actor_username', role: 'actor_role', category: 'category', result: 'result', source: 'source', errorCode: 'error_code',
-    })) {
-      if (filters[key]) { conditions.push(`${column} = ?`); values.push(filters[key]) }
-    }
-    if (filters.keyword) {
-      conditions.push("(actor_username LIKE ? ESCAPE '\\' OR action LIKE ? ESCAPE '\\' OR target LIKE ? ESCAPE '\\' OR detail LIKE ? ESCAPE '\\')")
-      const keyword = `%${filters.keyword.replace(/[\\%_]/g, '\\$&')}%`
-      values.push(keyword, keyword, keyword, keyword)
-    }
-    const where = conditions.length ? ` WHERE ${conditions.join(' AND ')}` : ''
+    const { filters, where, values, maxResults } = buildAuditQuery(req.query, pageSize)
     const total = db.prepare(`SELECT COUNT(*) AS count FROM audit_logs${where}`).get(...values).count
     const browseTotal = Math.min(total, maxResults)
     const totalPages = Math.ceil(browseTotal / pageSize)
@@ -119,7 +143,32 @@ export function createAuditRouter({ db, auditViewerMiddleware }) {
     })
   })
 
+  router.post('/export', auditViewerMiddleware, (req, res) => {
+    const { filters, where, values, maxResults } = buildAuditQuery(req.body || {}, 1)
+    try {
+      const logs = db.prepare(`
+        SELECT id, actor_user_id, actor_username, actor_role, action, target, detail, created_at,
+          category, result, source, rest_method, rest_path, rpc_method, error_code, request_id, source_address
+        FROM audit_logs${where}
+        ORDER BY created_at DESC, id DESC LIMIT ?
+      `).all(...values, maxResults)
+      if (!logs.length) {
+        recordExportAudit(recordAudit, req, filters, maxResults, 'failed', 0, 'AUDIT_EXPORT_EMPTY')
+        return sendError(res, { status: 400, code: 'AUDIT_EXPORT_EMPTY', message: '当前筛选条件没有可导出的审计记录' })
+      }
+      const workbook = createAuditExportWorkbook(logs.map(publicAuditLog))
+      recordExportAudit(recordAudit, req, filters, maxResults, 'success', logs.length)
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+      res.setHeader('Content-Disposition', 'attachment; filename="GAIOP-audit-logs.xlsx"')
+      res.setHeader('X-GAIOP-Export-Count', String(logs.length))
+      return res.send(workbook)
+    } catch {
+      recordExportAudit(recordAudit, req, filters, maxResults, 'failed', 0, 'AUDIT_EXPORT_FAILED')
+      return sendError(res, { status: 500, code: 'AUDIT_EXPORT_FAILED', message: '导出审计信息失败' })
+    }
+  })
+
   return router
 }
 
-export const __test__ = { parseTimestamp, parsePositiveInteger, parseMaxResults, publicAuditLog }
+export const __test__ = { parseTimestamp, parsePositiveInteger, parseMaxResults, publicAuditLog, buildAuditQuery }

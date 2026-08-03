@@ -134,6 +134,67 @@ test('audit query bounds browsable pages by server-side TOP without changing rea
   }
 })
 
+test('audit export reuses safe filters, enforces TOP, protects roles, and records outcomes after file generation', async () => {
+  const db = createAuditDatabase()
+  migrateAuditLogColumns(db)
+  const { recordAudit } = createAuditRecorder(db)
+  const app = express()
+  app.use(express.json())
+  const authMiddleware = (req, res, next) => {
+    const role = req.get('x-test-role')
+    if (!role) return res.status(401).json({ ok: false, code: 'UNAUTHORIZED' })
+    req.user = { id: `${role}-id`, username: `${role}-user`, role }
+    next()
+  }
+  const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
+  app.use('/api/audit-logs', createAuditRouter({ db, auditViewerMiddleware, recordAudit }))
+
+  const insert = db.prepare(`INSERT INTO audit_logs (
+    id, actor_user_id, actor_username, actor_role, action, target, detail, created_at,
+    category, result, source, rest_method, rest_path, rpc_method, error_code, request_id, source_address
+  ) VALUES (@id, @actorUserId, @username, @role, @action, @target, @detail, @createdAt,
+    @category, @result, @source, @restMethod, @restPath, @rpcMethod, @errorCode, @requestId, @sourceAddress)`)
+  for (let index = 0; index < 3005; index += 1) {
+    insert.run({
+      id: `export-${index}`, actorUserId: `user-${index}`, username: `user-${index}`, role: 'auditor',
+      action: index === 0 ? '=SUM(1,1)' : `导出测试-${index}`, target: 'export-target', detail: '安全说明', createdAt: index + 1,
+      category: 'operation', result: 'success', source: 'rest', restMethod: 'GET', restPath: '/api/audit-logs',
+      rpcMethod: null, errorCode: null, requestId: `request-${index}`, sourceAddress: '127.0.0.1',
+    })
+  }
+
+  const server = app.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const baseUrl = `http://127.0.0.1:${server.address().port}`
+  const exportRequest = (role, body) => fetch(`${baseUrl}/api/audit-logs/export`, {
+    method: 'POST', headers: { 'content-type': 'application/json', 'x-test-role': role }, body: JSON.stringify(body),
+  })
+  try {
+    for (const role of ['basic', 'standard']) assert.equal((await exportRequest(role, { keyword: 'export-target', maxResults: 3 })).status, 403)
+
+    const exported = await exportRequest('auditor', { keyword: 'export-target', page: 99, pageSize: 10, maxResults: 999999 })
+    assert.equal(exported.status, 200)
+    assert.equal(exported.headers.get('x-gaiop-export-count'), '3000')
+    assert.match(exported.headers.get('content-type') || '', /spreadsheetml/)
+    const exportedBuffer = Buffer.from(await exported.arrayBuffer())
+    assert.equal(exportedBuffer.subarray(0, 2).toString(), 'PK')
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audit_logs WHERE action = '导出审计信息' AND result = 'success'").get().count, 1)
+    const successAudit = db.prepare("SELECT detail FROM audit_logs WHERE action = '导出审计信息' AND result = 'success'").get()
+    assert.match(successAudit.detail, /TOP：3000；实际导出：3000条/)
+    assert.doesNotMatch(successAudit.detail, /export-target/)
+
+    const empty = await exportRequest('admin', { keyword: 'no-such-audit-log', maxResults: 50 })
+    assert.equal(empty.status, 400)
+    const emptyBody = await empty.json()
+    assert.equal(emptyBody.code, 'AUDIT_EXPORT_EMPTY')
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM audit_logs WHERE action = '导出审计信息' AND result = 'failed' AND error_code = 'AUDIT_EXPORT_EMPTY'").get().count, 1)
+  } finally {
+    server.close()
+    await once(server, 'close')
+    db.close()
+  }
+})
+
 test('rejection auditing covers four roles, hidden resources, retired endpoints, bounded anonymous noise, and server filtering', async () => {
   const db = createAuditDatabase()
   migrateAuditLogColumns(db)
