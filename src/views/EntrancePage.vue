@@ -21,7 +21,7 @@ function enterPlatform(entry: EntryType) {
     <div class="ambient ambient-bottom"></div>
 
     <header class="entrance-header">
-      <div class="brand-lockup" aria-label="北京网深科技 NetInside">
+      <div class="brand-lockup" :aria-label="`${t('pages.gaiop.entrance.company')} NetInside`">
         <span class="brand-logo" aria-label="NetInside">
           <span class="brand-logo-net">Net</span><span>Inside</span>
         </span>
@@ -81,7 +81,7 @@ function enterPlatform(entry: EntryType) {
         <div class="node node-one"></div>
         <div class="node node-two"></div>
         <div class="company-card-content">
-          <p class="company-card-label">BEIJING NETINSIDE TECHNOLOGY</p>
+          <p class="company-card-label">BEIJING WANGSHEN TECHNOLOGY</p>
           <h2>{{ t('pages.gaiop.entrance.companyTitle') }}</h2>
           <p>{{ t('pages.gaiop.entrance.companyDescription') }}</p>
           <span class="company-card-link">{{ t('pages.gaiop.entrance.companyLink') }} <b>→</b></span>

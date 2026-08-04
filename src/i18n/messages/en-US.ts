@@ -3352,10 +3352,10 @@ export default {
         currentModule: 'Current module', unknownRole: 'Unknown role',
       },
       entrance: {
-        product: 'Guanshu GAIOP', company: 'Beijing NetInside Technology Co., Ltd.', fullName: 'Guanshu AI-driven Operations Platform',
+        product: 'NetInside GAIOP', company: 'Beijing Wangshen Technology Co., Ltd.', fullName: 'Guanshu AI-driven Operations Platform',
         description: 'Make real traffic the core observability entry for intelligent operations, with AI-driven full-traffic performance analysis and operational decisions.',
         chatTitle: 'Start a conversation', chatDescription: 'Use GAIOP for intelligent operations analysis', configTitle: 'Configuration', configDescription: 'Manage models, Skills, and platform configuration',
-        companyTitle: 'Beijing NetInside Technology', companyDescription: 'Build analysis and management capabilities for intelligent operations on network and application performance data.', companyLink: 'Explore GAIOP',
+        companyTitle: 'Beijing Wangshen Technology Co., Ltd.', companyDescription: 'Build analysis and management capabilities for intelligent operations on network and application performance data.', companyLink: 'Explore GAIOP',
       },
       login: {
         brand: 'GAIOP', platform: 'Intelligent Operations Analytics Platform', connecting: 'Connecting to platform services...', username: 'Username', usernamePlaceholder: 'Enter username', password: 'Password', passwordPlaceholder: 'Enter password', login: 'Log in', retry: 'Reconnect', showPassword: 'Show password', hidePassword: 'Hide password',
