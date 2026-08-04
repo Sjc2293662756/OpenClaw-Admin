@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { NAlert, NCard, NForm, NFormItem, NSelect, NSpace, NText, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 import { useAuthStore } from '@/stores/auth'
 import { useLocaleStore } from '@/stores/locale'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
@@ -59,7 +60,7 @@ async function loadReportStorageStatus() {
       || typeof data.reportStorageRoot !== 'string'
       || !data.reportStorageRoot.trim()
     ) {
-      throw new Error(data.error?.message || data.error || text('读取报告存储状态失败', 'Failed to load report-storage status'))
+      throw new Error(localizeApiError(data, text('读取报告存储状态失败', 'Failed to load report-storage status')))
     }
     reportStorageConfigured.value = data.reportStorageConfigured
     reportStorageRoot.value = data.reportStorageRoot

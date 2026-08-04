@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NRadio, NRadioGroup, NSelect, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
@@ -54,7 +55,7 @@ async function loadExisting() {
     const source = Array.isArray(payload.dataSources)
       ? payload.dataSources.find((item: { id: string }) => item.id === editingId.value)
       : null
-    if (!response.ok || !data.ok || !source) throw new Error(data.error || text('数据源不存在', 'Data source does not exist'))
+    if (!response.ok || !data.ok || !source) throw new Error(localizeApiError(data, text('数据源不存在', 'Data source does not exist')))
     form.ip = source.ip
     form.description = source.description || ''
     form.type = source.type
@@ -77,7 +78,7 @@ async function submit() {
       method: editingId.value ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(form),
     })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || text('保存数据源失败', 'Failed to save data source'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('保存数据源失败', 'Failed to save data source')))
     message.success(editingId.value ? text('数据源已更新', 'Data source updated') : text('数据源已添加', 'Data source added'))
     returnToSystemConfiguration()
   } catch (error) {

@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInputNumber, NSpace, NText, useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 
 const authStore = useAuthStore()
 const { locale } = useI18n()
@@ -32,7 +33,7 @@ async function loadSettings() {
   try {
     const response = await fetch('/api/system-settings/sessions', { headers: authHeaders() })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error?.message || data.error || text('加载会话设置失败', 'Failed to load session settings'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('加载会话设置失败', 'Failed to load session settings')))
     Object.assign(settings, data.settings)
     updatedAt.value = data.settings.updatedAt || null
     runtime.value = data.runtime || { status: 'unavailable' }
@@ -53,7 +54,7 @@ async function saveSettings() {
       method: 'PUT', headers: authHeaders(), body: JSON.stringify(settings),
     })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error?.message || data.error || text('保存会话设置失败', 'Failed to save session settings'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('保存会话设置失败', 'Failed to save session settings')))
     Object.assign(settings, data.settings)
     updatedAt.value = data.settings.updatedAt || null
     runtime.value = data.runtime || { status: 'unavailable' }

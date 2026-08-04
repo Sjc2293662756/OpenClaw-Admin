@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NRadio, NRadioGroup, NSelect, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
+import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
 import type { AppLocale } from '@/i18n/locale'
 
@@ -39,7 +40,7 @@ async function submit() {
   try {
     const response = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authStore.getToken()}` }, body: JSON.stringify(form) })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.createFailed'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, t('pages.gaiop.users.createFailed')))
     message.success(t('pages.gaiop.users.createSuccess'))
     router.push({ name: 'UserManagement' })
   } catch (error) {

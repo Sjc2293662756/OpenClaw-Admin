@@ -16,6 +16,7 @@ import {
 import { RefreshOutline, SaveOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 
 type RuntimeState = 'pending' | 'applied' | 'failed' | 'unknown'
 
@@ -75,7 +76,7 @@ async function loadConfiguration() {
   try {
     const response = await fetch('/api/system-config/alert-ingestion', { headers: headers() })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || text('读取告警接入配置失败', 'Failed to load alert ingestion configuration'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, text('读取告警接入配置失败', 'Failed to load alert ingestion configuration')))
     settings.value = result.settings
     runtime.value = result.runtime
     enabled.value = result.settings.enabled
@@ -95,7 +96,7 @@ async function saveConfiguration() {
       body: JSON.stringify({ enabled: enabled.value }),
     })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || text('保存告警接入配置失败', 'Failed to save alert ingestion configuration'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, text('保存告警接入配置失败', 'Failed to save alert ingestion configuration')))
     settings.value = result.settings
     runtime.value = result.runtime
     message.success(result.runtime.state === 'applied' ? text('已保存并同步到告警接收器', 'Saved and synchronized with the alert receiver') : text('已保存；等待部署侧告警接收器应用', 'Saved; waiting for the deployed alert receiver to apply it'))

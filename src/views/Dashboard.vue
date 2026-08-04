@@ -29,6 +29,7 @@ import { useWebSocketStore } from '@/stores/websocket'
 import { useAuthStore } from '@/stores/auth'
 import { formatRelativeTime } from '@/utils/format'
 import { createLatestTaskRunner } from '@/utils/latest-task-runner'
+import { localizeApiError } from '@/utils/api-error'
 import {
   aggregateUsageTrend,
   formatYmd,
@@ -500,7 +501,7 @@ async function refreshDashboardSummary() {
     })
     const body = await response.json()
     if (!response.ok || !body?.ok || !body?.summary) {
-      throw new Error(body?.error?.message || body?.error || '仪表盘摘要请求失败')
+      throw new Error(localizeApiError(body, locale.value === 'zh-CN' ? '仪表盘摘要请求失败' : 'Failed to load dashboard summary'))
     }
     if (requestId !== summaryRequestId) return
     stats.value = body.summary
@@ -554,7 +555,7 @@ async function executeDashboardUsage(request: {
     })
     const body = await response.json()
     if (!response.ok || !body?.ok || !body?.usage) {
-      throw new Error(body?.error?.message || body?.error || '仪表盘统计请求失败')
+      throw new Error(localizeApiError(body, locale.value === 'zh-CN' ? '仪表盘统计请求失败' : 'Failed to load dashboard usage'))
     }
     const result = body.usage as SessionsUsageResult
     nextSessionsUsage = result

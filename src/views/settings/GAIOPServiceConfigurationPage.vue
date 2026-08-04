@@ -18,6 +18,7 @@ import {
 import { RefreshOutline, SaveOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 
 type ServiceState = 'connected' | 'disconnected'
 
@@ -54,7 +55,7 @@ async function loadService() {
   try {
     const response = await fetch('/api/system-config/gaiop-service', { headers: headers() })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || t('pages.gaiop.systemConfig.loadFailed'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, t('pages.gaiop.systemConfig.loadFailed')))
     service.value = result.service
     endpoint.value = result.service.endpoint || ''
     accessToken.value = ''
@@ -76,7 +77,7 @@ async function saveService() {
       body: JSON.stringify(body),
     })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || t('pages.gaiop.systemConfig.saveFailed'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, t('pages.gaiop.systemConfig.saveFailed')))
     service.value = result.service
     accessToken.value = ''
     message.success(t('pages.gaiop.systemConfig.saveSuccess'))

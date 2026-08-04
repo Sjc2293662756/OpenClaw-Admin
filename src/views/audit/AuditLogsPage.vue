@@ -27,6 +27,7 @@ import { CopyOutline, DownloadOutline, InformationCircleOutline, RefreshOutline,
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
+import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
 
 type AuditValue = 'success' | 'failed' | 'denied' | null
@@ -237,7 +238,7 @@ async function loadLogs() {
       forbidden.value = true
       return
     }
-    if (!response.ok || !data.ok) throw new Error(data.error || (locale.value === 'zh-CN' ? '获取审计信息失败' : 'Failed to load audit logs'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, locale.value === 'zh-CN' ? '获取审计信息失败' : 'Failed to load audit logs'))
     logs.value = data.logs
     pagination.value = data.pagination
     summary.value = data.summary

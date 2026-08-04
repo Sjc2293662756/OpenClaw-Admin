@@ -6,6 +6,7 @@ import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
+import { localizeApiError } from '@/utils/api-error'
 
 type ReportStatus = 'ready' | 'missing' | 'failed'
 
@@ -164,7 +165,7 @@ async function refresh(showMessage = true) {
   try {
     const response = await fetch('/api/reports', { headers: headers() })
     const data = await readJsonResponse(response, text('获取报告列表失败', 'Failed to load reports'))
-    if (!response.ok || !data.ok) throw new Error(data.error || text('获取报告列表失败', 'Failed to load reports'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('获取报告列表失败', 'Failed to load reports')))
     const responseTime = Date.parse(response.headers.get('date') || '')
     if (Number.isFinite(responseTime)) serverNow.value = responseTime
     reports.value = data.reports || []
@@ -207,7 +208,7 @@ function remove(report: ReportFile) {
       try {
         const response = await fetch(`/api/reports/${report.id}`, { method: 'DELETE', headers: headers() })
         const data = await response.json()
-        if (!response.ok || !data.ok) throw new Error(data.error || text('报告删除失败', 'Failed to delete report'))
+        if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('报告删除失败', 'Failed to delete report')))
         message.success(text('报告文件已删除', 'Report file deleted'))
         await refresh(false)
       } catch (error) {

@@ -5,6 +5,7 @@ import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInput, NModal, NSel
 import { AddOutline, CreateOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
+import { localizeApiError } from '@/utils/api-error'
 import type { AppLocale } from '@/i18n/locale'
 import { useI18n } from 'vue-i18n'
 
@@ -73,7 +74,7 @@ async function loadUsers() {
   try {
     const response = await fetch('/api/users', { headers: headers() })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.loadFailed'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, t('pages.gaiop.users.loadFailed')))
     users.value = data.users
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('pages.gaiop.users.loadFailed'))
@@ -133,7 +134,7 @@ async function submitResetPassword() {
       }),
     })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || text('重置失败', 'Password reset failed'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('重置失败', 'Password reset failed')))
     message.success(text('临时密码已设置，该用户首次登录必须修改密码', 'Temporary password set. The user must change it on first sign-in.'))
     resetTarget.value = null
     temporaryPassword.value = ''
@@ -153,7 +154,7 @@ function removeUser(user: ManagedUser) {
     onPositiveClick: async () => {
       const response = await fetch(`/api/users/${user.id}`, { method: 'DELETE', headers: headers() })
       const data = await response.json()
-      if (!response.ok || !data.ok) { message.error(data.error || text('删除失败', 'Delete failed')); return }
+      if (!response.ok || !data.ok) { message.error(localizeApiError(data, text('删除失败', 'Delete failed'))); return }
       message.success(text('用户已删除', 'User deleted'))
       await loadUsers()
     },

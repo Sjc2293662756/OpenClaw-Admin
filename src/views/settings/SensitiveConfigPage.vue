@@ -28,6 +28,7 @@ import {
 import { AddOutline, CreateOutline, LockClosedOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 
 type ConfigCategory = 'runtime' | 'integration' | 'security' | 'certificate'
 
@@ -127,7 +128,7 @@ async function refresh(showMessage = true) {
   try {
     const response = await fetch('/api/system-config/environment', { headers: headers() })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || text('获取环境与敏感配置失败', 'Failed to load environment and sensitive configuration'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('获取环境与敏感配置失败', 'Failed to load environment and sensitive configuration')))
     configs.value = data.configs || []
     if (showMessage) message.success(text('配置已刷新', 'Configuration refreshed'))
   } catch (error) {
@@ -153,7 +154,7 @@ async function save() {
       }),
     })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || text('保存环境与敏感配置失败', 'Failed to save environment and sensitive configuration'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('保存环境与敏感配置失败', 'Failed to save environment and sensitive configuration')))
     message.success(editingKey.value ? text('配置已更新', 'Configuration updated') : text('配置已添加', 'Configuration added'))
     closeForm()
     await refresh(false)
@@ -176,7 +177,7 @@ function remove(item: SensitiveConfigItem) {
           method: 'DELETE', headers: headers(),
         })
         const data = await response.json()
-        if (!response.ok || !data.ok) throw new Error(data.error || text('删除配置项失败', 'Failed to delete configuration item'))
+        if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('删除配置项失败', 'Failed to delete configuration item')))
         message.success(text('配置项已删除', 'Configuration item deleted'))
         await refresh(false)
       } catch (error) {

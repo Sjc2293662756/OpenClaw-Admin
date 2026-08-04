@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NRadio, NRadioGroup, NSelect, NSpace, NSpin, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
+import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
 
 type UserRole = 'basic' | 'auditor' | 'standard' | 'admin'
@@ -58,7 +59,7 @@ async function loadUser() {
     if (!isAdmin.value) throw new Error(t('pages.gaiop.users.adminOnly'))
     const response = await fetch('/api/users', { headers: headers() })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.loadFailed'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, t('pages.gaiop.users.loadFailed')))
     const user = (data.users as ManagedUser[]).find(item => item.id === userId.value)
     if (!user) throw new Error(text('用户不存在或已被删除', 'The user does not exist or has been deleted'))
     form.username = user.username
@@ -87,7 +88,7 @@ async function submit() {
       body: JSON.stringify({ role: form.role, description: form.description, status: form.status }),
     })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.updateFailed'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, t('pages.gaiop.users.updateFailed')))
     message.success(t('pages.gaiop.users.updateSuccess'))
     router.push({ name: 'UserManagement' })
   } catch (error) {

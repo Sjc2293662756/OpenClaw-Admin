@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
+import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
 import type { AppLocale } from '@/i18n/locale'
 
@@ -30,7 +31,7 @@ async function submit() {
   try {
     const response = await fetch(`/api/users/${authStore.currentUser.id}/password`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authStore.getToken()}` }, body: JSON.stringify(form) })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.passwordFailed'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, t('pages.gaiop.users.passwordFailed')))
     message.success(t('pages.gaiop.users.passwordSuccess'))
     await authStore.logout()
     router.replace({ name: 'Welcome' })

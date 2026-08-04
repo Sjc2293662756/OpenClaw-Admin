@@ -4,6 +4,7 @@ import { NAlert, NButton, NCard, NDescriptions, NDescriptionsItem, NEmpty, NGrid
 import { RefreshOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 
 type RuntimeState = 'not-configured' | 'reachable' | 'unavailable'
 interface ComponentInfo { version: string; status: string }
@@ -103,7 +104,7 @@ async function validatePackage() {
     form.append('file', selectedFile.value)
     const response = await fetch('/api/system-upgrade/validate', { method: 'POST', headers: headers(), body: form })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || text('升级包校验失败', 'Upgrade package validation failed'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, text('升级包校验失败', 'Upgrade package validation failed')))
     const validationResult = result.validation as ValidationResult | null
     if (!validationResult) throw new Error(text('升级服务未返回校验结果', 'The upgrade service returned no validation result'))
     validation.value = validationResult
@@ -139,7 +140,7 @@ async function confirmBackupAction() {
       },
     )
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || text('备份操作失败', 'Backup operation failed'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, text('备份操作失败', 'Backup operation failed')))
     showBackupConfirm.value = false
     if (backupAction.value === 'rollback' && result.taskId) {
       message.success(text('回滚任务已提交', 'Rollback task submitted'))
@@ -186,7 +187,7 @@ async function loadTaskDetail(taskId: string, silent = false) {
   try {
     const response = await fetch('/api/system-upgrade/tasks/' + taskId, { headers: headers() })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || text('读取升级任务详情失败', 'Failed to load upgrade task details'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, text('读取升级任务详情失败', 'Failed to load upgrade task details')))
     taskDetail.value = result.task as TaskDetail
     if (!isTaskActive(taskDetail.value.status)) await loadOverview()
   } catch (error) {
@@ -207,7 +208,7 @@ async function executeValidatedTask() {
       body: JSON.stringify({ confirmation: executionConfirmation.value }),
     })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || text('升级任务无法执行', 'Upgrade task cannot be executed'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, text('升级任务无法执行', 'Upgrade task cannot be executed')))
     showExecutionConfirm.value = false
     message.success(text('升级任务已提交，页面将显示最新状态', 'Upgrade task submitted. The page will show its latest status.'))
     await loadOverview()
@@ -223,7 +224,7 @@ async function loadOverview() {
   try {
     const response = await fetch('/api/system-upgrade/overview', { headers: headers() })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || text('读取系统升级状态失败', 'Failed to load system upgrade status'))
+    if (!response.ok || !result.ok) throw new Error(localizeApiError(result, text('读取系统升级状态失败', 'Failed to load system upgrade status')))
     overview.value = result
   } catch (error) {
     message.error(error instanceof Error ? error.message : text('读取系统升级状态失败', 'Failed to load system upgrade status'))

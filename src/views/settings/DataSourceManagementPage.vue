@@ -6,6 +6,7 @@ import { AddOutline, CreateOutline, EllipsisHorizontalOutline, PlayCircleOutline
 import { useAuthStore } from '@/stores/auth'
 import { dataSourceStatusText, dataSourceTypeText, type DataSourceDraft, type DataSourceStatus } from './dataSources'
 import { useI18n } from 'vue-i18n'
+import { localizeApiError } from '@/utils/api-error'
 
 type RuntimeBridgeStatus = {
   ready: boolean
@@ -67,7 +68,7 @@ async function refresh(showMessage = true) {
   try {
     const response = await fetch('/api/data-sources', { headers: headers() })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || text('获取数据源失败', 'Failed to load data sources'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('获取数据源失败', 'Failed to load data sources')))
     const payload = unwrapApiData(data)
     dataSources.value = Array.isArray(payload.dataSources) ? payload.dataSources as DataSourceDraft[] : []
     runtimeBridge.value = (payload.runtime as RuntimeBridgeStatus | undefined) || null
@@ -87,7 +88,7 @@ async function testConnection(item: DataSourceDraft) {
   try {
     const response = await fetch(`/api/data-sources/${item.id}/test`, { method: 'POST', headers: headers() })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || text('连接测试失败', 'Connection test failed'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('连接测试失败', 'Connection test failed')))
     const payload = unwrapApiData(data)
     message.success((payload.result as { message?: string } | undefined)?.message || text('连接测试成功', 'Connection test passed'))
     await refresh(false)
@@ -109,7 +110,7 @@ function activate(item: DataSourceDraft) {
       try {
         const response = await fetch(`/api/data-sources/${item.id}/activate`, { method: 'POST', headers: headers() })
         const data = await response.json()
-        if (!response.ok || !data.ok) throw new Error(data.error || text('启用运行数据源失败', 'Failed to enable runtime data source'))
+        if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('启用运行数据源失败', 'Failed to enable runtime data source')))
         message.success(text('已设为运行数据源，后续分析将读取该数据源配置', 'Set as runtime data source. Subsequent analyses will use its configuration.'))
         await refresh(false)
       } catch (error) {
@@ -128,7 +129,7 @@ function remove(item: DataSourceDraft) {
       try {
         const response = await fetch(`/api/data-sources/${item.id}`, { method: 'DELETE', headers: headers() })
         const data = await response.json()
-        if (!response.ok || !data.ok) throw new Error(data.error || text('删除失败', 'Delete failed'))
+        if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('删除失败', 'Delete failed')))
         message.success(text('数据源已删除', 'Data source deleted'))
         await refresh(false)
       } catch (error) {

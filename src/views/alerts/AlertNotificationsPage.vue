@@ -7,6 +7,7 @@ import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePermissions } from '@/composables/usePermissions'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
+import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
 
 type Metric = { name: string; value: string; unit: string }
@@ -230,7 +231,7 @@ async function loadAlerts() {
     const contentType = response.headers.get('content-type') || ''
     if (!contentType.includes('application/json')) throw new Error(text('Admin BFF 未返回告警接口数据', 'The Admin BFF did not return alert API data'))
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || text('读取告警失败', 'Failed to load alerts'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('读取告警失败', 'Failed to load alerts')))
     alerts.value = Array.isArray(data.alerts) ? data.alerts : []
     categoryOptions.value = Array.isArray(data.categoryOptions) ? data.categoryOptions : []
     pagination.value = data.pagination || pagination.value

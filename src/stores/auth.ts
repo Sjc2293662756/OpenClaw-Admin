@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
+import { localizeApiError } from '@/utils/api-error'
 
 const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
@@ -107,7 +108,7 @@ export const useAuthStore = defineStore('auth', () => {
         loading.value = false
         return true
       } else {
-        error.value = data.error || 'Login failed'
+        error.value = localizeApiError(data, 'Login failed')
         loading.value = false
         return false
       }
