@@ -5,6 +5,7 @@ import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpace, useMessage, t
 import { useAuthStore } from '@/stores/auth'
 import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
 import { localizeApiError } from '@/utils/api-error'
+import { resolvePasswordChangeReturn } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
 import type { AppLocale } from '@/i18n/locale'
 
@@ -37,6 +38,10 @@ async function submit() {
     router.replace({ name: 'Welcome' })
   } catch (error) { message.error(error instanceof Error ? error.message : t('pages.gaiop.users.passwordFailed')) } finally { saving.value = false }
 }
+
+function returnFromPasswordChange() {
+  void router.push(resolvePasswordChangeReturn(authStore.currentUser?.role))
+}
 </script>
 
 <template>
@@ -49,7 +54,7 @@ async function submit() {
       <NFormItem :label="t('pages.gaiop.users.newPassword')" path="newPassword" required><NInput v-model:value="form.newPassword" type="password" show-password-on="click" :placeholder="t('pages.gaiop.users.passwordPlaceholder')" /></NFormItem>
       <NFormItem :label="t('pages.gaiop.users.confirmPassword')" path="confirmPassword" required><NInput v-model:value="form.confirmPassword" type="password" show-password-on="click" :placeholder="t('pages.gaiop.users.confirmPasswordPlaceholder')" /></NFormItem>
       <NFormItem label=""><span class="password-hint">{{ passwordHint }}</span></NFormItem>
-      <NFormItem label=""><NSpace><NButton v-if="!authStore.currentUser?.mustChangePassword" @click="router.push({ name: 'UserManagement' })">{{ t('pages.gaiop.users.back') }}</NButton><NButton type="primary" :loading="saving" @click="submit">{{ t('pages.gaiop.users.submit') }}</NButton></NSpace></NFormItem>
+      <NFormItem label=""><NSpace><NButton v-if="!authStore.currentUser?.mustChangePassword" @click="returnFromPasswordChange">{{ t('pages.gaiop.users.back') }}</NButton><NButton type="primary" :loading="saving" @click="submit">{{ t('pages.gaiop.users.submit') }}</NButton></NSpace></NFormItem>
     </NForm>
   </NCard>
 </template>

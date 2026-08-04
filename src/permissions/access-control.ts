@@ -122,6 +122,12 @@ export function resolveConfigManagementRedirect(
   }
 }
 
+export function resolvePasswordChangeReturn(role: UserRole | null | undefined) {
+  return canAccessPage(role, 'users')
+    ? { name: 'UserManagement' }
+    : { name: 'ChatWorkspace' }
+}
+
 export function canAccessRoute(role: UserRole | null | undefined, routeName: string | symbol | null | undefined): boolean {
   const access = getPageAccess(routeName)
   return !access || canAccessPage(role, access.key)

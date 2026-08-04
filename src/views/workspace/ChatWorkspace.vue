@@ -325,16 +325,15 @@ onUnmounted(() => {
       </div>
     </section>
 
-    <NModal v-model:show="showManagementAccessDenied" preset="card" :title="t('pages.gaiop.accessDenied.title')" :style="{ width: 'min(460px, calc(100vw - 32px))' }">
-      <NSpace vertical align="center" :size="16" class="management-access-denied-dialog">
+    <NModal v-model:show="showManagementAccessDenied" preset="card" :style="{ width: 'min(420px, calc(100vw - 32px))' }">
+      <NSpace vertical align="center" :size="10" class="management-access-denied-dialog">
+        <h2 class="management-access-denied-title">{{ t('pages.gaiop.accessDenied.title') }}</h2>
         <span class="management-access-denied-icon"><NIcon :component="LockClosedOutline" /></span>
         <NText depth="3">{{ t('pages.gaiop.workspace.managementAccessDenied') }}</NText>
-      </NSpace>
-      <template #footer>
         <NButton type="primary" @click="showManagementAccessDenied = false">
           {{ t('pages.gaiop.workspace.managementAccessDeniedConfirm') }}
         </NButton>
-      </template>
+      </NSpace>
     </NModal>
   </main>
 </template>
@@ -350,19 +349,27 @@ onUnmounted(() => {
 }
 
 .management-access-denied-dialog {
-  padding: 10px 6px 4px;
+  padding: 4px 6px 10px;
   text-align: center;
+}
+
+.management-access-denied-title {
+  margin: 0 0 2px;
+  color: var(--text-primary);
+  font-size: 23px;
+  font-weight: 650;
+  line-height: 1.3;
 }
 
 .management-access-denied-icon {
   display: grid;
-  width: 58px;
-  height: 58px;
+  width: 54px;
+  height: 54px;
   place-items: center;
-  border-radius: 18px;
+  border-radius: 17px;
   background: color-mix(in srgb, var(--primary-color) 12%, transparent);
   color: var(--primary-color);
-  font-size: 29px;
+  font-size: 27px;
 }
 
 .workspace-sidebar {
