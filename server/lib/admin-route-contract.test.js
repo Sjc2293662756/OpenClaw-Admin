@@ -19,3 +19,12 @@ test('system metrics uses the dedicated monitor role boundary', () => {
     /app\.get\('\/api\/system\/metrics',\s*systemMonitorMiddleware/
   )
 })
+
+test('basic workspace REST boundary is registered before every business router', () => {
+  const authRouter = source.indexOf("app.use('/api/auth'")
+  const basicBoundary = source.indexOf("app.use('/api', createBasicWorkspaceOnlyMiddleware")
+  const firstBusinessRouter = source.indexOf("app.use('/api/system-settings/report-storage'")
+  assert.ok(authRouter >= 0)
+  assert.ok(basicBoundary > authRouter)
+  assert.ok(firstBusinessRouter > basicBoundary)
+})

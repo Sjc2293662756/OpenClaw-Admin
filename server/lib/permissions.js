@@ -26,6 +26,10 @@ const SESSION_WRITE_RPC_METHODS = new Set([
   'sessions.patch', 'session.patch',
 ])
 const OWNED_SESSION_DELETE_RPC_METHODS = new Set(['sessions.delete', 'session.delete'])
+const BASIC_WORKSPACE_WRITE_RPC_METHODS = new Set([
+  'agent', 'chat.send', 'chat.abort', 'agent.abort',
+  ...OWNED_SESSION_DELETE_RPC_METHODS,
+])
 
 const GLOBAL_USAGE_RPC_METHODS = new Set(['usage.cost', 'cost.usage'])
 
@@ -101,8 +105,19 @@ export function getRpcPermissionDecision(user, method) {
 
   if (user?.role === 'admin') return { allowed: true }
 
-  if (OWNED_SESSION_DELETE_RPC_METHODS.has(normalized) && user?.role === 'basic') {
-    return { allowed: true }
+  if (user?.role === 'basic') {
+    if (
+      SESSION_READ_RPC_METHODS.has(normalized)
+      || SYSTEM_STATUS_RPC_METHODS.has(normalized)
+      || BASIC_WORKSPACE_WRITE_RPC_METHODS.has(normalized)
+    ) {
+      return { allowed: true }
+    }
+    return {
+      allowed: false,
+      code: 'BASIC_WORKSPACE_ONLY',
+      message: '基础用户仅可使用对话工作台和修改本人密码',
+    }
   }
 
   if (SESSION_WRITE_RPC_METHODS.has(normalized) && user?.role === 'standard') {
@@ -179,6 +194,53 @@ export function getRpcPermissionDecision(user, method) {
 
 export function canCallRpc(user, method) {
   return getRpcPermissionDecision(user, method).allowed
+}
+
+function basicPasswordChangeTarget(path) {
+  const match = path.match(/^\/api\/users\/([^/]+)\/password$/u)
+  if (!match) return ''
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return ''
+  }
+}
+
+export function isBasicWorkspaceApiRequest(user, method, originalUrl) {
+  if (user?.role !== 'basic') return true
+  const normalizedMethod = String(method || 'GET').toUpperCase()
+  const path = String(originalUrl || '').split('?')[0]
+  if (normalizedMethod === 'POST' && (path === '/api/rpc' || path === '/api/workspace/sessions')) return true
+  if (normalizedMethod === 'GET' && (path === '/api/events' || path === '/api/media')) return true
+  if (normalizedMethod === 'PUT' && basicPasswordChangeTarget(path) === String(user.id || '')) return true
+  return false
+}
+
+export function createBasicWorkspaceOnlyMiddleware(authMiddleware, recordAudit) {
+  return (req, res, next) => {
+    const path = String(req.originalUrl || '').split('?')[0]
+    if (path === '/api/health') return next()
+    authMiddleware(req, res, () => {
+      if (isBasicWorkspaceApiRequest(req.user, req.method, req.originalUrl)) return next()
+      try {
+        recordAudit?.(req.user, '拒绝受保护请求', path, '', {
+          req,
+          category: 'authorization',
+          result: 'denied',
+          source: 'rest',
+          errorCode: 'BASIC_WORKSPACE_ONLY',
+        })
+      } catch {
+        // Permission denial must not depend on audit persistence.
+      }
+      res.locals.auditRejectionRecorded = true
+      return res.status(403).json({
+        ok: false,
+        code: 'BASIC_WORKSPACE_ONLY',
+        error: { message: '基础用户仅可使用对话工作台和修改本人密码' },
+      })
+    })
+  }
 }
 
 export function rpcPermissionMiddleware(req, res, next) {

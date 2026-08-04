@@ -3,6 +3,7 @@ import {
   PAGE_ACCESS_MATRIX,
   canAccessPage,
   canAccessRoute,
+  canUseConversation,
   getPageAccess,
   type PageAccessKey,
   type UserRole,
@@ -11,15 +12,15 @@ import {
 const roles: UserRole[] = ['basic', 'auditor', 'standard', 'admin']
 
 const expected: Record<PageAccessKey, UserRole[]> = {
-  dashboard: roles,
-  alerts: roles,
+  dashboard: ['auditor', 'standard', 'admin'],
+  alerts: ['auditor', 'standard', 'admin'],
   chat: roles,
-  sessions: roles,
-  reports: roles,
+  sessions: ['auditor', 'standard', 'admin'],
+  reports: ['auditor', 'standard', 'admin'],
   cron: ['auditor', 'admin'],
   memory: ['admin'],
   models: ['admin'],
-  channels: roles,
+  channels: ['auditor', 'standard', 'admin'],
   skills: ['auditor', 'standard', 'admin'],
   system: ['auditor', 'standard', 'admin'],
   agents: ['admin'],
@@ -27,7 +28,7 @@ const expected: Record<PageAccessKey, UserRole[]> = {
   users: ['auditor', 'admin'],
   userAdministration: ['admin'],
   audit: ['auditor', 'admin'],
-  settings: roles,
+  settings: ['auditor', 'standard', 'admin'],
   systemConfiguration: ['admin'],
   systemUpgrade: ['admin'],
 }
@@ -50,6 +51,16 @@ describe('four-role page access matrix', () => {
     expect(canAccessRoute('auditor', 'DataSourceEdit')).toBe(false)
     expect(canAccessRoute('auditor', 'Cron')).toBe(true)
     expect(canAccessRoute('basic', 'ChatWorkspace')).toBe(true)
+    expect(canAccessRoute('basic', 'Dashboard')).toBe(false)
+    expect(canAccessRoute('basic', 'Sessions')).toBe(false)
+    expect(canAccessRoute('basic', 'Files')).toBe(false)
     expect(getPageAccess('SystemUpgrade')?.moduleName).toBe('系统升级')
+  })
+
+  it('allows basic users to converse while auditors remain read-only', () => {
+    expect(canUseConversation('basic')).toBe(true)
+    expect(canUseConversation('standard')).toBe(true)
+    expect(canUseConversation('admin')).toBe(true)
+    expect(canUseConversation('auditor')).toBe(false)
   })
 })

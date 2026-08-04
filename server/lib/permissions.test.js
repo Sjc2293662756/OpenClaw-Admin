@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import test from 'node:test'
 import express from 'express'
-import { FORMAL_RPC_METHODS, createRoleMiddleware, getRpcPermissionDecision, isReadOnlyRpcMethod, rpcPermissionMiddleware } from './permissions.js'
+import { FORMAL_RPC_METHODS, createBasicWorkspaceOnlyMiddleware, createRoleMiddleware, getRpcPermissionDecision, isBasicWorkspaceApiRequest, isReadOnlyRpcMethod, rpcPermissionMiddleware } from './permissions.js'
 
 test('RPC permission matrix keeps privileged writes and sensitive reads restricted', () => {
   assert.equal(getRpcPermissionDecision({ role: 'admin' }, 'config.set').allowed, true)
@@ -16,9 +16,7 @@ test('RPC permission matrix keeps privileged writes and sensitive reads restrict
   assert.equal(auditorWrite.allowed, false)
   assert.equal(auditorWrite.code, 'AUDITOR_READ_ONLY')
 
-  const basicWrite = getRpcPermissionDecision({ role: 'basic' }, 'chat.send')
-  assert.equal(basicWrite.allowed, false)
-  assert.equal(basicWrite.code, 'BASIC_READ_ONLY')
+  assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'chat.send').allowed, true)
 
   assert.equal(getRpcPermissionDecision({ role: 'basic' }, 'status').allowed, true)
   assert.equal(getRpcPermissionDecision({ role: 'auditor' }, 'sessions.history').allowed, true)
@@ -33,7 +31,9 @@ test('first-stage role matrix restricts management reads and all delegated write
   for (const method of ['channels.status', 'channels.list', 'plugins.list', 'plugins.status']) {
     assert.equal(getRpcPermissionDecision({ role: 'auditor' }, method).allowed, true)
     assert.equal(getRpcPermissionDecision({ role: 'standard' }, method).allowed, true)
-    assert.equal(getRpcPermissionDecision({ role: 'basic' }, method).allowed, true)
+    const basicDecision = getRpcPermissionDecision({ role: 'basic' }, method)
+    assert.equal(basicDecision.allowed, false)
+    assert.equal(basicDecision.code, 'BASIC_WORKSPACE_ONLY')
   }
 
   for (const method of ['skills.list', 'skills.status']) {
@@ -62,7 +62,7 @@ test('first-stage role matrix restricts management reads and all delegated write
   }
 })
 
-test('basic and standard users can request deletion while ownership remains enforced separately', () => {
+test('basic and standard users can request workspace deletion while ownership remains enforced separately', () => {
   for (const method of ['sessions.delete', 'session.delete']) {
     assert.equal(getRpcPermissionDecision({ role: 'admin' }, method).allowed, true)
     assert.equal(getRpcPermissionDecision({ role: 'basic' }, method).allowed, true)
@@ -109,14 +109,15 @@ test('unknown read-like RPC names are denied for every role including administra
     'sessions.list', 'session.list', 'sessions.get', 'session.get',
     'sessions.history', 'session.history', 'chat.history', 'sessions.usage', 'usage.sessions',
     'sessions.delete', 'session.delete', 'status', 'health',
-    'channels.status', 'channels.list', 'channel.list', 'channel.status',
-    'plugins.list', 'plugin.list', 'plugins.status', 'plugin.status',
+    'agent', 'chat.send', 'chat.abort', 'agent.abort',
   ])
   const standardMethods = new Set([
     ...basicMethods,
     'agent', 'chat.send', 'chat.abort', 'agent.abort',
     'sessions.reset', 'session.reset', 'sessions.spawn', 'session.spawn',
     'sessions.send', 'session.send', 'sessions.patch', 'session.patch',
+    'channels.status', 'channels.list', 'channel.list', 'channel.status',
+    'plugins.list', 'plugin.list', 'plugins.status', 'plugin.status',
     'skills.status', 'skills.list', 'system-presence', 'node.list', 'config.get',
   ])
   const auditorMethods = new Set([
@@ -135,6 +136,62 @@ test('unknown read-like RPC names are denied for every role including administra
     assert.equal(getRpcPermissionDecision({ role: 'basic' }, method).allowed, basicMethods.has(method), `basic ${method}`)
     assert.equal(getRpcPermissionDecision({ role: 'standard' }, method).allowed, standardMethods.has(method), `standard ${method}`)
     assert.equal(getRpcPermissionDecision({ role: 'auditor' }, method).allowed, auditorMethods.has(method), `auditor ${method}`)
+  }
+})
+
+test('basic REST boundary allows only workspace transport and own password change', () => {
+  const basic = { id: 'basic-1', role: 'basic' }
+  const standard = { id: 'standard-1', role: 'standard' }
+  for (const [method, path] of [
+    ['POST', '/api/rpc'],
+    ['POST', '/api/workspace/sessions'],
+    ['GET', '/api/events'],
+    ['GET', '/api/media?path=image.png'],
+    ['PUT', '/api/users/basic-1/password'],
+  ]) {
+    assert.equal(isBasicWorkspaceApiRequest(basic, method, path), true, `${method} ${path}`)
+  }
+  for (const [method, path] of [
+    ['GET', '/api/dashboard/summary'],
+    ['GET', '/api/reports'],
+    ['GET', '/api/channels/config'],
+    ['GET', '/api/system-settings/sessions'],
+    ['PUT', '/api/users/other-user/password'],
+  ]) {
+    assert.equal(isBasicWorkspaceApiRequest(basic, method, path), false, `${method} ${path}`)
+  }
+  assert.equal(isBasicWorkspaceApiRequest(standard, 'GET', '/api/reports'), true)
+})
+
+test('basic REST middleware rejects direct management requests and preserves health', async () => {
+  const app = express()
+  app.use(express.json())
+  const authMiddleware = (req, _res, next) => {
+    req.user = { id: 'basic-1', role: req.get('x-test-role') || 'basic' }
+    next()
+  }
+  app.use('/api', createBasicWorkspaceOnlyMiddleware(authMiddleware))
+  app.get('/api/health', (_req, res) => res.json({ ok: true }))
+  app.post('/api/rpc', (_req, res) => res.json({ ok: true }))
+  app.get('/api/reports', (_req, res) => res.json({ ok: true }))
+  app.put('/api/users/:id/password', (_req, res) => res.json({ ok: true }))
+
+  const server = app.listen(0)
+  await once(server, 'listening')
+  const address = server.address()
+  const baseUrl = `http://127.0.0.1:${address.port}`
+  try {
+    assert.equal((await fetch(`${baseUrl}/api/health`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/rpc`, { method: 'POST' })).status, 200)
+    const denied = await fetch(`${baseUrl}/api/reports`)
+    assert.equal(denied.status, 403)
+    assert.equal((await denied.json()).code, 'BASIC_WORKSPACE_ONLY')
+    assert.equal((await fetch(`${baseUrl}/api/users/basic-1/password`, { method: 'PUT' })).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/users/other/password`, { method: 'PUT' })).status, 403)
+    assert.equal((await fetch(`${baseUrl}/api/reports`, { headers: { 'x-test-role': 'standard' } })).status, 200)
+  } finally {
+    server.close()
+    await once(server, 'close')
   }
 })
 

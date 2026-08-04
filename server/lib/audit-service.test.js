@@ -232,7 +232,7 @@ test('rejection auditing covers four roles, hidden resources, retired endpoints,
     }
     assert.equal((await request('/api/rest/admin', { method: 'POST', headers: headersFor('admin') })).status, 200)
 
-    for (const [role, method] of [['basic', 'chat.send'], ['standard', 'config.set'], ['auditor', 'chat.send'], ['admin', 'unknown.status']]) {
+    for (const [role, method] of [['basic', 'channels.status'], ['standard', 'config.set'], ['auditor', 'chat.send'], ['admin', 'unknown.status']]) {
       const response = await request('/api/rpc', {
         method: 'POST', headers: headersFor(role, { 'content-type': 'application/json' }), body: JSON.stringify({ method, params: { secret: 'not-recorded' } }),
       })

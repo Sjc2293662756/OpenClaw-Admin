@@ -26,6 +26,7 @@ import {
   isLegacyDefaultSession,
 } from '@/utils/session-presentation'
 import type { Session } from '@/api/types'
+import { canAccessPage } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
@@ -41,6 +42,7 @@ const {
   chatReadOnlyHint,
 } = usePermissions()
 const message = useMessage()
+const canAccessAdminConsole = computed(() => canAccessPage(authStore.currentUser?.role, 'dashboard'))
 
 const ready = ref(wsStore.state === ConnectionState.CONNECTED)
 const creatingSession = ref(false)
@@ -256,7 +258,7 @@ onUnmounted(() => {
           <button type="button" @click="router.push({ name: 'PasswordChange' })">
             <NIcon :component="LockClosedOutline" /> {{ t('pages.gaiop.workspace.changePassword') }}
           </button>
-          <button type="button" @click="router.push({ name: 'Dashboard' })">
+          <button v-if="canAccessAdminConsole" type="button" @click="router.push({ name: 'Dashboard' })">
             <NIcon :component="GridOutline" /> {{ t('pages.gaiop.workspace.adminConsole') }}
           </button>
           <button type="button" class="danger" @click="logout">
@@ -279,7 +281,7 @@ onUnmounted(() => {
           </NButton>
           <NTooltip>
             <template #trigger>
-              <NButton secondary type="primary" @click="router.push({ name: 'Dashboard' })">
+              <NButton v-if="canAccessAdminConsole" secondary type="primary" @click="router.push({ name: 'Dashboard' })">
                 <template #icon><NIcon :component="GridOutline" /></template>
                 {{ t('pages.gaiop.workspace.adminConsole') }}
               </NButton>

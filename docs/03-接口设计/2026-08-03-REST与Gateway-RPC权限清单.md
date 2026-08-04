@@ -8,6 +8,8 @@
 
 除 `/api/auth/config`、`/api/auth/login`、`/api/auth/logout`、`/api/health` 和构建产物静态资源外，所有正式业务 REST 均需 Bearer 登录认证。登录 Token 不再接受 URL 查询参数。
 
+2026-08-04 起，基础用户在通用认证之后先经过 `BASIC_WORKSPACE_ONLY` 服务端边界：除认证、健康检查外，仅允许 `/api/rpc`、`POST /api/workspace/sessions`、`GET /api/events`、本人会话 `GET /api/media` 和 `PUT /api/users/<本人ID>/password`。下表基础列已按该边界更新；被拦截请求不会进入后续管理 Router。
+
 ### 1.1 核查依据
 
 | 依据 | 用途 |
@@ -64,20 +66,20 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | POST `/api/auth/logout` | 认证 | 是 | 幂等 200 | 本人 | 本人 | 本人 | 本人 | 仅请求头 Token | 保留 |
 | GET `/api/auth/check` | 认证 | 是 | — | 本人 | 本人 | 本人 | 本人 | 当前安全账户字段 | 保留 |
 | GET `/api/health` | 健康 | 是 | 公开 | 公开 | 公开 | 公开 | 公开 | 固定健康和连接摘要 | 保留 |
-| GET `/api/status` | Gateway 状态 | 是 | — | 只读 | 只读 | 只读 | 只读 | Gateway 状态 | 保留 |
+| GET `/api/status` | Gateway 状态 | 是 | — | 403 | 只读 | 只读 | 只读 | Gateway 状态 | 基础用户由工作台 SSE/RPC 获取必要状态 |
 | POST `/api/rpc` | Gateway BFF | 是 | — | 显式集合 | 显式集合 | 显式只读 | 显式管理集合 | 业务数据；见第 4 节 | 收紧为默认拒绝 |
 | GET `/api/events` | 实时事件 | 是 | — | 本人事件 | 本人事件 | 全量只读事件 | 全量事件 | 会话事件流 | 保留；Bearer fetch SSE、心跳和隔离 |
-| GET `/api/dashboard/summary` | 仪表盘 | 是 | — | 本人会话口径 | 本人会话口径 | 全量只读 | 全量 | 聚合指标 | 保留 |
-| GET `/api/dashboard/usage` | 仪表盘 Usage | 是 | — | 本人聚合 | 本人聚合 | 全量只读 | 全量 | 消息、Token、趋势、模型、工具聚合 | 保留 |
-| GET `/api/channels/config` | 频道 | 是 | — | 安全状态 | 安全状态 | 安全状态 | 管理读取 | 非管理员无地址、密钥、原始配置 | 保留安全投影 |
+| GET `/api/dashboard/summary` | 仪表盘 | 是 | — | 403 | 本人会话口径 | 全量只读 | 全量 | 聚合指标 | 基础用户不进入管理控制台 |
+| GET `/api/dashboard/usage` | 仪表盘 Usage | 是 | — | 403 | 本人聚合 | 全量只读 | 全量 | 消息、Token、趋势、模型、工具聚合 | 基础用户不进入管理控制台 |
+| GET `/api/channels/config` | 频道 | 是 | — | 403 | 安全状态 | 安全状态 | 管理读取 | 非管理员无地址、密钥、原始配置 | 基础用户不进入管理控制台 |
 | PUT `/api/channels/config` | 频道 | 是 | — | 403 | 403 | 403 | 管理 | 配置和凭据写入 | 管理员专属 |
 | POST `/api/channels/feishu/onboarding` | 频道接入 | 是 | — | 403 | 403 | 403 | 管理 | 启动短期二维码接入流程 | 管理员专属 |
 | GET `/api/channels/feishu/onboarding/:id` | 频道接入 | 是 | — | 403 | 403 | 403 | 管理 | 仅返回短期流程状态 | 管理员专属 |
 | DELETE `/api/channels/feishu/onboarding/:id` | 频道接入 | 是 | — | 403 | 403 | 403 | 管理 | 取消接入流程 | 管理员专属 |
-| POST `/api/workspace/sessions` | 工作台会话 | 是 | — | 403 | 本人创建 | 403 | 管理 | 会话归属 | 标准/管理员 |
-| GET `/api/alerts` | 告警 | 是 | — | 只读 | 只读 | 全量只读 | 全量 | 告警业务数据 | 保留 |
-| GET `/api/alerts/time` | 告警 | 是 | — | 只读 | 只读 | 只读 | 只读 | 服务器时间 | 保留 |
-| POST `/api/alerts/export` | 告警 | 是 | — | 当前页导出 | 当前页导出 | 当前页导出 | 当前页导出 | 告警业务数据 | 明确登录写能力 |
+| POST `/api/workspace/sessions` | 工作台会话 | 是 | — | 本人创建 | 本人创建 | 403 | 管理 | 会话归属 | 基础/标准/管理员；服务端登记 owner_user_id |
+| GET `/api/alerts` | 告警 | 是 | — | 403 | 只读 | 全量只读 | 全量 | 告警业务数据 | 基础用户不进入管理控制台 |
+| GET `/api/alerts/time` | 告警 | 是 | — | 403 | 只读 | 只读 | 只读 | 服务器时间 | 基础用户不进入管理控制台 |
+| POST `/api/alerts/export` | 告警 | 是 | — | 403 | 当前页导出 | 当前页导出 | 当前页导出 | 告警业务数据 | 基础用户不进入管理控制台 |
 | GET `/api/users` | 账户 | 是 | — | 403 | 403 | 安全字段只读 | 管理读取 | 用户名、角色、状态；无密码哈希 | 审计/管理员可读 |
 | POST `/api/users` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 新账户与临时密码入参 | 管理员专属 |
 | PUT `/api/users/:id` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 角色、状态 | 管理员专属 |
@@ -85,18 +87,18 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | PUT `/api/users/:id/password` | 账户 | 是 | — | 本人 | 本人 | 本人 | 本人 | 当前密码和新密码入参 | 仅本人改密并校验当前密码；管理员修改他人须走 reset-password |
 | DELETE `/api/users/:id` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 账户状态 | 管理员专属 |
 | GET `/api/audit-logs` | 审计 | 是 | — | 403 | 403 | 全量只读 | 全量 | 审计业务数据 | 审计/管理员只读 |
-| GET `/api/reports` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | 报告元数据、安全来源字段 | 保留归属隔离 |
-| GET `/api/reports/:id/download` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | 报告文件 | 保留归属隔离 |
-| GET `/api/reports/:id/preview` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | PDF/文本报告内容 | 保留归属隔离 |
+| GET `/api/reports` | 报告 | 是 | — | 403 | 本人 | 全量只读 | 全量 | 报告元数据、安全来源字段 | 基础用户不进入管理控制台 |
+| GET `/api/reports/:id/download` | 报告 | 是 | — | 403 | 本人 | 全量只读 | 全量 | 报告文件 | 基础用户不进入管理控制台 |
+| GET `/api/reports/:id/preview` | 报告 | 是 | — | 403 | 本人 | 全量只读 | 全量 | PDF/文本报告内容 | 基础用户不进入管理控制台 |
 | DELETE `/api/reports/:id` | 报告 | 是 | — | 403 | 403 | 403 | 管理 | 报告和审计伴随文件 | 管理员专属 |
-| GET `/api/data-sources` | 数据源 | 是 | — | 安全列表 | 安全列表 | 安全列表 | 管理读取 | 不返回密码明文或密文 | 保留安全投影 |
+| GET `/api/data-sources` | 数据源 | 是 | — | 403 | 安全列表 | 安全列表 | 管理读取 | 不返回密码明文或密文 | 基础用户不进入管理控制台 |
 | POST `/api/data-sources` | 数据源 | 是 | — | 403 | 403 | 403 | 管理 | 数据源地址和凭据写入 | 管理员专属，凭据加密存储 |
 | PUT `/api/data-sources/:id` | 数据源 | 是 | — | 403 | 403 | 403 | 管理 | 更新地址、描述和凭据 | 管理员专属 |
 | DELETE `/api/data-sources/:id` | 数据源 | 是 | — | 403 | 403 | 403 | 管理 | 删除配置记录 | 管理员专属 |
 | POST `/api/data-sources/:id/test` | 数据源 | 是 | — | 403 | 403 | 403 | 管理 | 连接诊断 | 管理员专属 |
 | POST `/api/data-sources/:id/activate` | 数据源 | 是 | — | 403 | 403 | 403 | 管理 | 运行数据源选择 | 管理员专属 |
 | GET `/api/system-settings/report-storage` | 系统设置 | 是 | — | 403 | 403 | 403 | 管理 | 正式报告目录，只读 | 管理员专属 |
-| GET `/api/system-settings/sessions` | 会话策略 | 是 | — | 只读 | 只读 | 只读 | 管理读取 | 超时和保留策略 | 保留 |
+| GET `/api/system-settings/sessions` | 会话策略 | 是 | — | 403 | 只读 | 只读 | 管理读取 | 超时和保留策略 | 基础用户不进入管理控制台 |
 | PUT `/api/system-settings/sessions` | 会话策略 | 是 | — | 403 | 403 | 403 | 管理 | 登录与 Gateway 策略 | 管理员专属 |
 | GET `/api/system-config/gaiop-service` | 系统配置 | 是 | — | 403 | 403 | 403 | 管理 | Gateway 地址和“Token 已配置”布尔摘要 | 管理员专属，Token 不回传 |
 | PUT `/api/system-config/gaiop-service` | 系统配置 | 是 | — | 403 | 403 | 403 | 管理 | Gateway 地址和 Token 只写更新 | 管理员专属 |
@@ -140,13 +142,13 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | 数据类型 | 基础/标准 | 审计 | 管理员 | 服务端执行点 |
 |---|---|---|---|---|
 | WebChat 会话列表、历史、用量 | 仅 `workspace_sessions.owner_user_id` 归属的 active 会话 | 全量只读 | 全量 | `listOwnedWorkspaceSessionKeys`、`ensureWorkspaceSessionAccess`、`filterSessionListPayload` |
-| WebChat 会话删除/重置/发送 | 基础仅可删本人；标准可在本人会话中执行正式对话操作 | 全部拒绝 | 允许 | `/api/rpc` 在转发 Gateway 前先解析 sessionKey 并查归属 |
+| WebChat 会话删除/发送/停止 | 基础和标准均可在本人会话中执行工作台对话、停止和删除 | 全部拒绝 | 允许 | `/api/rpc` 在转发 Gateway 前先解析 sessionKey 并查归属 |
 | Usage | 先过滤本人会话，再重算消息、Token、趋势、模型、工具和分组聚合 | 全量只读 | 全量 | `filterSessionUsagePayload`；不是全局数据透传，也不是简单清零 |
-| 报告列表、预览、下载 | 仅 `source_user_id` 匹配本人 | 全量只读 | 全量 | `resolveReportOrError`和报告列表 SQL 条件 |
+| 报告列表、预览、下载 | 基础拒绝；标准仅 `source_user_id` 匹配本人 | 全量只读 | 全量 | 基础 REST 边界 + `resolveReportOrError`和报告列表 SQL 条件 |
 | 实时 SSE 会话事件 | 仅能接收可访问 sessionKey 的事件 | 全量只读 | 全量 | `extractSessionKeyFromEvent` + `canAccessWorkspaceSession` |
 | 聊天媒体 | 必须携带并通过 `X-GAIOP-Session-Key` 归属 | 携带会话标识后全量只读 | 管理访问 | `createMediaRouter` 先认证/会话授权，再读文件 |
 | 用户账户 | 无权列表 | 只读安全字段 | 管理 | `accountViewerMiddleware` + `publicUser` |
-| 频道、插件、Skills、标准配置 | 仅页面需要的安全状态/模型选择投影 | 相应安全只读投影 | 完整管理数据 | `projectSafe*Payload`、`projectStandardGatewayConfig` |
+| 频道、插件、Skills、标准配置 | 基础拒绝；标准仅页面需要的安全状态/模型选择投影 | 相应安全只读投影 | 完整管理数据 | 基础 REST/RPC 边界 + `projectSafe*Payload`、`projectStandardGatewayConfig` |
 
 ## 3. 已停用入口（410，源码尚未删除）
 
@@ -191,10 +193,10 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 |---|---|---|---|---|---|
 | `sessions.list/get/history/usage`、`session.*` 读别名、`chat.history` | 本人 | 本人 | 全量只读 | 全量 | BFF 校验归属；Usage 按本人完整重聚合 |
 | `sessions.delete`、`session.delete` | 本人 | 本人 | 拒绝 | 全量 | 本人归属校验；审计只读 |
-| `chat.send`、`agent` 对话回退、`chat.abort`、`agent.abort` | 拒绝 | 本人 | 拒绝 | 允许 | 标准必须携带并通过本人 sessionKey |
+| `chat.send`、`agent` 对话回退、`chat.abort`、`agent.abort` | 本人 | 本人 | 拒绝 | 允许 | 基础/标准必须携带并通过本人 sessionKey |
 | `sessions.reset/spawn/send/patch` 及单数别名 | 拒绝 | 本人 | 拒绝 | 允许 | 标准必须通过本人归属校验 |
 | `usage.cost`、`cost.usage` | 拒绝 | 拒绝 | 全量只读 | 全量 | 全局成本不下放基础/标准 |
-| `channels.status/list`、`channel.status/list`、`plugins.list/status` | 安全只读 | 安全只读 | 安全只读 | 全量 | 非管理员移除地址、路径、Token、密钥、原始配置 |
+| `channels.status/list`、`channel.status/list`、`plugins.list/status` | 拒绝 | 安全只读 | 安全只读 | 全量 | 基础用户仅工作台；标准/审计使用安全投影 |
 | `skills.status/list` | 拒绝 | 安全只读 | 安全只读 | 全量 | 非管理员安全投影 |
 | `config.get` | 拒绝 | 模型选择安全投影 | 拒绝 | 全量 | 标准不获得底层连接/凭据 |
 | `health`、`status` | 只读 | 只读 | 只读 | 全量 | 正式状态页所需 |
@@ -231,7 +233,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 
 `agent`、`chat.send`、`chat.abort`、`agent.abort`、`sessions.delete`、`session.delete`、`sessions.reset`、`session.reset`、`sessions.spawn`、`session.spawn`、`sessions.send`、`session.send`、`sessions.patch`、`session.patch`。
 
-- 基础：仅 `sessions.delete`/`session.delete` 可用，且必须是本人会话。
+- 基础：`agent`、`chat.send`、`chat.abort`、`agent.abort`、`sessions.delete`、`session.delete` 可用，且必须是本人会话；重置、spawn、send/patch 别名仍拒绝。
 - 标准：上述正式对话和本人会话操作可用，必须通过归属检查。
 - 审计：全部拒绝。
 - `agent.model.set` 不属于标准用户会话写集，仅管理员可用。

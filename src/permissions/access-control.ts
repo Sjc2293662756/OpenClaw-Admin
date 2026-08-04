@@ -27,6 +27,7 @@ type PageAccessDefinition = {
 }
 
 const ALL_ROLES: readonly UserRole[] = ['basic', 'auditor', 'standard', 'admin']
+const NON_BASIC_ROLES: readonly UserRole[] = ['auditor', 'standard', 'admin']
 const AUDIT_AND_ADMIN: readonly UserRole[] = ['auditor', 'admin']
 const STATUS_VIEWERS: readonly UserRole[] = ['auditor', 'standard', 'admin']
 const ADMIN_ONLY: readonly UserRole[] = ['admin']
@@ -39,15 +40,15 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 }
 
 export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
-  dashboard: { moduleName: '仪表盘', roles: ALL_ROLES },
-  alerts: { moduleName: '告警通知', roles: ALL_ROLES },
+  dashboard: { moduleName: '仪表盘', roles: NON_BASIC_ROLES },
+  alerts: { moduleName: '告警通知', roles: NON_BASIC_ROLES },
   chat: { moduleName: '对话工作台', roles: ALL_ROLES },
-  sessions: { moduleName: '会话管理', roles: ALL_ROLES },
-  reports: { moduleName: '报告文件管理', roles: ALL_ROLES },
+  sessions: { moduleName: '会话管理', roles: NON_BASIC_ROLES },
+  reports: { moduleName: '报告文件管理', roles: NON_BASIC_ROLES },
   cron: { moduleName: '任务计划', roles: AUDIT_AND_ADMIN },
   memory: { moduleName: '记忆管理', roles: ADMIN_ONLY },
   models: { moduleName: '模型管理', roles: ADMIN_ONLY },
-  channels: { moduleName: '频道管理', roles: ALL_ROLES },
+  channels: { moduleName: '频道管理', roles: NON_BASIC_ROLES },
   skills: { moduleName: 'Skills管理', roles: STATUS_VIEWERS },
   system: { moduleName: '系统监视器', roles: STATUS_VIEWERS },
   agents: { moduleName: '多智能体', roles: ADMIN_ONLY },
@@ -55,7 +56,7 @@ export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   users: { moduleName: '账户管理', roles: AUDIT_AND_ADMIN },
   userAdministration: { moduleName: '账户管理', roles: ADMIN_ONLY },
   audit: { moduleName: '审计信息', roles: AUDIT_AND_ADMIN },
-  settings: { moduleName: '系统设置', roles: ALL_ROLES },
+  settings: { moduleName: '系统设置', roles: NON_BASIC_ROLES },
   systemConfiguration: { moduleName: '系统配置', roles: ADMIN_ONLY },
   systemUpgrade: { moduleName: '系统升级', roles: ADMIN_ONLY },
 }
@@ -101,6 +102,10 @@ export function getPageAccess(routeName: string | symbol | null | undefined) {
 
 export function canAccessPage(role: UserRole | null | undefined, key: PageAccessKey): boolean {
   return Boolean(role && PAGE_ACCESS_MATRIX[key].roles.includes(role))
+}
+
+export function canUseConversation(role: UserRole | null | undefined): boolean {
+  return role === 'basic' || role === 'standard' || role === 'admin'
 }
 
 export function canAccessRoute(role: UserRole | null | undefined, routeName: string | symbol | null | undefined): boolean {

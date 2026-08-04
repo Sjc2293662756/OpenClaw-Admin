@@ -14,7 +14,7 @@ import checkDiskSpace from 'check-disk-space'
 import { execSync } from 'child_process'
 import pty from 'node-pty'
 import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord } from './database.js'
-import { USER_ROLES, USER_STATUSES, isReadOnlyRpcMethod, createRoleMiddleware, rpcPermissionMiddleware } from './lib/permissions.js'
+import { USER_ROLES, USER_STATUSES, isReadOnlyRpcMethod, createBasicWorkspaceOnlyMiddleware, createRoleMiddleware, rpcPermissionMiddleware } from './lib/permissions.js'
 import { createLoginFailureTracker, isPasswordChangeRequest } from './lib/account-security.js'
 import { sendError } from './lib/api-response.js'
 import {
@@ -456,7 +456,7 @@ function authMiddleware(req, res, next) {
 }
 
 const adminMiddleware = createRoleMiddleware(authMiddleware, ['admin'], '仅管理员可以执行此操作')
-const operatorMiddleware = createRoleMiddleware(authMiddleware, ['standard', 'admin'], '当前用户仅有查看权限，不能执行此操作')
+const operatorMiddleware = createRoleMiddleware(authMiddleware, ['basic', 'standard', 'admin'], '当前用户仅有查看权限，不能执行此操作')
 const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
 const accountViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '账户信息仅审计用户和管理员可查看')
 const systemMonitorMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'standard', 'admin'], '当前角色无权查看系统监控')
@@ -474,6 +474,7 @@ app.use('/api/auth', createAuthRouter({
   getSessionSettings: () => readSessionSettings(db),
   loginFailures,
 }))
+app.use('/api', createBasicWorkspaceOnlyMiddleware(authMiddleware, recordAudit))
 app.use('/api/system-settings/report-storage', createReportStorageRouter({ adminMiddleware, recordAudit }))
 app.use('/api/system-settings/sessions', createSessionSettingsRouter({
   db,
