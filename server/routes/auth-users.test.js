@@ -257,12 +257,38 @@ test('password policy, administrator hierarchy, and direct REST protections are 
       body: JSON.stringify({ username: 'managed-user', password: 'Valid User6!', role: 'standard', status: 'active' }),
     })
     assert.equal(created.response.status, 201)
-    const ordinaryEditsUser = await fixture.request(`/api/users/${created.body.user.id}`, {
+    const ordinaryPromotesUserToAuditor = await fixture.request(`/api/users/${created.body.user.id}`, {
       token: ordinary.token,
       method: 'PUT',
       body: JSON.stringify({ role: 'auditor', description: 'managed', status: 'active' }),
     })
-    assert.equal(ordinaryEditsUser.response.status, 200)
+    assert.equal(ordinaryPromotesUserToAuditor.body.code, 'ADMIN_MANAGEMENT_FORBIDDEN')
+
+    const ordinaryCreatesAuditor = await fixture.request('/api/users', {
+      token: ordinary.token,
+      method: 'POST',
+      body: JSON.stringify({ username: 'blocked-auditor', password: 'Valid Audit7!', role: 'auditor', status: 'active' }),
+    })
+    assert.equal(ordinaryCreatesAuditor.body.code, 'ADMIN_MANAGEMENT_FORBIDDEN')
+
+    const ordinaryAuditorManagement = [
+      fixture.request('/api/users/auditor-id', {
+        token: ordinary.token,
+        method: 'PUT',
+        body: JSON.stringify({ role: 'auditor', description: 'blocked', status: 'active' }),
+      }),
+      fixture.request('/api/users/auditor-id/reset-password', {
+        token: ordinary.token,
+        method: 'POST',
+        body: JSON.stringify({ temporaryPassword: PASSWORDS.temporary, confirmPassword: PASSWORDS.temporary }),
+      }),
+      fixture.request('/api/users/auditor-id', { token: ordinary.token, method: 'DELETE' }),
+    ]
+    for (const request of ordinaryAuditorManagement) {
+      const result = await request
+      assert.equal(result.response.status, 403)
+      assert.equal(result.body.code, 'ADMIN_MANAGEMENT_FORBIDDEN')
+    }
 
     const ordinaryCreatesAdmin = await fixture.request('/api/users', {
       token: ordinary.token,
@@ -310,6 +336,45 @@ test('password policy, administrator hierarchy, and direct REST protections are 
     })
     assert.equal(initialCreatesAdmin.response.status, 201)
 
+    const initialCreatesAuditor = await fixture.request('/api/users', {
+      token: initial.token,
+      method: 'POST',
+      body: JSON.stringify({ username: 'created-auditor', password: 'Valid Audit8!', role: 'auditor', status: 'active' }),
+    })
+    assert.equal(initialCreatesAuditor.response.status, 201)
+
+    const initialEditsAuditor = await fixture.request('/api/users/auditor-id', {
+      token: initial.token,
+      method: 'PUT',
+      body: JSON.stringify({ role: 'auditor', description: 'managed audit', status: 'active' }),
+    })
+    assert.equal(initialEditsAuditor.response.status, 200)
+
+    const initialEditsOwnDescription = await fixture.request('/api/users/initial-id', {
+      token: initial.token,
+      method: 'PUT',
+      body: JSON.stringify({ role: 'admin', description: 'initial profile', status: 'active' }),
+    })
+    assert.equal(initialEditsOwnDescription.response.status, 200)
+
+    const initialSelfSecurityChanges = [
+      fixture.request('/api/users/initial-id', {
+        token: initial.token,
+        method: 'PUT',
+        body: JSON.stringify({ role: 'basic', description: 'initial profile', status: 'active' }),
+      }),
+      fixture.request('/api/users/initial-id', {
+        token: initial.token,
+        method: 'PUT',
+        body: JSON.stringify({ role: 'admin', description: 'initial profile', status: 'inactive' }),
+      }),
+      fixture.request('/api/users/initial-id', { token: initial.token, method: 'DELETE' }),
+    ]
+    for (const request of initialSelfSecurityChanges) {
+      const result = await request
+      assert.equal(result.response.status >= 400, true)
+    }
+
     const initialEditsAdmin = await fixture.request('/api/users/admin-id', {
       token: initial.token,
       method: 'PUT',
@@ -317,8 +382,9 @@ test('password policy, administrator hierarchy, and direct REST protections are 
     })
     assert.equal(initialEditsAdmin.response.status, 200)
 
-    assert.equal(fixture.db.prepare('SELECT role, status FROM users WHERE id = ?').get('initial-id').role, 'admin')
-    assert.equal(fixture.db.prepare('SELECT status FROM users WHERE id = ?').get('initial-id').status, 'active')
+    assert.deepEqual(fixture.db.prepare('SELECT role, description, status FROM users WHERE id = ?').get('initial-id'), {
+      role: 'admin', description: 'initial profile', status: 'active',
+    })
   } finally {
     await fixture.close()
   }

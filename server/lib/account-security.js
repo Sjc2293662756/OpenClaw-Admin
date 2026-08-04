@@ -113,7 +113,9 @@ export function isPasswordChangeRequest(req, user) {
 
 export function canManageUser(actor, target, nextRole = target?.role) {
   if (actor?.role !== 'admin' || !target) return false
-  if (target.is_initial_admin) return false
-  if (target.role === 'admin' || nextRole === 'admin') return Boolean(actor.isInitialAdmin)
+  if (target.is_initial_admin) return actor.id === target.id && nextRole === target.role
+  if (target.role === 'admin' || target.role === 'auditor' || nextRole === 'admin' || nextRole === 'auditor') {
+    return Boolean(actor.isInitialAdmin)
+  }
   return true
 }

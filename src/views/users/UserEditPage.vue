@@ -25,11 +25,11 @@ const isAdmin = computed(() => authStore.isAdmin)
 const isInitialAdmin = computed(() => Boolean(authStore.currentUser?.isInitialAdmin))
 const isCurrentUser = computed(() => authStore.currentUser?.id === userId.value)
 const targetIsInitialAdmin = ref(false)
-const targetIsAdmin = computed(() => form.role === 'admin')
+const targetRequiresInitialAdmin = computed(() => ['admin', 'auditor'].includes(form.role))
 const canManageTarget = computed(() => {
   if (!isAdmin.value) return false
-  if (targetIsInitialAdmin.value) return false
-  return !targetIsAdmin.value || isInitialAdmin.value
+  if (targetIsInitialAdmin.value) return isInitialAdmin.value && isCurrentUser.value
+  return !targetRequiresInitialAdmin.value || isInitialAdmin.value
 })
 const securityFieldsDisabled = computed(() => isCurrentUser.value || !canManageTarget.value)
 const form = reactive({ username: '', description: '', role: 'basic' as UserRole, status: 'active' as UserStatus })
@@ -39,7 +39,7 @@ const roleOptions = computed(() => [
   { label: t('pages.gaiop.users.auditor'), value: 'auditor' },
   { label: t('pages.gaiop.users.standard'), value: 'standard' },
   { label: t('pages.gaiop.users.admin'), value: 'admin' },
-].filter(option => option.value !== 'admin' || isInitialAdmin.value || form.role === 'admin'))
+].filter(option => !['admin', 'auditor'].includes(option.value) || isInitialAdmin.value || form.role === option.value))
 const rules = computed<FormRules>(() => ({
   role: [{ required: true, message: text('请选择用户类型', 'Select a user type'), trigger: ['change', 'blur'] }],
   description: [{ max: 500, message: text('描述不能超过 500 个字符', 'Description cannot exceed 500 characters'), trigger: ['input', 'blur'] }],
@@ -76,7 +76,7 @@ async function loadUser() {
 
 async function submit() {
   if (!canManageTarget.value) {
-    message.error(text('只有初始管理员可以管理管理员账户', 'Only the initial administrator can manage administrator accounts'))
+    message.error(text('只有初始管理员可以管理审计和管理员账户', 'Only the initial administrator can manage auditor and administrator accounts'))
     return
   }
   try { await formRef.value?.validate() } catch { return }
@@ -110,10 +110,12 @@ onMounted(loadUser)
       </div>
       <template v-else>
         <NAlert v-if="isCurrentUser" type="info" :bordered="false" class="page-alert">
-          {{ text('管理员账户只能通过“修改我的密码”维护自身密码，不能通过用户编辑页修改自身账户。', 'Administrator accounts can change their own passwords only through Change my password, not through the user editor.') }}
+          {{ targetIsInitialAdmin
+            ? text('初始管理员可在此修改自己的描述；角色和状态受保护。请通过“修改我的密码”更新密码，当前账户不能删除。', 'The initial administrator may edit its own description here; role and status are protected. Use Change my password for the password, and the current account cannot be deleted.')
+            : text('管理员账户只能通过“修改我的密码”维护自身密码，不能通过用户编辑页修改自身账户。', 'Administrator accounts can change their own passwords only through Change my password, not through the user editor.') }}
         </NAlert>
-        <NAlert v-else-if="targetIsAdmin && !isInitialAdmin" type="warning" :bordered="false" class="page-alert">
-          {{ text('只有初始管理员可以编辑、停用或降级管理员账户。', 'Only the initial administrator can edit, disable, or downgrade administrator accounts.') }}
+        <NAlert v-else-if="targetRequiresInitialAdmin && !isInitialAdmin" type="warning" :bordered="false" class="page-alert">
+          {{ text('只有初始管理员可以编辑、停用、调整角色或重置审计和管理员账户。', 'Only the initial administrator can edit, disable, change roles, or reset auditor and administrator accounts.') }}
         </NAlert>
         <NForm ref="formRef" :model="form" :rules="rules" label-placement="left" label-width="100" class="user-form">
           <NFormItem :label="t('pages.gaiop.users.username')"><NInput v-model:value="form.username" disabled /></NFormItem>

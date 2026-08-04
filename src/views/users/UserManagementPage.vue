@@ -86,8 +86,8 @@ async function loadUsers() {
 
 function canEditUser(user: ManagedUser) {
   if (!isAdmin.value) return false
-  if (user.isInitialAdmin) return false
-  return user.role !== 'admin' || isInitialAdmin.value
+  if (user.isInitialAdmin) return isInitialAdmin.value && user.id === authStore.currentUser?.id
+  return !['admin', 'auditor'].includes(user.role) || isInitialAdmin.value
 }
 
 function canResetUser(user: ManagedUser) {
@@ -101,9 +101,11 @@ function canDeleteUser(user: ManagedUser) {
 function managementReason(user: ManagedUser, action: 'edit' | 'reset' | 'delete') {
   if (!isAdmin.value) return t('pages.gaiop.users.adminOnly')
   if (user.isInitialAdmin) {
-    return text('初始管理员账户受保护，只能由本人正常修改密码', 'The initial administrator account is protected and can change only its own password normally')
+    return user.id === authStore.currentUser?.id && action === 'edit'
+      ? ''
+      : text('初始管理员账户受保护；本人仅可修改描述和密码，不能修改角色、状态或删除账户', 'The initial administrator account is protected; its owner may change only the description and password, not role, status, or delete the account')
   }
-  if (user.role === 'admin' && !isInitialAdmin.value) return text('只有初始管理员可以管理管理员账户', 'Only the initial administrator can manage administrator accounts')
+  if (['admin', 'auditor'].includes(user.role) && !isInitialAdmin.value) return text('只有初始管理员可以管理审计和管理员账户', 'Only the initial administrator can manage auditor and administrator accounts')
   if (user.id === authStore.currentUser?.id && action !== 'edit') return text('请使用“修改密码”；当前账户不能删除', 'Use Change password; the current account cannot be deleted')
   return ''
 }

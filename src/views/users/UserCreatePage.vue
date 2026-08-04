@@ -22,7 +22,7 @@ const form = reactive({ username: '', description: '', role: 'basic', password: 
 const roleOptions = computed(() => [
   { label: t('pages.gaiop.users.basic'), value: 'basic' }, { label: t('pages.gaiop.users.auditor'), value: 'auditor' },
   { label: t('pages.gaiop.users.standard'), value: 'standard' }, { label: t('pages.gaiop.users.admin'), value: 'admin' },
-].filter(option => option.value !== 'admin' || isInitialAdmin.value))
+].filter(option => !['admin', 'auditor'].includes(option.value) || isInitialAdmin.value))
 const rules = computed<FormRules>(() => ({
   username: [{ required: true, message: locale.value === 'zh-CN' ? '请输入用户名' : 'Enter a username', trigger: ['input', 'blur'] }],
   role: [{ required: true, message: locale.value === 'zh-CN' ? '请选择用户类型' : 'Select a user type', trigger: ['change', 'blur'] }],

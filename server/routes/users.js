@@ -48,8 +48,8 @@ export function createUsersRouter({
     if (!username || username.length > 64 || !userRoles.has(role) || !userStatuses.has(status) || description.length > 500) {
       return sendError(res, { status: 400, code: 'INVALID_USER_INPUT', message: '用户信息不完整或格式不正确' })
     }
-    if (role === 'admin' && !req.user.isInitialAdmin) {
-      return sendError(res, { status: 403, code: 'ADMIN_MANAGEMENT_FORBIDDEN', message: '只有初始管理员可以创建管理员账户' })
+    if ((role === 'admin' || role === 'auditor') && !req.user.isInitialAdmin) {
+      return sendError(res, { status: 403, code: 'ADMIN_MANAGEMENT_FORBIDDEN', message: '只有初始管理员可以创建审计和管理员账户' })
     }
 
     try {
@@ -95,7 +95,7 @@ export function createUsersRouter({
       return sendError(res, {
         status: 403,
         code: 'ADMIN_MANAGEMENT_FORBIDDEN',
-        message: user.is_initial_admin ? '初始管理员账户受保护' : '只有初始管理员可以管理管理员账户',
+        message: user.is_initial_admin ? '初始管理员账户仅可由本人修改描述和密码' : '只有初始管理员可以管理审计和管理员账户',
       })
     }
     if (req.user.id === user.id && (roleChanged || status === 'inactive')) {
@@ -135,7 +135,7 @@ export function createUsersRouter({
       return sendError(res, {
         status: 403,
         code: 'ADMIN_MANAGEMENT_FORBIDDEN',
-        message: user.is_initial_admin ? '初始管理员只能修改自己的密码' : '只有初始管理员可以重置管理员密码',
+        message: user.is_initial_admin ? '初始管理员只能修改自己的密码' : '只有初始管理员可以重置审计和管理员密码',
       })
     }
     const temporaryPassword = String(req.body?.temporaryPassword || '')
@@ -189,7 +189,7 @@ export function createUsersRouter({
       return sendError(res, {
         status: 403,
         code: 'ADMIN_MANAGEMENT_FORBIDDEN',
-        message: user.is_initial_admin ? '初始管理员账户不能删除' : '只有初始管理员可以删除管理员账户',
+        message: user.is_initial_admin ? '初始管理员账户不能删除' : '只有初始管理员可以删除审计和管理员账户',
       })
     }
     if (user.role === 'admin' && user.status === 'active') {
