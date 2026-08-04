@@ -1,6 +1,7 @@
 export default {
   app: {
     title: 'Guanshu AI-driven Operations Platform',
+    brand: 'NetInside GAIOP',
   },
   routes: {
     login: 'Login',
@@ -1010,6 +1011,9 @@ export default {
         models: 'Models configured',
         skills: 'Skills installed',
         totalTokens: 'Total tokens',
+      },
+      actions: {
+        chatWorkspace: 'Chat Workspace',
       },
       cards: {
         kpis: 'Usage KPIs',

@@ -698,7 +698,7 @@ function viewModels() {
           </NButton>
           <NButton secondary @click="viewChat">
             <template #icon><NIcon :component="ChatboxEllipsesOutline" /></template>
-            对话工作台
+            {{ t('pages.dashboard.actions.chatWorkspace') }}
           </NButton>
           <NButton secondary @click="viewCron">{{ t('routes.cron') }}</NButton>
           <NButton secondary @click="viewModels">{{ t('routes.models') }}</NButton>

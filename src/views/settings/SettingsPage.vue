@@ -77,7 +77,7 @@ onMounted(loadReportStorageStatus)
 <template>
   <NSpace vertical :size="16">
     <NCard :title="text('基本信息', 'Basic information')" class="app-card">
-      <NText strong style="font-size: 18px;">观枢 GAIOP</NText>
+      <NText strong style="font-size: 18px;">{{ t('app.brand') }}</NText>
       <NText depth="3" style="display: block; margin-top: 8px;">{{ text('当前产品版本：v1', 'Current product version: v1') }}</NText>
       <NText depth="3" style="display: block; margin-top: 12px;">{{ text('系统设置仅维护平台使用策略；NAPM 连接信息请在数据源管理中维护。', 'System settings maintain platform usage policies only. Maintain NAPM connection details in Data Source Management.') }}</NText>
     </NCard>

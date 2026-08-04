@@ -104,7 +104,7 @@ function handleSelect(key: string) {
         strong
         class="sidebar-brand-name"
       >
-        观枢 GAIOP
+        {{ t('app.brand') }}
       </NText>
     </div>
 

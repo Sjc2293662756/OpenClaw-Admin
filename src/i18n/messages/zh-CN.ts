@@ -1,6 +1,7 @@
 export default {
   app: {
     title: '观枢GAIOP智能运维分析平台',
+    brand: '观枢 GAIOP',
   },
   routes: {
     login: '登录',
@@ -1015,6 +1016,9 @@ export default {
         models: '已配置模型',
         skills: '已安装技能',
         totalTokens: '总 Token',
+      },
+      actions: {
+        chatWorkspace: '对话工作台',
       },
       cards: {
         kpis: 'Usage 关键指标',
