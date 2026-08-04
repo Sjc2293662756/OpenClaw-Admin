@@ -76,9 +76,9 @@ describe('four-role page access matrix', () => {
     expect(resolveConfigManagementRedirect('standard', '/dashboard?range=today')).toBe('/dashboard?range=today')
   })
 
-  it('returns basic and standard users from password change to the workspace', () => {
+  it('returns only basic users from password change to the workspace', () => {
     expect(resolvePasswordChangeReturn('basic')).toEqual({ name: 'ChatWorkspace' })
-    expect(resolvePasswordChangeReturn('standard')).toEqual({ name: 'ChatWorkspace' })
+    expect(resolvePasswordChangeReturn('standard')).toEqual({ name: 'Dashboard' })
     expect(resolvePasswordChangeReturn('auditor')).toEqual({ name: 'UserManagement' })
     expect(resolvePasswordChangeReturn('admin')).toEqual({ name: 'UserManagement' })
   })

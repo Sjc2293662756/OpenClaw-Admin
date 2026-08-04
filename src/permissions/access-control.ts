@@ -123,9 +123,11 @@ export function resolveConfigManagementRedirect(
 }
 
 export function resolvePasswordChangeReturn(role: UserRole | null | undefined) {
+  if (role === 'basic' || !role) return { name: 'ChatWorkspace' }
+
   return canAccessPage(role, 'users')
     ? { name: 'UserManagement' }
-    : { name: 'ChatWorkspace' }
+    : { name: 'Dashboard' }
 }
 
 export function canAccessRoute(role: UserRole | null | undefined, routeName: string | symbol | null | undefined): boolean {
