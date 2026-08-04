@@ -76,10 +76,13 @@ describe('four-role page access matrix', () => {
     expect(resolveConfigManagementRedirect('standard', '/dashboard?range=today')).toBe('/dashboard?range=today')
   })
 
-  it('returns only basic users from password change to the workspace', () => {
-    expect(resolvePasswordChangeReturn('basic')).toEqual({ name: 'ChatWorkspace' })
-    expect(resolvePasswordChangeReturn('standard')).toEqual({ name: 'Dashboard' })
-    expect(resolvePasswordChangeReturn('auditor')).toEqual({ name: 'UserManagement' })
-    expect(resolvePasswordChangeReturn('admin')).toEqual({ name: 'UserManagement' })
+  it('returns password change to the page that opened it without trusting an unauthorized management target', () => {
+    for (const role of roles) {
+      expect(resolvePasswordChangeReturn(role, '/workspace?session=owned')).toBe('/workspace?session=owned')
+    }
+    expect(resolvePasswordChangeReturn('auditor', '/users')).toEqual({ name: 'UserManagement' })
+    expect(resolvePasswordChangeReturn('admin', '/users')).toEqual({ name: 'UserManagement' })
+    expect(resolvePasswordChangeReturn('basic', '/users')).toEqual({ name: 'ChatWorkspace' })
+    expect(resolvePasswordChangeReturn('standard')).toEqual({ name: 'ChatWorkspace' })
   })
 })

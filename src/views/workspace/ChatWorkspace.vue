@@ -279,7 +279,7 @@ onUnmounted(() => {
           <span>{{ authStore.currentUser?.username || t('pages.gaiop.workspace.userFallback') }}</span>
         </button>
         <div v-if="userMenuOpen" class="workspace-user-menu">
-          <button type="button" @click="router.push({ name: 'PasswordChange' })">
+          <button type="button" @click="router.push({ name: 'PasswordChange', query: { returnTo: route.fullPath } })">
             <NIcon :component="LockClosedOutline" /> {{ t('pages.gaiop.workspace.changePassword') }}
           </button>
           <button type="button" @click="openAdminConsole">

@@ -122,12 +122,21 @@ export function resolveConfigManagementRedirect(
   }
 }
 
-export function resolvePasswordChangeReturn(role: UserRole | null | undefined) {
-  if (role === 'basic' || !role) return { name: 'ChatWorkspace' }
+export function resolvePasswordChangeReturn(
+  role: UserRole | null | undefined,
+  returnTo?: string,
+) {
+  const requestedPath = returnTo?.trim() || ''
+  if (requestedPath === '/workspace' || requestedPath.startsWith('/workspace?')) {
+    return requestedPath
+  }
+  if ((requestedPath === '/users' || requestedPath.startsWith('/users?')) && canAccessPage(role, 'users')) {
+    return { name: 'UserManagement' }
+  }
 
   return canAccessPage(role, 'users')
     ? { name: 'UserManagement' }
-    : { name: 'Dashboard' }
+    : { name: 'ChatWorkspace' }
 }
 
 export function canAccessRoute(role: UserRole | null | undefined, routeName: string | symbol | null | undefined): boolean {

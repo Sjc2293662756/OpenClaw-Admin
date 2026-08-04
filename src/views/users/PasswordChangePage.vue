@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
@@ -10,6 +10,7 @@ import { useI18n } from 'vue-i18n'
 import type { AppLocale } from '@/i18n/locale'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const message = useMessage()
 const { t, locale } = useI18n()
@@ -40,7 +41,8 @@ async function submit() {
 }
 
 function returnFromPasswordChange() {
-  void router.push(resolvePasswordChangeReturn(authStore.currentUser?.role))
+  const returnTo = typeof route.query.returnTo === 'string' ? route.query.returnTo : undefined
+  void router.push(resolvePasswordChangeReturn(authStore.currentUser?.role, returnTo))
 }
 </script>
 

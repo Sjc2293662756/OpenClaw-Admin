@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInput, NModal, NSelect, NSpace, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
 import { AddOutline, CreateOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
@@ -23,6 +23,7 @@ type ManagedUser = {
 }
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const dialog = useDialog()
 const message = useMessage()
@@ -190,7 +191,7 @@ onMounted(loadUsers)
     <NCard :title="t('pages.gaiop.users.list')" :bordered="false" class="user-card">
       <template #header-extra>
         <NSpace>
-          <NButton @click="router.push({ name: 'PasswordChange' })">{{ t('pages.gaiop.users.changePassword') }}</NButton>
+          <NButton @click="router.push({ name: 'PasswordChange', query: { returnTo: route.fullPath } })">{{ t('pages.gaiop.users.changePassword') }}</NButton>
           <NButton v-if="isAdmin" type="primary" @click="router.push({ name: 'UserCreate' })">
             <template #icon><NIcon><AddOutline /></NIcon></template>{{ t('pages.gaiop.users.create') }}
           </NButton>
