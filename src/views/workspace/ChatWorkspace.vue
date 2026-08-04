@@ -185,7 +185,7 @@ onUnmounted(() => {
       <div class="workspace-brand">
         <span class="brand-logo"><span>Net</span>Inside</span>
         <span class="brand-divider"></span>
-        <strong>{{ t('pages.gaiop.entrance.product') }}</strong>
+        <strong>{{ t('pages.gaiop.workspace.brand') }}</strong>
       </div>
 
       <NButton
