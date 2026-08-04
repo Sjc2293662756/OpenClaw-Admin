@@ -15,7 +15,7 @@ import { execSync } from 'child_process'
 import pty from 'node-pty'
 import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord } from './database.js'
 import { USER_ROLES, USER_STATUSES, isReadOnlyRpcMethod, createRoleMiddleware, rpcPermissionMiddleware } from './lib/permissions.js'
-import { isPasswordChangeRequest } from './lib/account-security.js'
+import { createLoginFailureTracker, isPasswordChangeRequest } from './lib/account-security.js'
 import { sendError } from './lib/api-response.js'
 import {
   projectSafeChannelsPayload,
@@ -129,6 +129,7 @@ const distPath = join(__dirname, '../dist')
 const hasDist = existsSync(join(distPath, 'index.html'))
 
 const sessions = new Map()
+const loginFailures = createLoginFailureTracker()
 const { recordAudit, recordAuditEvent } = createAuditRecorder(db)
 
 app.use(cors())
@@ -471,6 +472,7 @@ app.use('/api/auth', createAuthRouter({
   recordAudit,
   createId: randomUUID,
   getSessionSettings: () => readSessionSettings(db),
+  loginFailures,
 }))
 app.use('/api/system-settings/report-storage', createReportStorageRouter({ adminMiddleware, recordAudit }))
 app.use('/api/system-settings/sessions', createSessionSettingsRouter({
@@ -627,6 +629,7 @@ app.use('/api/users', createUsersRouter({
   userRoles: USER_ROLES,
   userStatuses: USER_STATUSES,
   createId: randomUUID,
+  loginFailures,
 }))
 app.use('/api/audit-logs', createAuditRouter({ db, auditViewerMiddleware, recordAudit }))
 app.use('/api/data-sources', createDataSourcesRouter({

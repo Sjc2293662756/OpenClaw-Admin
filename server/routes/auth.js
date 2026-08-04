@@ -34,10 +34,10 @@ export function createAuthRouter({
     const failureState = loginFailures.getState(username)
     if (failureState.locked) {
       recordAudit({ username, role: 'unknown' }, '登录失败', '管理平台', '账户处于临时锁定期', {
-        req, category: 'authentication', result: 'failed', source: 'auth', errorCode: 'INVALID_CREDENTIALS',
+        req, category: 'authentication', result: 'failed', source: 'auth', errorCode: 'LOGIN_TEMPORARILY_LOCKED',
       })
       res.locals.auditRejectionRecorded = true
-      return sendError(res, { status: 401, code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' })
+      return sendError(res, { status: 401, code: 'LOGIN_TEMPORARILY_LOCKED', message: '当前账户用户名或密码连续错误，已锁定5分钟，请稍后再试' })
     }
 
     const user = db.prepare('SELECT * FROM users WHERE username = ? COLLATE NOCASE').get(username)
@@ -49,9 +49,12 @@ export function createAuthRouter({
         result.justLocked ? '登录锁定' : '登录失败',
         '管理平台',
         result.justLocked ? '连续登录失败达到限制，临时锁定5分钟' : `连续失败次数：${result.failures}`,
-        { req, category: 'authentication', result: 'failed', source: 'auth', errorCode: 'INVALID_CREDENTIALS' },
+        { req, category: 'authentication', result: 'failed', source: 'auth', errorCode: result.locked ? 'LOGIN_TEMPORARILY_LOCKED' : 'INVALID_CREDENTIALS' },
       )
       res.locals.auditRejectionRecorded = true
+      if (result.locked) {
+        return sendError(res, { status: 401, code: 'LOGIN_TEMPORARILY_LOCKED', message: '当前账户用户名或密码连续错误，已锁定5分钟，请稍后再试' })
+      }
       return sendError(res, { status: 401, code: 'INVALID_CREDENTIALS', message: '用户名或密码错误' })
     }
 

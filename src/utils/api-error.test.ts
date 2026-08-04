@@ -4,6 +4,7 @@ import { localizeApiError } from './api-error'
 describe('localizeApiError', () => {
   it('uses stable error codes for login failures', () => {
     expect(localizeApiError({ code: 'INVALID_CREDENTIALS', error: '用户名或密码错误' }, 'Login failed', 'en-US')).toBe('Incorrect username or password')
+    expect(localizeApiError({ code: 'LOGIN_TEMPORARILY_LOCKED' }, 'Login failed', 'en-US')).toBe('Too many failed sign-in attempts. This account is locked for 5 minutes. Please try again later.')
   })
 
   it('does not expose an unknown Chinese server message in English mode', () => {

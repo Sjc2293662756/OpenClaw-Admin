@@ -6,6 +6,7 @@ type ErrorPayload = {
 
 const translations: Record<string, { zhCN: string, enUS: string }> = {
   INVALID_CREDENTIALS: { zhCN: '用户名或密码错误', enUS: 'Incorrect username or password' },
+  LOGIN_TEMPORARILY_LOCKED: { zhCN: '当前账户用户名或密码连续错误，已锁定 5 分钟，请稍后再试', enUS: 'Too many failed sign-in attempts. This account is locked for 5 minutes. Please try again later.' },
   LOGIN_INPUT_REQUIRED: { zhCN: '请输入用户名和密码', enUS: 'Enter your username and password' },
   UNAUTHORIZED: { zhCN: '登录已失效，请重新登录', enUS: 'Your sign-in has expired. Please sign in again.' },
   PASSWORD_CHANGE_REQUIRED: { zhCN: '请先修改密码', enUS: 'Change your password before continuing' },

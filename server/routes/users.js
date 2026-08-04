@@ -15,6 +15,7 @@ export function createUsersRouter({
   userRoles,
   userStatuses,
   createId,
+  loginFailures,
 }) {
   const router = Router()
 
@@ -64,7 +65,8 @@ export function createUsersRouter({
           @id, @username, @password_hash, @role, @description, @status,
           @is_initial_admin, @must_change_password, @created_at, @updated_at
         )`).run(user)
-      recordAudit(req.user, '创建用户', username, `角色：${role}；状态：${status}`)
+      loginFailures?.clear(username)
+      recordAudit(req.user, '创建用户', username, `角色：${role}；状态：${status}；已清除登录失败锁定`)
       sendOk(res, { user: publicUser(user) }, 201)
     } catch (error) {
       const duplicate = String(error.message).includes('UNIQUE')
@@ -148,7 +150,8 @@ export function createUsersRouter({
     db.prepare('UPDATE users SET password_hash = ?, must_change_password = 1, updated_at = ? WHERE id = ?')
       .run(hashPassword(temporaryPassword), updatedAt, user.id)
     for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
-    recordAudit(req.user, '重置用户密码', user.username, '已设置临时密码并要求首次登录修改')
+    loginFailures?.clear(user.username)
+    recordAudit(req.user, '重置用户密码', user.username, '已设置临时密码并要求首次登录修改；已清除登录失败锁定')
     sendOk(res, { updatedAt })
   })
 
@@ -197,7 +200,8 @@ export function createUsersRouter({
     }
     db.prepare('DELETE FROM users WHERE id = ?').run(user.id)
     for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
-    recordAudit(req.user, '删除用户', user.username, `角色：${user.role}`)
+    loginFailures?.clear(user.username)
+    recordAudit(req.user, '删除用户', user.username, `角色：${user.role}；已清除登录失败锁定`)
     sendOk(res)
   })
 

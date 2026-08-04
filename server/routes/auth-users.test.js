@@ -127,6 +127,7 @@ async function createFixture() {
     userRoles: new Set(['basic', 'auditor', 'standard', 'admin']),
     userStatuses: new Set(['active', 'inactive']),
     createId: randomUUID,
+    loginFailures,
   }))
   app.get('/api/protected', authMiddleware, (_req, res) => res.json({ ok: true }))
   app.post('/api/rpc', authMiddleware, (_req, res) => res.json({ ok: true }))
@@ -167,16 +168,23 @@ async function createFixture() {
   }
 }
 
-test('login lockout is case-insensitive, uses the same external error, and clears after success', async () => {
+test('login lockout is case-insensitive, explains the temporary lock, and clears after success', async () => {
   const fixture = await createFixture()
   try {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       const failed = await fixture.login(attempt % 2 ? 'BASIC-USER' : 'basic-user', 'WrongPass9!')
       assert.equal(failed.response.status, 401)
-      assert.equal(failed.body.code, 'INVALID_CREDENTIALS')
-      assert.equal(failed.body.error, '用户名或密码错误')
+      if (attempt < 5) {
+        assert.equal(failed.body.code, 'INVALID_CREDENTIALS')
+        assert.equal(failed.body.error, '用户名或密码错误')
+      } else {
+        assert.equal(failed.body.code, 'LOGIN_TEMPORARILY_LOCKED')
+        assert.equal(failed.body.error, '当前账户用户名或密码连续错误，已锁定5分钟，请稍后再试')
+      }
     }
-    assert.equal((await fixture.login('basic-user', PASSWORDS.basic)).response.status, 401)
+    const locked = await fixture.login('basic-user', PASSWORDS.basic)
+    assert.equal(locked.response.status, 401)
+    assert.equal(locked.body.code, 'LOGIN_TEMPORARILY_LOCKED')
     const missing = await fixture.login('missing-user', 'WrongPass9!')
     assert.equal(missing.body.error, '用户名或密码错误')
 
@@ -185,6 +193,44 @@ test('login lockout is case-insensitive, uses the same external error, and clear
     assert.equal(successful.response.status, 200)
     assert.equal(fixture.loginFailures.getState('BASIC-USER').failures, 0)
     assert.equal(fixture.audits.some(entry => entry.action === '登录锁定'), true)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('administrative reset, deletion, and recreation clear the matching login lock', async () => {
+  const fixture = await createFixture()
+  try {
+    const initial = await fixture.login('initial-admin', PASSWORDS.initial)
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      await fixture.login('basic-user', 'WrongPass9!')
+    }
+    assert.equal(fixture.loginFailures.getState('BASIC-USER').locked, true)
+
+    const reset = await fixture.request('/api/users/basic-id/reset-password', {
+      token: initial.token,
+      method: 'POST',
+      body: JSON.stringify({ temporaryPassword: PASSWORDS.temporary, confirmPassword: PASSWORDS.temporary }),
+    })
+    assert.equal(reset.response.status, 200)
+    assert.equal(fixture.loginFailures.getState('basic-user').failures, 0)
+    assert.equal((await fixture.login('basic-user', PASSWORDS.temporary)).response.status, 200)
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      await fixture.login('basic-user', 'WrongPass9!')
+    }
+    const deleted = await fixture.request('/api/users/basic-id', { token: initial.token, method: 'DELETE' })
+    assert.equal(deleted.response.status, 200)
+    assert.equal(fixture.loginFailures.getState('basic-user').failures, 0)
+
+    const recreated = await fixture.request('/api/users', {
+      token: initial.token,
+      method: 'POST',
+      body: JSON.stringify({ username: 'BASIC-USER', password: PASSWORDS.replacement, role: 'basic', status: 'active' }),
+    })
+    assert.equal(recreated.response.status, 201)
+    assert.equal(fixture.loginFailures.getState('basic-user').failures, 0)
+    assert.equal((await fixture.login('basic-user', PASSWORDS.replacement)).response.status, 200)
   } finally {
     await fixture.close()
   }
