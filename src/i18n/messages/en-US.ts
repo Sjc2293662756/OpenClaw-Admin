@@ -1,6 +1,6 @@
 export default {
   app: {
-    title: 'GAIOP',
+    title: 'Guanshu AI-driven Operations Platform',
   },
   routes: {
     login: 'Login',
@@ -3352,7 +3352,7 @@ export default {
         currentModule: 'Current module', unknownRole: 'Unknown role',
       },
       entrance: {
-        product: 'GAIOP', company: 'Beijing NetInside Technology Co., Ltd.', fullName: 'NetInside GAIOP Intelligent Operations Analytics Platform',
+        product: 'Guanshu GAIOP', company: 'Beijing NetInside Technology Co., Ltd.', fullName: 'Guanshu AI-driven Operations Platform',
         description: 'Make real traffic the core observability entry for intelligent operations, with AI-driven full-traffic performance analysis and operational decisions.',
         chatTitle: 'Start a conversation', chatDescription: 'Use GAIOP for intelligent operations analysis', configTitle: 'Configuration', configDescription: 'Manage models, Skills, and platform configuration',
         companyTitle: 'Beijing NetInside Technology', companyDescription: 'Build analysis and management capabilities for intelligent operations on network and application performance data.', companyLink: 'Explore GAIOP',
@@ -3360,6 +3360,9 @@ export default {
       login: {
         brand: 'GAIOP', platform: 'Intelligent Operations Analytics Platform', connecting: 'Connecting to platform services...', username: 'Username', usernamePlaceholder: 'Enter username', password: 'Password', passwordPlaceholder: 'Enter password', login: 'Log in', retry: 'Reconnect', showPassword: 'Show password', hidePassword: 'Hide password',
         credentialsRequired: 'Enter your username and password.', connectionTimeout: 'Connection to platform services timed out. Please try again.', failed: 'Login failed. Please try again.',
+      },
+      workspace: {
+        newChat: 'New Chat', history: 'History', refreshHistory: 'Refresh history', noHistory: 'No history', delete: 'Delete', cancel: 'Cancel', deleteSession: 'Delete session', deleteConfirm: 'This session cannot be recovered after deletion. Continue?', sessionDeleted: 'Session deleted', deleteFailed: 'Failed to delete session. Please try again.', userFallback: 'GAIOP user', changePassword: 'Change password', adminConsole: 'Admin Console', logout: 'Log out', caption: 'Guanshu AI-driven Operations Platform', connecting: 'Connecting to service…', backToAlerts: 'Back to Alert Notifications', adminConsoleHint: 'View platform configuration, operational overview, and management features', serviceUnavailable: 'The GAIOP intelligent operations service is unavailable', reconnecting: 'Reconnecting to the GAIOP intelligent operations service', connectingService: 'Connecting to the GAIOP intelligent operations service', reconnect: 'Reconnect',
       },
       users: {
         title: 'Account Management', list: 'Users', create: 'Add user', edit: 'Edit user', password: 'Change my password', refresh: 'Refresh', search: 'Search username or description', allRoles: 'All roles', allStatuses: 'All statuses', empty: 'No users',

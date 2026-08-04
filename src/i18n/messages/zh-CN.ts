@@ -1,6 +1,6 @@
 export default {
   app: {
-    title: '观枢 GAIOP',
+    title: '观枢GAIOP智能运维分析平台',
   },
   routes: {
     login: '登录',
@@ -3358,7 +3358,7 @@ export default {
         currentModule: '当前模块', unknownRole: '未知角色',
       },
       entrance: {
-        product: '观枢 GAIOP', company: '北京网深科技有限公司', fullName: 'NetInside 观枢 GAIOP 智能运维分析平台',
+        product: '观枢GAIOP', company: '北京网深科技有限公司', fullName: '观枢GAIOP智能运维分析平台',
         description: '让真实流量成为智能运维的核心观测入口，以 AI 驱动全流量性能分析与运维决策。',
         chatTitle: '开始对话', chatDescription: '使用 GAIOP 进行智能运维分析', configTitle: '配置管理', configDescription: '管理模型、Skills 和平台配置',
         companyTitle: '北京网深科技', companyDescription: '以网络与应用性能数据为基础，构建面向智能运维的分析与管理能力。', companyLink: '探索观枢 GAIOP',
@@ -3366,6 +3366,9 @@ export default {
       login: {
         brand: '观枢 GAIOP', platform: '智能运维分析平台', connecting: '正在连接平台服务...', username: '账户名', usernamePlaceholder: '请输入账户名', password: '密码', passwordPlaceholder: '请输入密码', login: '登录', retry: '重新连接', showPassword: '显示密码', hidePassword: '隐藏密码',
         credentialsRequired: '请输入账户名和密码。', connectionTimeout: '服务连接超时，请稍后重试。', failed: '登录失败，请稍后重试。',
+      },
+      workspace: {
+        newChat: '开始新对话', history: '历史会话', refreshHistory: '刷新历史会话', noHistory: '暂无历史会话', delete: '删除', cancel: '取消', deleteSession: '删除会话', deleteConfirm: '删除后无法恢复该会话，是否继续？', sessionDeleted: '会话已删除', deleteFailed: '删除会话失败，请稍后重试', userFallback: 'GAIOP 用户', changePassword: '修改密码', adminConsole: '管理控制台', logout: '退出登录', caption: '观枢GAIOP智能运维分析平台', connecting: '正在连接服务…', backToAlerts: '返回告警通知', adminConsoleHint: '查看平台配置、运行概览和管理功能', serviceUnavailable: 'GAIOP 智能运维服务暂不可用', reconnecting: '正在重新连接 GAIOP 智能运维服务', connectingService: '正在连接 GAIOP 智能运维服务', reconnect: '重新连接',
       },
       users: {
         title: '账户管理', list: '用户列表', create: '添加用户', edit: '编辑用户', password: '修改我的密码', refresh: '刷新', search: '搜索用户名或描述', allRoles: '全部角色', allStatuses: '全部状态', empty: '暂无用户',

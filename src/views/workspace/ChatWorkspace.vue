@@ -26,6 +26,7 @@ import {
   isLegacyDefaultSession,
 } from '@/utils/session-presentation'
 import type { Session } from '@/api/types'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
 const route = useRoute()
@@ -33,6 +34,7 @@ const authStore = useAuthStore()
 const chatStore = useChatStore()
 const sessionStore = useSessionStore()
 const wsStore = useWebSocketStore()
+const { t } = useI18n()
 const {
   canUseFunctions,
   canDeleteSessions,
@@ -47,9 +49,9 @@ const userMenuOpen = ref(false)
 let unsubscribeState: (() => void) | null = null
 
 const connectionText = computed(() => {
-  if (wsStore.state === ConnectionState.FAILED) return 'GAIOP 智能运维服务暂不可用'
-  if (wsStore.state === ConnectionState.RECONNECTING) return '正在重新连接 GAIOP 智能运维服务'
-  return '正在连接 GAIOP 智能运维服务'
+  if (wsStore.state === ConnectionState.FAILED) return t('pages.gaiop.workspace.serviceUnavailable')
+  if (wsStore.state === ConnectionState.RECONNECTING) return t('pages.gaiop.workspace.reconnecting')
+  return t('pages.gaiop.workspace.connectingService')
 })
 
 const canRetryConnection = computed(() =>
@@ -125,10 +127,10 @@ async function deleteSession(key: string) {
     if (selectedSession.value === key) {
       await router.replace({ name: 'ChatWorkspace', query: alertReturnAvailable.value ? { alertReturn: '1' } : {} })
     }
-    message.success('会话已删除')
+    message.success(t('pages.gaiop.workspace.sessionDeleted'))
   } catch (error) {
     console.error('[ChatWorkspace] Failed to delete session:', error)
-    message.error('删除会话失败，请稍后重试')
+    message.error(t('pages.gaiop.workspace.deleteFailed'))
   }
 }
 
@@ -183,7 +185,7 @@ onUnmounted(() => {
       <div class="workspace-brand">
         <span class="brand-logo"><span>Net</span>Inside</span>
         <span class="brand-divider"></span>
-        <strong>观枢 GAIOP</strong>
+        <strong>{{ t('pages.gaiop.entrance.product') }}</strong>
       </div>
 
       <NButton
@@ -196,16 +198,16 @@ onUnmounted(() => {
         @click="startNewConversation"
       >
         <template #icon><NIcon :component="AddOutline" /></template>
-        开始新对话
+        {{ t('pages.gaiop.workspace.newChat') }}
       </NButton>
 
       <section class="history-section">
         <div class="history-heading">
-          <span>历史会话</span>
+          <span>{{ t('pages.gaiop.workspace.history') }}</span>
           <button
             type="button"
-            title="刷新历史会话"
-            aria-label="刷新历史会话"
+            :title="t('pages.gaiop.workspace.refreshHistory')"
+            :aria-label="t('pages.gaiop.workspace.refreshHistory')"
             :disabled="historyRefreshing"
             @click="refreshHistory"
           >
@@ -229,36 +231,36 @@ onUnmounted(() => {
             </button>
             <NPopconfirm
               v-if="canDeleteSessions"
-              positive-text="删除"
-              negative-text="取消"
+              :positive-text="t('pages.gaiop.workspace.delete')"
+              :negative-text="t('pages.gaiop.workspace.cancel')"
               @positive-click="deleteSession(session.key)"
             >
               <template #trigger>
-                <button type="button" class="history-delete" title="删除会话" aria-label="删除会话">
+                <button type="button" class="history-delete" :title="t('pages.gaiop.workspace.deleteSession')" :aria-label="t('pages.gaiop.workspace.deleteSession')">
                   <NIcon :component="TrashOutline" />
                 </button>
               </template>
-              删除后无法恢复该会话，是否继续？
+              {{ t('pages.gaiop.workspace.deleteConfirm') }}
             </NPopconfirm>
           </div>
         </div>
-        <NEmpty v-else description="暂无历史会话" size="small" class="history-empty" />
+        <NEmpty v-else :description="t('pages.gaiop.workspace.noHistory')" size="small" class="history-empty" />
       </section>
 
       <div class="workspace-user">
         <button type="button" class="workspace-user-trigger" @click="userMenuOpen = !userMenuOpen">
           <NAvatar round size="small" color="#0b7552">{{ authStore.currentUser?.username?.slice(0, 1).toUpperCase() || 'G' }}</NAvatar>
-          <span>{{ authStore.currentUser?.username || 'GAIOP 用户' }}</span>
+          <span>{{ authStore.currentUser?.username || t('pages.gaiop.workspace.userFallback') }}</span>
         </button>
         <div v-if="userMenuOpen" class="workspace-user-menu">
           <button type="button" @click="router.push({ name: 'PasswordChange' })">
-            <NIcon :component="LockClosedOutline" /> 修改密码
+            <NIcon :component="LockClosedOutline" /> {{ t('pages.gaiop.workspace.changePassword') }}
           </button>
           <button type="button" @click="router.push({ name: 'Dashboard' })">
-            <NIcon :component="GridOutline" /> 进入管理控制台
+            <NIcon :component="GridOutline" /> {{ t('pages.gaiop.workspace.adminConsole') }}
           </button>
           <button type="button" class="danger" @click="logout">
-            <NIcon :component="LogOutOutline" /> 退出登录
+            <NIcon :component="LogOutOutline" /> {{ t('pages.gaiop.workspace.logout') }}
           </button>
         </div>
       </div>
@@ -267,22 +269,22 @@ onUnmounted(() => {
     <section class="workspace-main">
       <header class="workspace-header">
         <div>
-          <span class="workspace-caption">观枢 GAIOP 智能运维分析</span>
-          <span v-if="!ready" class="workspace-status">正在连接服务…</span>
+          <span class="workspace-caption">{{ t('pages.gaiop.workspace.caption') }}</span>
+          <span v-if="!ready" class="workspace-status">{{ t('pages.gaiop.workspace.connecting') }}</span>
         </div>
         <div class="workspace-header-actions">
           <NButton v-if="alertReturnAvailable" secondary @click="returnToAlertNotifications">
             <template #icon><NIcon :component="ArrowBackOutline" /></template>
-            返回告警通知
+            {{ t('pages.gaiop.workspace.backToAlerts') }}
           </NButton>
           <NTooltip>
             <template #trigger>
               <NButton secondary type="primary" @click="router.push({ name: 'Dashboard' })">
                 <template #icon><NIcon :component="GridOutline" /></template>
-                管理控制台
+                {{ t('pages.gaiop.workspace.adminConsole') }}
               </NButton>
             </template>
-            查看平台配置、运行概览和管理功能
+            {{ t('pages.gaiop.workspace.adminConsoleHint') }}
           </NTooltip>
         </div>
       </header>
@@ -293,7 +295,7 @@ onUnmounted(() => {
       <div v-else class="workspace-connecting">
         <NSpin size="medium" />
         <p>{{ connectionText }}</p>
-        <NButton v-if="canRetryConnection" type="primary" secondary @click="retryConnection">重新连接</NButton>
+        <NButton v-if="canRetryConnection" type="primary" secondary @click="retryConnection">{{ t('pages.gaiop.workspace.reconnect') }}</NButton>
       </div>
     </section>
   </main>

@@ -19,7 +19,7 @@ const { theme, mode } = useTheme();
 const route = useRoute();
 const localeStore = useLocaleStore();
 const { t } = useI18n();
-const appTitle = "NetInside 观枢 GAIOP 智能运维分析平台";
+const appTitle = computed(() => t('app.title'));
 const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
 const activeTheme = computed(() => (lightOnlyRoute.value ? null : theme.value));
 
@@ -36,11 +36,11 @@ watch(
   ([titleKey]) => {
     if (typeof document === "undefined") return;
     if (!titleKey) {
-      document.title = appTitle;
+      document.title = appTitle.value;
       return;
     }
     const title = t(titleKey);
-    document.title = `${title} - ${appTitle}`;
+    document.title = `${title} - ${appTitle.value}`;
   },
   { immediate: true },
 );
