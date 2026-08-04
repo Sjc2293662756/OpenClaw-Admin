@@ -54,7 +54,7 @@ async function handleLogout() {
     <NSpace :size="8" align="center">
       <NButton secondary type="primary" size="small" @click="router.push({ name: 'ChatWorkspace' })">
         <template #icon><NIcon :component="ChatbubbleEllipsesOutline" /></template>
-        对话工作台
+        {{ t('routes.chat') }}
       </NButton>
       <ConnectionStatus />
 

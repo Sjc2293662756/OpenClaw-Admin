@@ -27,7 +27,8 @@ const route = useRoute()
 const router = useRouter()
 const sessionStore = useSessionStore()
 const message = useMessage()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
 
 const sessionKey = computed(() => decodeURIComponent(route.params.key as string))
 const parsed = computed(() => parseSessionKey(sessionKey.value))
@@ -46,7 +47,7 @@ const isLegacySharedWebChat = computed(() => isLegacyDefaultSession(presentation
 const sourceChannelLabel = computed(() => formatSessionChannelLabel(presentationSession.value))
 const sourceChannelUser = computed(() =>
   isLegacySharedWebChat.value
-  ? '历史共享会话（无账户归属）'
+  ? text('历史共享会话（无账户归属）', 'Historical shared session (no account owner)')
   : sessionStore.currentSession?.channelUserName
   || sessionStore.currentSession?.channelUserId
   || sessionStore.currentSession?.ownerUsername
@@ -122,7 +123,7 @@ function roleLabel(role: string): string {
       </NButton>
       <NText strong style="font-size: 18px;">{{ displaySessionTitle }}</NText>
       <NTag size="small" round :bordered="false">{{ sourceChannelLabel }}</NTag>
-      <NText depth="3">渠道用户：{{ sourceChannelUser }}</NText>
+      <NText depth="3">{{ text('渠道用户：', 'Channel user: ') }}{{ sourceChannelUser }}</NText>
     </NSpace>
 
     <NSpin :show="sessionStore.loading">

@@ -65,7 +65,8 @@ const agentStore = useAgentStore()
 const configStore = useConfigStore()
 const router = useRouter()
 const message = useMessage()
-const { t } = useI18n()
+const { t, locale } = useI18n()
+const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
 const {
   canUseFunctions,
   canDeleteSessions,
@@ -153,7 +154,7 @@ const agentOptions = computed<SelectOption[]>(() => {
   }))
 })
 
-const deliveryChannelLabelMap: Record<string, string> = {
+const deliveryChannelLabelMap = computed<Record<string, string>>(() => ({
   whatsapp: 'WhatsApp',
   telegram: 'Telegram',
   discord: 'Discord',
@@ -164,20 +165,20 @@ const deliveryChannelLabelMap: Record<string, string> = {
   qqbot: 'QQ Bot',
   qq: 'QQ',
   webchat: 'webchat',
-  'openclaw-lark': '飞书',
-  lark: '飞书',
-  'dingtalk-connector': '钉钉',
-  'wecom-openclaw-plugin': '企业微信',
+  'openclaw-lark': locale.value === 'zh-CN' ? '飞书' : 'Feishu',
+  lark: locale.value === 'zh-CN' ? '飞书' : 'Feishu',
+  'dingtalk-connector': locale.value === 'zh-CN' ? '钉钉' : 'DingTalk',
+  'wecom-openclaw-plugin': locale.value === 'zh-CN' ? '企业微信' : 'WeCom',
   main: 'GAIOP Web Chat',
-}
+}))
 
 function formatChannelLabel(channelKey: string): string {
   const normalized = channelKey.trim().toLowerCase()
   if (normalized === 'web') return 'webchat'
-  if (normalized === 'feishu' || normalized === 'lark') return '飞书'
-  if (normalized === 'dingtalk') return '钉钉'
-  if (normalized === 'wecom') return '企业微信'
-  return deliveryChannelLabelMap[normalized] || channelKey
+  if (normalized === 'feishu' || normalized === 'lark') return text('飞书', 'Feishu')
+  if (normalized === 'dingtalk') return text('钉钉', 'DingTalk')
+  if (normalized === 'wecom') return text('企业微信', 'WeCom')
+  return deliveryChannelLabelMap.value[normalized] || channelKey
 }
 
 function isWebChatSession(session: SessionRow): boolean {
@@ -197,14 +198,14 @@ function sessionChannelLabel(session: SessionRow): string {
 }
 
 function sessionChannelUser(session: SessionRow): string {
-  if (isLegacySharedWebChatSession(session)) return '历史共享会话（无账户归属）'
+  if (isLegacySharedWebChatSession(session)) return text('历史共享会话（无账户归属）', 'Historical shared session (no account owner)')
   if (isWebChatSession(session)) {
-    return session.channelUserName || session.channelUserId || session.ownerUsername || '历史 webchat 用户未登记'
+    return session.channelUserName || session.channelUserId || session.ownerUsername || text('历史 webchat 用户未登记', 'Historical webchat user not recorded')
   }
   const display = session.channelUserName || session.ownerUsername || session.label || session.channelUserId || session.peer || session.parsed.peer
   if (!display) return '-'
   if ((session.sourceChannel || session.channel || session.parsed.channel) === 'feishu' && /^ou_[a-z0-9_-]+$/i.test(display)) {
-    return `飞书用户（${display}）`
+    return text(`飞书用户（${display}）`, `Feishu user (${display})`)
   }
   return display
 }
@@ -369,7 +370,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
     },
   },
   {
-    title: '渠道用户',
+    title: text('渠道用户', 'Channel user'),
     key: 'channelUser',
     minWidth: 180,
     ellipsis: { tooltip: true },
@@ -377,9 +378,9 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
       return h(NSpace, { vertical: true, size: 2 }, () => [
         h(NText, { style: 'font-size: 13px;' }, { default: () => sessionChannelUser(row) }),
         row.originKind === 'web' && row.ownerUsername
-          ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => 'GAIOP 登录用户' })
+          ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => text('GAIOP 登录用户', 'GAIOP signed-in user') })
           : row.originKind === 'channel'
-            ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => '外部频道用户' })
+            ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => text('外部频道用户', 'External channel user') })
             : null,
       ])
     },
@@ -441,7 +442,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
             icon: () => h(NIcon, { component: ChatbubblesOutline }),
             default: () => canContinueSessions.value
               ? t('pages.sessions.list.continueConversation')
-              : '查看历史',
+              : text('查看历史', 'View history'),
           }
         ),
       ]
@@ -563,7 +564,7 @@ function handleContinueConversation(session: SessionRow) {
 
 async function handleDelete(session: SessionRow) {
   if (!canDeleteSessions.value) {
-    message.error('当前用户仅有查看权限，不能删除会话')
+    message.error(text('当前用户仅有查看权限，不能删除会话', 'The current user has read-only access and cannot delete sessions'))
     return
   }
   try {
@@ -576,7 +577,7 @@ async function handleDelete(session: SessionRow) {
 
 async function handleBatchDelete() {
   if (!canDeleteSessions.value) {
-    message.error('当前用户仅有查看权限，不能删除会话')
+    message.error(text('当前用户仅有查看权限，不能删除会话', 'The current user has read-only access and cannot delete sessions'))
     return
   }
   if (allSelectedKeys.value.length === 0) return

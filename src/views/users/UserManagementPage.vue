@@ -4,7 +4,9 @@ import { useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInput, NModal, NSelect, NSpace, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
 import { AddOutline, CreateOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
-import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '@/utils/password-policy'
+import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
+import type { AppLocale } from '@/i18n/locale'
+import { useI18n } from 'vue-i18n'
 
 type UserRole = 'basic' | 'auditor' | 'standard' | 'admin'
 type UserStatus = 'active' | 'inactive'
@@ -23,6 +25,9 @@ const router = useRouter()
 const authStore = useAuthStore()
 const dialog = useDialog()
 const message = useMessage()
+const { t, locale } = useI18n()
+const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
+const passwordHint = computed(() => passwordPolicyMessage(locale.value as AppLocale))
 const loading = ref(false)
 const users = ref<ManagedUser[]>([])
 const keyword = ref('')
@@ -41,10 +46,10 @@ const temporaryPassword = ref('')
 const confirmPassword = ref('')
 const resetting = ref(false)
 
-const roleText: Record<UserRole, string> = { basic: '基础用户', auditor: '审计用户', standard: '标准用户', admin: '管理员' }
+const roleText = computed<Record<UserRole, string>>(() => ({ basic: t('pages.gaiop.users.basic'), auditor: t('pages.gaiop.users.auditor'), standard: t('pages.gaiop.users.standard'), admin: t('pages.gaiop.users.admin') }))
 const roleType: Record<UserRole, 'default' | 'info' | 'success' | 'warning'> = { basic: 'default', auditor: 'info', standard: 'success', admin: 'warning' }
-const roleOptions = Object.entries(roleText).map(([value, label]) => ({ value, label }))
-const statusOptions = [{ value: 'active', label: '已激活' }, { value: 'inactive', label: '未激活' }]
+const roleOptions = computed(() => Object.entries(roleText.value).map(([value, label]) => ({ value, label })))
+const statusOptions = computed(() => [{ value: 'active', label: t('pages.gaiop.users.active') }, { value: 'inactive', label: t('pages.gaiop.users.inactive') }])
 const filteredUsers = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   return users.value.filter(user => {
@@ -68,10 +73,10 @@ async function loadUsers() {
   try {
     const response = await fetch('/api/users', { headers: headers() })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || '获取用户列表失败')
+    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.loadFailed'))
     users.value = data.users
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '获取用户列表失败')
+    message.error(error instanceof Error ? error.message : t('pages.gaiop.users.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -92,12 +97,12 @@ function canDeleteUser(user: ManagedUser) {
 }
 
 function managementReason(user: ManagedUser, action: 'edit' | 'reset' | 'delete') {
-  if (!isAdmin.value) return '仅管理员可以执行此操作'
+  if (!isAdmin.value) return t('pages.gaiop.users.adminOnly')
   if (user.isInitialAdmin) {
-    return '初始管理员账户受保护，只能由本人正常修改密码'
+    return text('初始管理员账户受保护，只能由本人正常修改密码', 'The initial administrator account is protected and can change only its own password normally')
   }
-  if (user.role === 'admin' && !isInitialAdmin.value) return '只有初始管理员可以管理管理员账户'
-  if (user.id === authStore.currentUser?.id && action !== 'edit') return '请使用“修改密码”；当前账户不能删除'
+  if (user.role === 'admin' && !isInitialAdmin.value) return text('只有初始管理员可以管理管理员账户', 'Only the initial administrator can manage administrator accounts')
+  if (user.id === authStore.currentUser?.id && action !== 'edit') return text('请使用“修改密码”；当前账户不能删除', 'Use Change password; the current account cannot be deleted')
   return ''
 }
 
@@ -110,11 +115,11 @@ function openResetPassword(user: ManagedUser) {
 async function submitResetPassword() {
   if (!resetTarget.value) return
   if (!isValidPassword(temporaryPassword.value)) {
-    message.error(PASSWORD_POLICY_MESSAGE)
+    message.error(passwordHint.value)
     return
   }
   if (temporaryPassword.value !== confirmPassword.value) {
-    message.error('两次输入的密码不一致')
+    message.error(text('两次输入的密码不一致', 'Passwords do not match'))
     return
   }
   resetting.value = true
@@ -128,14 +133,14 @@ async function submitResetPassword() {
       }),
     })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || '重置失败')
-    message.success('临时密码已设置，该用户首次登录必须修改密码')
+    if (!response.ok || !data.ok) throw new Error(data.error || text('重置失败', 'Password reset failed'))
+    message.success(text('临时密码已设置，该用户首次登录必须修改密码', 'Temporary password set. The user must change it on first sign-in.'))
     resetTarget.value = null
     temporaryPassword.value = ''
     confirmPassword.value = ''
     await loadUsers()
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '重置失败')
+    message.error(error instanceof Error ? error.message : text('重置失败', 'Password reset failed'))
   } finally {
     resetting.value = false
   }
@@ -143,13 +148,13 @@ async function submitResetPassword() {
 
 function removeUser(user: ManagedUser) {
   dialog.error({
-    title: '删除用户', content: `确定删除用户“${user.username}”吗？此操作不可恢复。`,
-    positiveText: '确认删除', negativeText: '取消',
+    title: text('删除用户', 'Delete user'), content: text(`确定删除用户“${user.username}”吗？此操作不可恢复。`, `Delete user “${user.username}”? This cannot be undone.`),
+    positiveText: text('确认删除', 'Delete'), negativeText: text('取消', 'Cancel'),
     onPositiveClick: async () => {
       const response = await fetch(`/api/users/${user.id}`, { method: 'DELETE', headers: headers() })
       const data = await response.json()
-      if (!response.ok || !data.ok) { message.error(data.error || '删除失败'); return }
-      message.success('用户已删除')
+      if (!response.ok || !data.ok) { message.error(data.error || text('删除失败', 'Delete failed')); return }
+      message.success(text('用户已删除', 'User deleted'))
       await loadUsers()
     },
   })
@@ -157,21 +162,21 @@ function removeUser(user: ManagedUser) {
 
 const columns = computed<DataTableColumns<ManagedUser>>(() => {
   const base: DataTableColumns<ManagedUser> = [
-    { title: '更新时间', key: 'updatedAt', width: 180, render: row => formatTime(row.updatedAt) },
-    { title: '用户名', key: 'username', minWidth: 140 },
-    { title: '用户权限', key: 'role', width: 220, render: row => h(NSpace, { size: 'small' }, { default: () => [
-      h(NTag, { type: roleType[row.role], bordered: false }, { default: () => roleText[row.role] }),
-      ...(row.isInitialAdmin ? [h(NTag, { type: 'warning', bordered: false }, { default: () => '初始管理员' })] : []),
+    { title: t('pages.gaiop.users.updatedAt'), key: 'updatedAt', width: 180, render: row => formatTime(row.updatedAt) },
+    { title: t('pages.gaiop.users.username'), key: 'username', minWidth: 140 },
+    { title: t('pages.gaiop.users.role'), key: 'role', width: 220, render: row => h(NSpace, { size: 'small' }, { default: () => [
+      h(NTag, { type: roleType[row.role], bordered: false }, { default: () => roleText.value[row.role] }),
+      ...(row.isInitialAdmin ? [h(NTag, { type: 'warning', bordered: false }, { default: () => t('pages.gaiop.users.initialAdmin') })] : []),
     ] }) },
-    { title: '描述', key: 'description', minWidth: 220, ellipsis: { tooltip: true }, render: row => row.description || '—' },
-    { title: '状态', key: 'status', width: 105, render: row => h(NTag, { type: row.status === 'active' ? 'success' : 'default', bordered: false }, { default: () => row.status === 'active' ? '已激活' : '未激活' }) },
+    { title: t('pages.gaiop.users.description'), key: 'description', minWidth: 220, ellipsis: { tooltip: true }, render: row => row.description || '—' },
+    { title: t('pages.gaiop.users.status'), key: 'status', width: 105, render: row => h(NTag, { type: row.status === 'active' ? 'success' : 'default', bordered: false }, { default: () => row.status === 'active' ? t('pages.gaiop.users.active') : t('pages.gaiop.users.inactive') }) },
   ]
   if (!isAdmin.value) return base
   return [...base, {
-    title: '操作', key: 'actions', width: 250, render: row => h(NSpace, { size: 'small' }, { default: () => [
-      h(NButton, { size: 'small', disabled: !canEditUser(row), title: managementReason(row, 'edit'), onClick: () => router.push({ name: 'UserEdit', params: { id: row.id } }) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => '编辑' }),
-      h(NButton, { size: 'small', disabled: !canResetUser(row), title: managementReason(row, 'reset'), onClick: () => openResetPassword(row) }, { default: () => '重置' }),
-      h(NButton, { size: 'small', type: 'error', ghost: true, disabled: !canDeleteUser(row), title: managementReason(row, 'delete'), onClick: () => removeUser(row) }, { default: () => '删除' }),
+    title: t('pages.gaiop.users.actions'), key: 'actions', width: 250, render: row => h(NSpace, { size: 'small' }, { default: () => [
+      h(NButton, { size: 'small', disabled: !canEditUser(row), title: managementReason(row, 'edit'), onClick: () => router.push({ name: 'UserEdit', params: { id: row.id } }) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => t('pages.gaiop.users.editAction') }),
+      h(NButton, { size: 'small', disabled: !canResetUser(row), title: managementReason(row, 'reset'), onClick: () => openResetPassword(row) }, { default: () => t('pages.gaiop.users.resetAction') }),
+      h(NButton, { size: 'small', type: 'error', ghost: true, disabled: !canDeleteUser(row), title: managementReason(row, 'delete'), onClick: () => removeUser(row) }, { default: () => t('pages.gaiop.users.deleteAction') }),
     ] }),
   }]
 })
@@ -181,47 +186,47 @@ onMounted(loadUsers)
 
 <template>
   <div class="user-management-page">
-    <NCard title="用户列表" :bordered="false" class="user-card">
+    <NCard :title="t('pages.gaiop.users.list')" :bordered="false" class="user-card">
       <template #header-extra>
         <NSpace>
-          <NButton @click="router.push({ name: 'PasswordChange' })">修改密码</NButton>
+          <NButton @click="router.push({ name: 'PasswordChange' })">{{ t('pages.gaiop.users.changePassword') }}</NButton>
           <NButton v-if="isAdmin" type="primary" @click="router.push({ name: 'UserCreate' })">
-            <template #icon><NIcon><AddOutline /></NIcon></template>添加用户
+            <template #icon><NIcon><AddOutline /></NIcon></template>{{ t('pages.gaiop.users.create') }}
           </NButton>
           <NButton :loading="loading" @click="loadUsers">
-            <template #icon><NIcon><RefreshOutline /></NIcon></template>刷新
+            <template #icon><NIcon><RefreshOutline /></NIcon></template>{{ t('pages.gaiop.users.refresh') }}
           </NButton>
         </NSpace>
       </template>
       <NAlert v-if="!isAdmin" type="info" :bordered="false" class="user-read-only-alert">
-        当前为审计用户，仅可查看账户信息，不能新增、编辑、重置密码、启停或删除账户。
+        {{ t('pages.gaiop.users.readOnly') }}
       </NAlert>
       <div class="user-toolbar">
-        <NInput v-model:value="keyword" clearable placeholder="搜索用户名或描述">
+        <NInput v-model:value="keyword" clearable :placeholder="t('pages.gaiop.users.search')">
           <template #prefix><NIcon><SearchOutline /></NIcon></template>
         </NInput>
-        <NSelect v-model:value="roleFilter" clearable placeholder="全部角色" :options="roleOptions" />
-        <NSelect v-model:value="statusFilter" clearable placeholder="全部状态" :options="statusOptions" />
-        <span class="user-toolbar__count">共 {{ filteredUsers.length }} 个用户</span>
+        <NSelect v-model:value="roleFilter" clearable :placeholder="t('pages.gaiop.users.allRoles')" :options="roleOptions" />
+        <NSelect v-model:value="statusFilter" clearable :placeholder="t('pages.gaiop.users.allStatuses')" :options="statusOptions" />
+        <span class="user-toolbar__count">{{ text(`共 ${filteredUsers.length} 个用户`, `${filteredUsers.length} users`) }}</span>
       </div>
       <NDataTable :columns="columns" :data="filteredUsers" :loading="loading" :bordered="false" :single-line="false" :pagination="{ pageSize: 10 }">
-        <template #empty><NEmpty description="暂无用户" /></template>
+        <template #empty><NEmpty :description="t('pages.gaiop.users.empty')" /></template>
       </NDataTable>
     </NCard>
     <NModal v-model:show="resetModalVisible" :mask-closable="!resetting">
-      <NCard :title="`重置“${resetTarget?.username || ''}”的密码`" :bordered="false" class="reset-card" role="dialog" aria-modal="true">
+      <NCard :title="text(`重置“${resetTarget?.username || ''}”的密码`, `Reset password for “${resetTarget?.username || ''}”`)" :bordered="false" class="reset-card" role="dialog" aria-modal="true">
         <NAlert type="warning" :bordered="false">
-          重置会撤销该用户的所有登录Token。用户使用临时密码登录后，只能修改密码，并需使用新密码重新登录。
+          {{ text('重置会撤销该用户的所有登录Token。用户使用临时密码登录后，只能修改密码，并需使用新密码重新登录。', 'Resetting revokes all sign-in tokens for this user. After signing in with the temporary password, the user can only change the password and must sign in again with the new password.') }}
         </NAlert>
         <div class="reset-fields">
-          <NInput v-model:value="temporaryPassword" type="password" show-password-on="click" placeholder="输入临时密码" />
-          <NInput v-model:value="confirmPassword" type="password" show-password-on="click" placeholder="再次输入临时密码" />
-          <span class="password-hint">{{ PASSWORD_POLICY_MESSAGE }}</span>
+          <NInput v-model:value="temporaryPassword" type="password" show-password-on="click" :placeholder="text('输入临时密码', 'Enter temporary password')" />
+          <NInput v-model:value="confirmPassword" type="password" show-password-on="click" :placeholder="text('再次输入临时密码', 'Re-enter temporary password')" />
+          <span class="password-hint">{{ passwordHint }}</span>
         </div>
         <template #footer>
           <NSpace justify="end">
-            <NButton :disabled="resetting" @click="resetTarget = null">取消</NButton>
-            <NButton type="primary" :loading="resetting" @click="submitResetPassword">确认重置</NButton>
+            <NButton :disabled="resetting" @click="resetTarget = null">{{ t('pages.gaiop.users.cancel') }}</NButton>
+            <NButton type="primary" :loading="resetting" @click="submitResetPassword">{{ text('确认重置', 'Confirm reset') }}</NButton>
           </NSpace>
         </template>
       </NCard>

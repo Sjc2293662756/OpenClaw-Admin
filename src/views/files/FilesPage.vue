@@ -4,6 +4,7 @@ import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInputNumber, NSelec
 import { DownloadOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useI18n } from 'vue-i18n'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
 
 type ReportStatus = 'ready' | 'missing' | 'failed'
@@ -29,8 +30,10 @@ type ReportFile = {
 }
 
 const authStore = useAuthStore()
+const { locale } = useI18n()
 const message = useMessage()
 const dialog = useDialog()
+const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
 const loading = ref(false)
 const reports = ref<ReportFile[]>([])
 const serverNow = ref(Date.now())
@@ -48,51 +51,51 @@ const activeResultLimit = computed(() => {
   const requested = isCustomLimit.value ? Number(customResultLimit.value) || 200 : Number(resultLimitChoice.value)
   return Math.min(Math.max(requested, pageSize.value), 3000)
 })
-const statusMap: Record<ReportStatus, { label: string; type: 'success' | 'warning' | 'error' }> = {
-  ready: { label: '可用', type: 'success' },
-  missing: { label: '文件缺失', type: 'warning' },
-  failed: { label: '生成失败', type: 'error' },
-}
-const reportTypeMap: Record<string, string> = {
-  quick_report: '快速报告',
-  diagnostic_report: '故障分析报告',
-  comparative_report: '对比报告',
-  operation_report: '运维报告',
-  inspection_report: '巡检报告',
-  summary_report: '综述报告',
-  analysis: '分析报告',
-  diagnostic: '诊断报告',
-  summary: '汇总报告',
-  scheduled: '定时报表',
-}
-const channelLabelMap: Record<string, string> = {
+const statusMap = computed<Record<ReportStatus, { label: string; type: 'success' | 'warning' | 'error' }>>(() => ({
+  ready: { label: text('可用', 'Available'), type: 'success' },
+  missing: { label: text('文件缺失', 'File missing'), type: 'warning' },
+  failed: { label: text('生成失败', 'Generation failed'), type: 'error' },
+}))
+const reportTypeMap = computed<Record<string, string>>(() => ({
+  quick_report: text('快速报告', 'Quick report'),
+  diagnostic_report: text('故障分析报告', 'Fault analysis report'),
+  comparative_report: text('对比报告', 'Comparison report'),
+  operation_report: text('运维报告', 'Operations report'),
+  inspection_report: text('巡检报告', 'Inspection report'),
+  summary_report: text('综述报告', 'Summary report'),
+  analysis: text('分析报告', 'Analysis report'),
+  diagnostic: text('诊断报告', 'Diagnostic report'),
+  summary: text('汇总报告', 'Summary report'),
+  scheduled: text('定时报表', 'Scheduled report'),
+}))
+const channelLabelMap = computed<Record<string, string>>(() => ({
   web: 'webchat',
-  historical_import: '历史归档',
-  feishu: '飞书',
-  lark: '飞书',
-  'openclaw-lark': '飞书',
-  dingtalk: '钉钉',
-  'dingtalk-connector': '钉钉',
-  wecom: '企业微信',
-  'wecom-openclaw-plugin': '企业微信',
-}
-const supportedReportTypes = [
-  { label: '快速报告', value: 'quick_report' },
-  { label: '故障分析报告', value: 'diagnostic_report' },
-  { label: '对比报告', value: 'comparative_report' },
-  { label: '运维报告', value: 'operation_report' },
-  { label: '巡检报告', value: 'inspection_report' },
-  { label: '综述报告', value: 'summary_report' },
-]
-const pageSizeOptions = [10, 20, 50, 100].map((value) => ({ label: `${value} 条/页`, value }))
-const resultLimitOptions = [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: '自定义 TOP', value: 'custom' }])
+  historical_import: text('历史归档', 'Historical archive'),
+  feishu: text('飞书', 'Feishu'),
+  lark: text('飞书', 'Feishu'),
+  'openclaw-lark': text('飞书', 'Feishu'),
+  dingtalk: text('钉钉', 'DingTalk'),
+  'dingtalk-connector': text('钉钉', 'DingTalk'),
+  wecom: text('企业微信', 'WeCom'),
+  'wecom-openclaw-plugin': text('企业微信', 'WeCom'),
+}))
+const supportedReportTypes = computed(() => [
+  { label: reportTypeMap.value.quick_report, value: 'quick_report' },
+  { label: reportTypeMap.value.diagnostic_report, value: 'diagnostic_report' },
+  { label: reportTypeMap.value.comparative_report, value: 'comparative_report' },
+  { label: reportTypeMap.value.operation_report, value: 'operation_report' },
+  { label: reportTypeMap.value.inspection_report, value: 'inspection_report' },
+  { label: reportTypeMap.value.summary_report, value: 'summary_report' },
+])
+const pageSizeOptions = computed(() => [10, 20, 50, 100].map((value) => ({ label: text(`${value} 条/页`, `${value} per page`), value })))
+const resultLimitOptions = computed(() => [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: text('自定义 TOP', 'Custom TOP'), value: 'custom' }]))
 const reportTypeOptions = computed(() => {
-  const supported = new Set(supportedReportTypes.map((type) => type.value))
+  const supported = new Set(supportedReportTypes.value.map((type) => type.value))
   const historicalTypes = [...new Set(reports.value.map((report) => report.reportType).filter((type) => type && !supported.has(type)))]
   return [
-    { label: '全部报告类型', value: 'all' },
-    ...supportedReportTypes,
-    ...historicalTypes.map((type) => ({ label: `${reportTypeMap[type] || type}（历史类型）`, value: type })),
+    { label: text('全部报告类型', 'All report types'), value: 'all' },
+    ...supportedReportTypes.value,
+    ...historicalTypes.map((type) => ({ label: `${reportTypeMap.value[type] || type}${text('（历史类型）', ' (historical type)')}`, value: type })),
   ]
 })
 
@@ -103,8 +106,8 @@ function headers() {
 async function readJsonResponse(response: Response, fallbackMessage: string) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase()
   if (!contentType.includes('application/json')) {
-    const status = response.status ? `（HTTP ${response.status}）` : ''
-    throw new Error(`${fallbackMessage}${status}：服务返回了非预期响应，请刷新页面；若仍持续，请联系管理员查看 BFF 日志。`)
+    const status = response.status ? text(`（HTTP ${response.status}）`, ` (HTTP ${response.status})`) : ''
+    throw new Error(text(`${fallbackMessage}${status}：服务返回了非预期响应，请刷新页面；若仍持续，请联系管理员查看 BFF 日志。`, `${fallbackMessage}${status}: the service returned an unexpected response. Refresh the page and contact an administrator to review BFF logs if it persists.`))
   }
   return response.json()
 }
@@ -126,22 +129,22 @@ function formatSize(size?: number) {
 }
 function formatChannel(channel?: string | null) {
   const value = String(channel || '').trim().toLowerCase()
-  return channelLabelMap[value] || channel || '未记录'
+  return channelLabelMap.value[value] || channel || text('未记录', 'Not recorded')
 }
 function formatSourceUser(report: ReportFile) {
   const user = report.sourceChannelUserName || report.sourceChannelUserId || report.sourceUserId
-  if (!user) return '未记录'
+  if (!user) return text('未记录', 'Not recorded')
   if (String(report.sourceChannel || '').trim().toLowerCase() === 'feishu' && /^ou_[a-z0-9_-]+$/i.test(user)) {
-    return `飞书用户（${user}）`
+    return text(`飞书用户（${user}）`, `Feishu user (${user})`)
   }
   return user
 }
 function formatSourceSession(report: ReportFile) {
   const savedTitle = String(report.sourceSessionTitle || '').trim()
   if (savedTitle) return savedTitle
-  if (String(report.sourceChannel || '').trim().toLowerCase() === 'historical_import') return '历史报告（原会话未保留）'
-  if (String(report.sourceChannel || '').trim().toLowerCase() === 'web') return '历史 webchat 会话'
-  return report.sourceSessionId ? `${formatChannel(report.sourceChannel)} 会话` : '未记录'
+  if (String(report.sourceChannel || '').trim().toLowerCase() === 'historical_import') return text('历史报告（原会话未保留）', 'Historical report (original session not retained)')
+  if (String(report.sourceChannel || '').trim().toLowerCase() === 'web') return text('历史 webchat 会话', 'Historical webchat session')
+  return report.sourceSessionId ? text(`${formatChannel(report.sourceChannel)} 会话`, `${formatChannel(report.sourceChannel)} session`) : text('未记录', 'Not recorded')
 }
 const filteredReports = computed(() => reports.value
   .filter((report) => reportTypeFilter.value === 'all' || report.reportType === reportTypeFilter.value)
@@ -160,15 +163,15 @@ async function refresh(showMessage = true) {
   loading.value = true
   try {
     const response = await fetch('/api/reports', { headers: headers() })
-    const data = await readJsonResponse(response, '获取报告列表失败')
-    if (!response.ok || !data.ok) throw new Error(data.error || '获取报告列表失败')
+    const data = await readJsonResponse(response, text('获取报告列表失败', 'Failed to load reports'))
+    if (!response.ok || !data.ok) throw new Error(data.error || text('获取报告列表失败', 'Failed to load reports'))
     const responseTime = Date.parse(response.headers.get('date') || '')
     if (Number.isFinite(responseTime)) serverNow.value = responseTime
     reports.value = data.reports || []
     page.value = 1
-    if (showMessage) message.success('报告列表已刷新')
+    if (showMessage) message.success(text('报告列表已刷新', 'Report list refreshed'))
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '获取报告列表失败')
+    message.error(error instanceof Error ? error.message : text('获取报告列表失败', 'Failed to load reports'))
   } finally {
     loading.value = false
   }
@@ -179,7 +182,7 @@ async function download(report: ReportFile) {
     const response = await fetch(`/api/reports/${report.id}/download`, { headers: headers() })
     if (!response.ok) {
       const data = await response.json().catch(() => null)
-      throw new Error(data?.error || '报告下载失败')
+      throw new Error(data?.error || text('报告下载失败', 'Failed to download report'))
     }
     const objectUrl = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
@@ -190,25 +193,25 @@ async function download(report: ReportFile) {
     link.remove()
     URL.revokeObjectURL(objectUrl)
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '报告下载失败')
+    message.error(error instanceof Error ? error.message : text('报告下载失败', 'Failed to download report'))
   }
 }
 
 function remove(report: ReportFile) {
   dialog.error({
-    title: '删除报告文件',
-    content: `确定删除“${report.name}”吗？此操作不可恢复。`,
-    positiveText: '删除',
-    negativeText: '取消',
+    title: text('删除报告文件', 'Delete report file'),
+    content: text(`确定删除“${report.name}”吗？此操作不可恢复。`, `Delete “${report.name}”? This cannot be undone.`),
+    positiveText: text('删除', 'Delete'),
+    negativeText: text('取消', 'Cancel'),
     onPositiveClick: async () => {
       try {
         const response = await fetch(`/api/reports/${report.id}`, { method: 'DELETE', headers: headers() })
         const data = await response.json()
-        if (!response.ok || !data.ok) throw new Error(data.error || '报告删除失败')
-        message.success('报告文件已删除')
+        if (!response.ok || !data.ok) throw new Error(data.error || text('报告删除失败', 'Failed to delete report'))
+        message.success(text('报告文件已删除', 'Report file deleted'))
         await refresh(false)
       } catch (error) {
-        message.error(error instanceof Error ? error.message : '报告删除失败')
+        message.error(error instanceof Error ? error.message : text('报告删除失败', 'Failed to delete report'))
       }
     },
   })
@@ -237,33 +240,33 @@ function resetFilters() {
   page.value = 1
 }
 
-const columns: DataTableColumns<ReportFile> = [
-  { title: '报告名称', key: 'name', minWidth: 260, ellipsis: { tooltip: true } },
-  { title: '类型', key: 'reportType', width: 140, render: row => reportTypeMap[row.reportType] || row.reportType },
-  { title: '生成时间', key: 'createdAt', width: 180, render: row => formatTime(row.createdAt) },
-  { title: '来源渠道', key: 'sourceChannel', width: 120, render: row => formatChannel(row.sourceChannel) },
-  { title: '来源用户', key: 'sourceChannelUserName', minWidth: 150, ellipsis: { tooltip: true }, render: row => formatSourceUser(row) },
-  { title: '来源会话', key: 'sourceSessionTitle', minWidth: 190, ellipsis: { tooltip: true }, render: row => formatSourceSession(row) },
-  { title: '来源数据源', key: 'dataSourceName', minWidth: 180, ellipsis: { tooltip: true }, render: row => row.dataSourceName || row.dataSourceId || '未记录' },
-  { title: '文件大小', key: 'size', width: 110, render: row => formatSize(row.size) },
-  { title: '状态', key: 'status', width: 100, render: row => h(NTag, { type: statusMap[row.status]?.type || 'default', bordered: false }, { default: () => statusMap[row.status]?.label || row.status }) },
+const columns = computed<DataTableColumns<ReportFile>>(() => [
+  { title: text('报告名称', 'Report name'), key: 'name', minWidth: 260, ellipsis: { tooltip: true } },
+  { title: text('类型', 'Type'), key: 'reportType', width: 170, render: row => reportTypeMap.value[row.reportType] || row.reportType },
+  { title: text('生成时间', 'Generated at'), key: 'createdAt', width: 180, render: row => formatTime(row.createdAt) },
+  { title: text('来源渠道', 'Source channel'), key: 'sourceChannel', width: 130, render: row => formatChannel(row.sourceChannel) },
+  { title: text('来源用户', 'Source user'), key: 'sourceChannelUserName', minWidth: 150, ellipsis: { tooltip: true }, render: row => formatSourceUser(row) },
+  { title: text('来源会话', 'Source session'), key: 'sourceSessionTitle', minWidth: 190, ellipsis: { tooltip: true }, render: row => formatSourceSession(row) },
+  { title: text('来源数据源', 'Source data source'), key: 'dataSourceName', minWidth: 180, ellipsis: { tooltip: true }, render: row => row.dataSourceName || row.dataSourceId || text('未记录', 'Not recorded') },
+  { title: text('文件大小', 'File size'), key: 'size', width: 110, render: row => formatSize(row.size) },
+  { title: text('状态', 'Status'), key: 'status', width: 110, render: row => h(NTag, { type: statusMap.value[row.status]?.type || 'default', bordered: false }, { default: () => statusMap.value[row.status]?.label || row.status }) },
   {
-    title: '操作',
+    title: text('操作', 'Actions'),
     key: 'actions',
     width: 180,
     minWidth: 180,
     fixed: 'right',
     render: row => {
       const actions = [
-        h(NButton, { size: 'small', type: 'primary', secondary: true, disabled: row.status !== 'ready', onClick: () => download(row) }, { icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }), default: () => '下载' }),
+        h(NButton, { size: 'small', type: 'primary', secondary: true, disabled: row.status !== 'ready', onClick: () => download(row) }, { icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }), default: () => text('下载', 'Download') }),
       ]
       if (isAdmin.value) {
-        actions.push(h(NButton, { size: 'small', type: 'error', ghost: true, onClick: () => remove(row) }, { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }), default: () => '删除' }))
+        actions.push(h(NButton, { size: 'small', type: 'error', ghost: true, onClick: () => remove(row) }, { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }), default: () => text('删除', 'Delete') }))
       }
       return h('div', { style: { display: 'flex', flexWrap: 'nowrap', gap: '10px', whiteSpace: 'nowrap' } }, actions)
     },
   },
-]
+])
 
 onMounted(() => { void refresh(false) })
 </script>
@@ -271,9 +274,9 @@ onMounted(() => { void refresh(false) })
 <template>
   <section class="report-page">
     <NAlert type="info" :bordered="false" class="report-note">
-      报告仅由会话中的 GAIOP AI 自动生成，不支持手动上传或编辑。当前已导入的 OpenClaw 历史报告为本地过渡副本；管理员删除时只删除本地副本，不影响原始报告。历史审计未记录来源用户、会话或数据源时统一显示“未记录”。
+      {{ text('报告仅由会话中的 GAIOP AI 自动生成，不支持手动上传或编辑。当前已导入的 OpenClaw 历史报告为本地过渡副本；管理员删除时只删除本地副本，不影响原始报告。历史审计未记录来源用户、会话或数据源时统一显示“未记录”。', 'Reports are generated automatically by GAIOP AI in sessions and cannot be uploaded or edited manually. Imported OpenClaw historical reports are local transitional copies; administrator deletion removes only the local copy, not the original report. Historical records without a source user, session, or data source show Not recorded.') }}
     </NAlert>
-    <NCard title="报告文件管理" :bordered="false" class="report-card">
+    <NCard :title="text('报告文件管理', 'Report Management')" :bordered="false" class="report-card">
       <template #header-extra>
         <NSpace class="time-toolbar" align="center" wrap :size="8">
           <TimeRangePicker
@@ -284,33 +287,33 @@ onMounted(() => { void refresh(false) })
             placement="bottom-end"
             @apply="applyTimeRange"
           />
-          <NButton size="small" :loading="loading" @click="refresh()"><template #icon><RefreshOutline /></template>刷新</NButton>
+          <NButton size="small" :loading="loading" @click="refresh()"><template #icon><RefreshOutline /></template>{{ text('刷新', 'Refresh') }}</NButton>
         </NSpace>
       </template>
 
       <div class="filters">
         <NSpace wrap :size="10">
           <NSelect v-model:value="reportTypeFilter" :options="reportTypeOptions" style="width: 180px" @update:value="applyFilters" />
-          <NButton type="primary" :disabled="loading" @click="applyFilters">筛选</NButton>
-          <NButton secondary :disabled="loading" @click="resetFilters">重置</NButton>
+          <NButton type="primary" :disabled="loading" @click="applyFilters">{{ text('筛选', 'Filter') }}</NButton>
+          <NButton secondary :disabled="loading" @click="resetFilters">{{ text('重置', 'Reset') }}</NButton>
         </NSpace>
         <NSpace class="display-controls" wrap :size="10">
           <NSelect v-model:value="pageSize" :options="pageSizeOptions" style="width: 120px" @update:value="applyPageSize" />
           <NSelect v-model:value="resultLimitChoice" :options="resultLimitOptions" style="width: 180px" @update:value="!isCustomLimit && applyResultLimit()" />
-          <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="3000" :precision="0" placeholder="最高 3000 条" style="width: 150px" />
-          <NButton v-if="isCustomLimit" type="primary" @click="applyResultLimit">应用条数</NButton>
+          <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="3000" :precision="0" :placeholder="text('最高 3000 条', 'Up to 3000')" style="width: 150px" />
+          <NButton v-if="isCustomLimit" type="primary" @click="applyResultLimit">{{ text('应用条数', 'Apply limit') }}</NButton>
         </NSpace>
       </div>
 
       <NDataTable :columns="columns" :data="pagedReports" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1420" :pagination="false">
-        <template #empty><NEmpty description="当前筛选条件下暂无报告文件" /></template>
+        <template #empty><NEmpty :description="text('当前筛选条件下暂无报告文件', 'No report files match the current filters')" /></template>
       </NDataTable>
       <NSpace justify="space-between" align="center" style="margin-top: 16px;">
-        <NText depth="3">当前筛选 {{ filteredReports.length }} 条，TOP {{ activeResultLimit }}。</NText>
+        <NText depth="3">{{ text(`当前筛选 ${filteredReports.length} 条，TOP ${activeResultLimit}。`, `${filteredReports.length} matching reports, TOP ${activeResultLimit}.`) }}</NText>
         <NSpace align="center">
-          <NButton :disabled="page <= 1 || loading" @click="changePage(page - 1)">上一页</NButton>
-          <NText>第 {{ Math.min(page, pageCount) }} / {{ pageCount }} 页</NText>
-          <NButton :disabled="!hasMore || loading" @click="changePage(page + 1)">下一页</NButton>
+          <NButton :disabled="page <= 1 || loading" @click="changePage(page - 1)">{{ text('上一页', 'Previous') }}</NButton>
+          <NText>{{ text(`第 ${Math.min(page, pageCount)} / ${pageCount} 页`, `Page ${Math.min(page, pageCount)} / ${pageCount}`) }}</NText>
+          <NButton :disabled="!hasMore || loading" @click="changePage(page + 1)">{{ text('下一页', 'Next') }}</NButton>
         </NSpace>
       </NSpace>
     </NCard>

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NAlert, NButton, NCard, NDescriptions, NDescriptionsItem, NEmpty, NGrid, NGridItem, NIcon, NInput, NModal, NProgress, NSpin, NTable, NTag, useMessage } from 'naive-ui'
 import { RefreshOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import { useI18n } from 'vue-i18n'
 
 type RuntimeState = 'not-configured' | 'reachable' | 'unavailable'
 interface ComponentInfo { version: string; status: string }
@@ -46,6 +47,8 @@ interface TaskDetail {
 
 const authStore = useAuthStore()
 const message = useMessage()
+const { locale } = useI18n()
+const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
 const loading = ref(false)
 const overview = ref<Overview | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -64,7 +67,7 @@ const activeTaskId = ref<string | null>(null)
 const taskDetail = ref<TaskDetail | null>(null)
 const taskDetailLoading = ref(false)
 let taskPollTimer: number | null = null
-const runtimeLabel = computed(() => ({ 'not-configured': '待部署', reachable: '服务可用', unavailable: '服务不可用' }[overview.value?.runtime.state || 'not-configured']))
+const runtimeLabel = computed(() => ({ 'not-configured': text('待部署', 'Not configured'), reachable: text('服务可用', 'Available'), unavailable: text('服务不可用', 'Unavailable') }[overview.value?.runtime.state || 'not-configured']))
 const runtimeType = computed(() => ({ 'not-configured': 'warning', reachable: 'success', unavailable: 'error' }[overview.value?.runtime.state || 'not-configured'] as 'warning' | 'success' | 'error'))
 const skillEntries = computed(() => Object.entries(overview.value?.status?.skills || {}))
 
@@ -72,13 +75,13 @@ function headers() {
   return { Authorization: 'Bearer ' + (authStore.getToken() || '') }
 }
 function formatTime(value?: string) {
-  if (!value) return '未记录'
+  if (!value) return text('未记录', 'Not recorded')
   const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale.value, { hour12: false })
 }
 function componentLabel(component?: ComponentInfo | null) {
-  if (!component) return '未发现'
-  return (component.version || '未知版本') + ' · ' + (component.status || '未知状态')
+  if (!component) return text('未发现', 'Not found')
+  return (component.version || text('未知版本', 'Unknown version')) + ' · ' + (component.status || text('未知状态', 'Unknown status'))
 }
 function choosePackage() {
   fileInput.value?.click()
@@ -91,7 +94,7 @@ function onPackageSelected(event: Event) {
 }
 async function validatePackage() {
   if (!selectedFile.value) {
-    message.warning('请先选择 ZIP 格式升级包')
+    message.warning(text('请先选择 ZIP 格式升级包', 'Select a ZIP upgrade package first'))
     return
   }
   validating.value = true
@@ -100,14 +103,14 @@ async function validatePackage() {
     form.append('file', selectedFile.value)
     const response = await fetch('/api/system-upgrade/validate', { method: 'POST', headers: headers(), body: form })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || '升级包校验失败')
+    if (!response.ok || !result.ok) throw new Error(result.error || text('升级包校验失败', 'Upgrade package validation failed'))
     const validationResult = result.validation as ValidationResult | null
-    if (!validationResult) throw new Error('升级服务未返回校验结果')
+    if (!validationResult) throw new Error(text('升级服务未返回校验结果', 'The upgrade service returned no validation result'))
     validation.value = validationResult
-    message[validationResult.valid ? 'success' : 'warning'](validationResult.valid ? '升级包校验通过，请确认后执行' : '升级包未通过校验')
+    message[validationResult.valid ? 'success' : 'warning'](validationResult.valid ? text('升级包校验通过，请确认后执行', 'Package validation passed. Confirm to execute.') : text('升级包未通过校验', 'Package validation did not pass'))
     await loadOverview()
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '升级包校验失败')
+    message.error(error instanceof Error ? error.message : text('升级包校验失败', 'Upgrade package validation failed'))
   } finally {
     validating.value = false
   }
@@ -136,31 +139,31 @@ async function confirmBackupAction() {
       },
     )
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || '备份操作失败')
+    if (!response.ok || !result.ok) throw new Error(result.error || text('备份操作失败', 'Backup operation failed'))
     showBackupConfirm.value = false
     if (backupAction.value === 'rollback' && result.taskId) {
-      message.success('回滚任务已提交')
+      message.success(text('回滚任务已提交', 'Rollback task submitted'))
       await loadOverview()
       await loadTaskDetail(result.taskId)
     } else {
-      message.success('备份已删除')
+      message.success(text('备份已删除', 'Backup deleted'))
       await loadOverview()
     }
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '备份操作失败')
+    message.error(error instanceof Error ? error.message : text('备份操作失败', 'Backup operation failed'))
   } finally {
     backupActionLoading.value = false
   }
 }
 function taskStepLabel(value: string | null) {
   return ({
-    pre_check: '预检',
-    backup: '创建备份',
-    replace: '替换文件',
-    reload: '重载服务',
-    smoke_test: '健康检查',
-    finalize: '收尾',
-  } as Record<string, string>)[value || ''] || value || '等待开始'
+    pre_check: text('预检', 'Pre-check'),
+    backup: text('创建备份', 'Create backup'),
+    replace: text('替换文件', 'Replace files'),
+    reload: text('重载服务', 'Reload service'),
+    smoke_test: text('健康检查', 'Health check'),
+    finalize: text('收尾', 'Finalize'),
+  } as Record<string, string>)[value || ''] || value || text('等待开始', 'Waiting to start')
 }
 function stopTaskPolling() {
   if (taskPollTimer !== null) window.clearTimeout(taskPollTimer)
@@ -183,12 +186,12 @@ async function loadTaskDetail(taskId: string, silent = false) {
   try {
     const response = await fetch('/api/system-upgrade/tasks/' + taskId, { headers: headers() })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || '读取升级任务详情失败')
+    if (!response.ok || !result.ok) throw new Error(result.error || text('读取升级任务详情失败', 'Failed to load upgrade task details'))
     taskDetail.value = result.task as TaskDetail
     if (!isTaskActive(taskDetail.value.status)) await loadOverview()
   } catch (error) {
     stopTaskPolling()
-    if (!silent) message.error(error instanceof Error ? error.message : '读取升级任务详情失败')
+    if (!silent) message.error(error instanceof Error ? error.message : text('读取升级任务详情失败', 'Failed to load upgrade task details'))
   } finally {
     taskDetailLoading.value = false
     scheduleTaskPolling()
@@ -204,13 +207,13 @@ async function executeValidatedTask() {
       body: JSON.stringify({ confirmation: executionConfirmation.value }),
     })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || '升级任务无法执行')
+    if (!response.ok || !result.ok) throw new Error(result.error || text('升级任务无法执行', 'Upgrade task cannot be executed'))
     showExecutionConfirm.value = false
-    message.success('升级任务已提交，页面将显示最新状态')
+    message.success(text('升级任务已提交，页面将显示最新状态', 'Upgrade task submitted. The page will show its latest status.'))
     await loadOverview()
     await loadTaskDetail(validation.value.taskId)
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '升级任务无法执行')
+    message.error(error instanceof Error ? error.message : text('升级任务无法执行', 'Upgrade task cannot be executed'))
   } finally {
     executing.value = false
   }
@@ -220,10 +223,10 @@ async function loadOverview() {
   try {
     const response = await fetch('/api/system-upgrade/overview', { headers: headers() })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || '读取系统升级状态失败')
+    if (!response.ok || !result.ok) throw new Error(result.error || text('读取系统升级状态失败', 'Failed to load system upgrade status'))
     overview.value = result
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '读取系统升级状态失败')
+    message.error(error instanceof Error ? error.message : text('读取系统升级状态失败', 'Failed to load system upgrade status'))
   } finally {
     loading.value = false
   }
@@ -235,103 +238,103 @@ onBeforeUnmount(stopTaskPolling)
 <template>
   <div class="system-upgrade-page">
     <div class="page-header">
-      <div><h1>系统升级</h1><p>统一查看 GAIOP 核心、管理端与 Skill 的升级服务状态。</p></div>
-      <NButton :loading="loading" @click="loadOverview"><template #icon><NIcon><RefreshOutline /></NIcon></template>刷新</NButton>
+      <div><h1>{{ text('系统升级', 'System Upgrade') }}</h1><p>{{ text('统一查看 GAIOP 核心、管理端与 Skill 的升级服务状态。', 'View the upgrade-service status for the GAIOP core, administration UI, and Skills.') }}</p></div>
+      <NButton :loading="loading" @click="loadOverview"><template #icon><NIcon><RefreshOutline /></NIcon></template>{{ text('刷新', 'Refresh') }}</NButton>
     </div>
     <NSpin :show="loading">
       <NAlert :type="runtimeType" :bordered="false" class="runtime-alert">
-        <template #header>升级服务：{{ runtimeLabel }}</template>
-        <template v-if="overview?.runtime.state === 'reachable'">当前通过 Admin BFF 受控访问，服务版本 {{ overview.runtime.serviceVersion || '未记录' }}。</template>
-        <template v-else-if="overview?.runtime.state === 'not-configured'">当前环境尚未配置升级服务。ISO 部署阶段将设置内部地址、服务身份令牌、受控目录和 systemd 服务；此页面不会直接连接服务器。</template>
-        <template v-else>BFF 无法连接升级服务。请在部署阶段检查升级服务与内部网络；页面未尝试执行升级。</template>
+        <template #header>{{ text('升级服务：', 'Upgrade service: ') }}{{ runtimeLabel }}</template>
+        <template v-if="overview?.runtime.state === 'reachable'">{{ text('当前通过 Admin BFF 受控访问，服务版本 ', 'Controlled through Admin BFF. Service version: ') }}{{ overview.runtime.serviceVersion || text('未记录', 'Not recorded') }}。</template>
+        <template v-else-if="overview?.runtime.state === 'not-configured'">{{ text('当前环境尚未配置升级服务。ISO 部署阶段将设置内部地址、服务身份令牌、受控目录和 systemd 服务；此页面不会直接连接服务器。', 'The upgrade service is not configured in this environment. ISO deployment configures its internal address, service token, controlled directories, and systemd service; this page never connects directly to a server.') }}</template>
+        <template v-else>{{ text('BFF 无法连接升级服务。请在部署阶段检查升级服务与内部网络；页面未尝试执行升级。', 'The BFF cannot reach the upgrade service. Check the service and internal network during deployment; this page has not attempted an upgrade.') }}</template>
       </NAlert>
       <NGrid :cols="1" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
         <NGridItem v-if="taskDetail" span="1">
-          <NCard title="升级任务进度">
+          <NCard :title="text('升级任务进度', 'Upgrade task progress')">
             <NSpin :show="taskDetailLoading">
               <NDescriptions :column="1" bordered label-placement="left">
-                <NDescriptionsItem label="任务">{{ taskDetail.id }}</NDescriptionsItem>
-                <NDescriptionsItem label="状态"><NTag :bordered="false">{{ taskDetail.status }}</NTag></NDescriptionsItem>
-                <NDescriptionsItem label="当前步骤">{{ taskStepLabel(taskDetail.currentStep) }}</NDescriptionsItem>
-                <NDescriptionsItem label="预计剩余">{{ taskDetail.estimatedRemainingSeconds === null ? '未估算' : taskDetail.estimatedRemainingSeconds + ' 秒' }}</NDescriptionsItem>
+                <NDescriptionsItem :label="text('任务', 'Task')">{{ taskDetail.id }}</NDescriptionsItem>
+                <NDescriptionsItem :label="text('状态', 'Status')"><NTag :bordered="false">{{ taskDetail.status }}</NTag></NDescriptionsItem>
+                <NDescriptionsItem :label="text('当前步骤', 'Current step')">{{ taskStepLabel(taskDetail.currentStep) }}</NDescriptionsItem>
+                <NDescriptionsItem :label="text('预计剩余', 'Estimated remaining')">{{ taskDetail.estimatedRemainingSeconds === null ? text('未估算', 'Not estimated') : taskDetail.estimatedRemainingSeconds + text(' 秒', ' seconds') }}</NDescriptionsItem>
               </NDescriptions>
               <NProgress type="line" :percentage="taskDetail.progressPercent" :indicator-placement="'inside'" processing class="task-progress" />
               <NAlert v-if="taskDetail.error" type="error" class="task-progress">{{ taskDetail.error }}</NAlert>
               <NTable :single-line="false" size="small" class="task-progress">
-                <thead><tr><th>步骤</th><th>状态</th><th>说明</th></tr></thead>
+                <thead><tr><th>{{ text('步骤', 'Step') }}</th><th>{{ text('状态', 'Status') }}</th><th>{{ text('说明', 'Details') }}</th></tr></thead>
                 <tbody><tr v-for="step in taskDetail.steps" :key="step.step"><td>{{ taskStepLabel(step.step) }}</td><td><NTag size="small" :bordered="false">{{ step.status }}</NTag></td><td>{{ step.message || '-' }}</td></tr></tbody>
               </NTable>
             </NSpin>
           </NCard>
         </NGridItem>
         <NGridItem span="1">
-          <NCard title="升级包校验与执行">
+          <NCard :title="text('升级包校验与执行', 'Validate and execute upgrade package')">
             <NAlert type="warning" :bordered="false" class="read-only-tip">
-              仅接受已签名的 ZIP 升级包（最大 500MB）。校验通过不等于立即升级；执行前必须再次确认，执行后由任务记录跟踪。
+              {{ text('仅接受已签名的 ZIP 升级包（最大 500MB）。校验通过不等于立即升级；执行前必须再次确认，执行后由任务记录跟踪。', 'Only signed ZIP upgrade packages are accepted (500 MB maximum). Passing validation does not upgrade immediately; execution needs a second confirmation and is then tracked by a task record.') }}
             </NAlert>
             <input ref="fileInput" type="file" accept=".zip,application/zip" class="hidden-input" @change="onPackageSelected">
             <div class="action-row">
-              <span>{{ selectedFile ? selectedFile.name : '尚未选择升级包' }}</span>
-              <NButton @click="choosePackage">选择 ZIP 包</NButton>
-              <NButton type="primary" :disabled="!selectedFile || overview?.runtime.state !== 'reachable'" :loading="validating" @click="validatePackage">校验升级包</NButton>
+              <span>{{ selectedFile ? selectedFile.name : text('尚未选择升级包', 'No upgrade package selected') }}</span>
+              <NButton @click="choosePackage">{{ text('选择 ZIP 包', 'Choose ZIP package') }}</NButton>
+              <NButton type="primary" :disabled="!selectedFile || overview?.runtime.state !== 'reachable'" :loading="validating" @click="validatePackage">{{ text('校验升级包', 'Validate package') }}</NButton>
             </div>
             <NDescriptions v-if="validation" :column="1" bordered class="validation-result">
-              <NDescriptionsItem label="校验结果"><NTag :type="validation.valid ? 'success' : 'error'">{{ validation.valid ? '通过' : '未通过' }}</NTag></NDescriptionsItem>
-              <NDescriptionsItem label="组件">{{ validation.displayName || validation.component || '-' }}</NDescriptionsItem>
-              <NDescriptionsItem label="版本">{{ validation.currentVersion || '-' }} → {{ validation.newVersion || '-' }}</NDescriptionsItem>
-              <NDescriptionsItem label="影响">{{ validation.impact?.requiresRestart ? '需要重启相关服务' : '无需重启' }}</NDescriptionsItem>
+              <NDescriptionsItem :label="text('校验结果', 'Validation')"><NTag :type="validation.valid ? 'success' : 'error'">{{ validation.valid ? text('通过', 'Passed') : text('未通过', 'Failed') }}</NTag></NDescriptionsItem>
+              <NDescriptionsItem :label="text('组件', 'Component')">{{ validation.displayName || validation.component || '-' }}</NDescriptionsItem>
+              <NDescriptionsItem :label="text('版本', 'Version')">{{ validation.currentVersion || '-' }} → {{ validation.newVersion || '-' }}</NDescriptionsItem>
+              <NDescriptionsItem :label="text('影响', 'Impact')">{{ validation.impact?.requiresRestart ? text('需要重启相关服务', 'Restart of related service required') : text('无需重启', 'No restart required') }}</NDescriptionsItem>
             </NDescriptions>
             <NAlert v-if="validation && !validation.valid" type="error" class="validation-result">
-              <div v-for="item in validation.errors" :key="item.field + item.message">{{ item.field || '校验' }}：{{ item.message }}</div>
+              <div v-for="item in validation.errors" :key="item.field + item.message">{{ item.field || text('校验', 'Validation') }}: {{ item.message }}</div>
             </NAlert>
             <div v-if="validation?.valid" class="execute-row">
-              <NButton type="error" @click="openExecutionConfirm">确认并执行升级</NButton>
+              <NButton type="error" @click="openExecutionConfirm">{{ text('确认并执行升级', 'Confirm and execute upgrade') }}</NButton>
             </div>
           </NCard>
         </NGridItem>
         <NGridItem span="1 m:1 l:2">
-          <NCard title="组件状态">
+          <NCard :title="text('组件状态', 'Component status')">
             <NDescriptions v-if="overview?.status" :column="1" bordered label-placement="left">
-              <NDescriptionsItem label="GAIOP 核心">{{ componentLabel(overview.status.openclaw) }}</NDescriptionsItem>
+              <NDescriptionsItem label="GAIOP Core">{{ componentLabel(overview.status.openclaw) }}</NDescriptionsItem>
               <NDescriptionsItem label="GAIOP-Admin">{{ componentLabel(overview.status.frontend) }}</NDescriptionsItem>
-              <NDescriptionsItem label="维护模式">{{ overview.status.maintenance_mode ? '已启用' : '未启用' }}</NDescriptionsItem>
+              <NDescriptionsItem :label="text('维护模式', 'Maintenance mode')">{{ overview.status.maintenance_mode ? text('已启用', 'Enabled') : text('未启用', 'Disabled') }}</NDescriptionsItem>
             </NDescriptions>
-            <NEmpty v-else description="升级服务未返回组件状态" />
+            <NEmpty v-else :description="text('升级服务未返回组件状态', 'The upgrade service returned no component status')" />
           </NCard>
         </NGridItem>
         <NGridItem span="1 m:1 l:2">
-          <NCard title="已登记 Skill">
+          <NCard :title="text('已登记 Skill', 'Registered Skills')">
             <NTable v-if="skillEntries.length" :single-line="false" size="small">
-              <thead><tr><th>Skill</th><th>版本</th><th>状态</th></tr></thead>
-              <tbody><tr v-for="[name, skill] in skillEntries" :key="name"><td>{{ name }}</td><td>{{ skill.version || '未知' }}</td><td>{{ skill.status || '未知' }}</td></tr></tbody>
+              <thead><tr><th>Skill</th><th>{{ text('版本', 'Version') }}</th><th>{{ text('状态', 'Status') }}</th></tr></thead>
+              <tbody><tr v-for="[name, skill] in skillEntries" :key="name"><td>{{ name }}</td><td>{{ skill.version || text('未知', 'Unknown') }}</td><td>{{ skill.status || text('未知', 'Unknown') }}</td></tr></tbody>
             </NTable>
-            <NEmpty v-else description="暂无已登记的 Skill" />
+            <NEmpty v-else :description="text('暂无已登记的 Skill', 'No registered Skills')" />
           </NCard>
         </NGridItem>
         <NGridItem span="1">
-          <NCard title="最近任务与备份">
-            <NAlert type="info" :bordered="false" class="read-only-tip">升级、Skill 回滚和备份删除均通过 Admin BFF 执行，并要求独立确认和审计；当前人工回滚仅支持 Skill 备份。</NAlert>
+          <NCard :title="text('最近任务与备份', 'Recent tasks and backups')">
+            <NAlert type="info" :bordered="false" class="read-only-tip">{{ text('升级、Skill 回滚和备份删除均通过 Admin BFF 执行，并要求独立确认和审计；当前人工回滚仅支持 Skill 备份。', 'Upgrades, Skill rollbacks, and backup deletion are performed through Admin BFF and require independent confirmation and audit records. Manual rollback currently supports Skill backups only.') }}</NAlert>
             <NTable v-if="overview?.tasks?.length" :single-line="false" size="small">
-              <thead><tr><th>任务</th><th>类型</th><th>组件</th><th>状态</th><th>创建时间</th></tr></thead>
-              <tbody><tr v-for="task in overview.tasks" :key="task.id"><td>{{ task.id }}</td><td>{{ task.type }}</td><td>{{ task.component || '-' }}</td><td><NTag size="small" :bordered="false">{{ task.status }}</NTag></td><td>{{ formatTime(task.created_at) }}</td><td><NButton text type="primary" size="small" @click="loadTaskDetail(task.id)">详情</NButton></td></tr></tbody>
+              <thead><tr><th>{{ text('任务', 'Task') }}</th><th>{{ text('类型', 'Type') }}</th><th>{{ text('组件', 'Component') }}</th><th>{{ text('状态', 'Status') }}</th><th>{{ text('创建时间', 'Created') }}</th></tr></thead>
+              <tbody><tr v-for="task in overview.tasks" :key="task.id"><td>{{ task.id }}</td><td>{{ task.type }}</td><td>{{ task.component || '-' }}</td><td><NTag size="small" :bordered="false">{{ task.status }}</NTag></td><td>{{ formatTime(task.created_at) }}</td><td><NButton text type="primary" size="small" @click="loadTaskDetail(task.id)">{{ text('详情', 'Details') }}</NButton></td></tr></tbody>
             </NTable>
-            <NEmpty v-else description="暂无升级任务记录" />
+            <NEmpty v-else :description="text('暂无升级任务记录', 'No upgrade task records')" />
             <NTable v-if="overview?.backups?.length" :single-line="false" size="small" class="backup-table">
-              <thead><tr><th>备份组件</th><th>版本</th><th>创建时间</th></tr></thead>
-              <tbody><tr v-for="backup in overview.backups" :key="backup.id"><td>{{ backup.component }}</td><td>{{ backup.version }}</td><td>{{ formatTime(backup.createdAt || undefined) }}</td><td><NButton text type="warning" size="small" @click="openBackupConfirm(backup, 'rollback')">回滚</NButton><NButton text type="error" size="small" @click="openBackupConfirm(backup, 'delete')">删除</NButton></td></tr></tbody>
+              <thead><tr><th>{{ text('备份组件', 'Backed-up component') }}</th><th>{{ text('版本', 'Version') }}</th><th>{{ text('创建时间', 'Created') }}</th></tr></thead>
+              <tbody><tr v-for="backup in overview.backups" :key="backup.id"><td>{{ backup.component }}</td><td>{{ backup.version }}</td><td>{{ formatTime(backup.createdAt || undefined) }}</td><td><NButton text type="warning" size="small" @click="openBackupConfirm(backup, 'rollback')">{{ text('回滚', 'Rollback') }}</NButton><NButton text type="error" size="small" @click="openBackupConfirm(backup, 'delete')">{{ text('删除', 'Delete') }}</NButton></td></tr></tbody>
             </NTable>
           </NCard>
         </NGridItem>
       </NGrid>
     </NSpin>
-    <NModal v-model:show="showExecutionConfirm" preset="dialog" title="确认执行系统升级" positive-text="执行升级" negative-text="取消" :positive-button-props="{ disabled: executionConfirmation !== 'EXECUTE', loading: executing }" @positive-click="executeValidatedTask">
-      <p>将执行已校验的升级任务。请输入 <strong>EXECUTE</strong> 确认；此操作可能重启相关服务。</p>
-      <NInput v-model:value="executionConfirmation" placeholder="请输入 EXECUTE" />
+    <NModal v-model:show="showExecutionConfirm" preset="dialog" :title="text('确认执行系统升级', 'Confirm system upgrade')" :positive-text="text('执行升级', 'Execute upgrade')" :negative-text="text('取消', 'Cancel')" :positive-button-props="{ disabled: executionConfirmation !== 'EXECUTE', loading: executing }" @positive-click="executeValidatedTask">
+      <p>{{ text('将执行已校验的升级任务。请输入 ', 'The validated upgrade task will run. Enter ') }}<strong>EXECUTE</strong>{{ text(' 确认；此操作可能重启相关服务。', ' to confirm; this may restart related services.') }}</p>
+      <NInput v-model:value="executionConfirmation" :placeholder="text('请输入 EXECUTE', 'Enter EXECUTE')" />
     </NModal>
-    <NModal v-model:show="showBackupConfirm" preset="dialog" :title="backupAction === 'rollback' ? '确认回滚 Skill' : '确认删除备份'" :positive-text="backupAction === 'rollback' ? '执行回滚' : '删除备份'" negative-text="取消" :positive-button-props="{ disabled: backupConfirmation !== (backupAction === 'rollback' ? 'ROLLBACK' : 'DELETE'), loading: backupActionLoading }" @positive-click="confirmBackupAction">
-      <p v-if="backupAction === 'rollback'">将把 {{ selectedBackup?.component }} 恢复到 {{ selectedBackup?.version }}。当前仅支持 Skill 备份人工回滚；请输入 <strong>ROLLBACK</strong> 确认。</p>
-      <p v-else>将永久删除 {{ selectedBackup?.component }} 的 {{ selectedBackup?.version }} 备份。请输入 <strong>DELETE</strong> 确认。</p>
-      <NInput v-model:value="backupConfirmation" :placeholder="backupAction === 'rollback' ? '请输入 ROLLBACK' : '请输入 DELETE'" />
+    <NModal v-model:show="showBackupConfirm" preset="dialog" :title="backupAction === 'rollback' ? text('确认回滚 Skill', 'Confirm Skill rollback') : text('确认删除备份', 'Confirm backup deletion')" :positive-text="backupAction === 'rollback' ? text('执行回滚', 'Execute rollback') : text('删除备份', 'Delete backup')" :negative-text="text('取消', 'Cancel')" :positive-button-props="{ disabled: backupConfirmation !== (backupAction === 'rollback' ? 'ROLLBACK' : 'DELETE'), loading: backupActionLoading }" @positive-click="confirmBackupAction">
+      <p v-if="backupAction === 'rollback'">{{ text('将把 ', 'Restore ') }}{{ selectedBackup?.component }}{{ text(' 恢复到 ', ' to ') }}{{ selectedBackup?.version }}。{{ text('当前仅支持 Skill 备份人工回滚；请输入 ', 'Manual rollback currently supports Skill backups only. Enter ') }}<strong>ROLLBACK</strong>{{ text(' 确认。', ' to confirm.') }}</p>
+      <p v-else>{{ text('将永久删除 ', 'Permanently delete the ') }}{{ selectedBackup?.component }}{{ text(' 的 ', ' backup at ') }}{{ selectedBackup?.version }}。{{ text('请输入 ', 'Enter ') }}<strong>DELETE</strong>{{ text(' 确认。', ' to confirm.') }}</p>
+      <NInput v-model:value="backupConfirmation" :placeholder="backupAction === 'rollback' ? text('请输入 ROLLBACK', 'Enter ROLLBACK') : text('请输入 DELETE', 'Enter DELETE')" />
     </NModal>
   </div>
 </template>

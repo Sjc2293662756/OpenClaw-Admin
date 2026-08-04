@@ -105,11 +105,15 @@ const quickReplies = ref<Array<{
 const expandedToolCalls = ref(new Set<string>())
 const expandedToolResults = ref(new Set<string>())
 
-const workspacePrompts = [
+const workspacePrompts = computed(() => locale.value === 'zh-CN' ? [
   '分析最近三小时告警情况，列出对应告警对象',
   '生成今日系统运行综述报告',
   '分析今日业务系统运行情况，排查报错和慢访问',
-]
+] : [
+  'Analyze alerts from the last three hours and list the affected alert objects.',
+  'Generate a summary report of today\'s system operations.',
+  'Analyze today\'s business-system operation and investigate errors and slow access.',
+])
 
 function applyWorkspacePrompt(prompt: string) {
   draft.value = prompt
@@ -2944,7 +2948,7 @@ async function handleSend() {
                               {{ formatDate(entry.item.timestamp) }}
                             </NText>
                             <div class="chat-bubble-actions">
-                              <NButton quaternary size="tiny" title="复制内容" aria-label="复制内容" @click="copyMessageContent(entry)">
+                              <NButton quaternary size="tiny" :title="t('pages.chat.copyMessage')" :aria-label="t('pages.chat.copyMessage')" @click="copyMessageContent(entry)">
                                 <template #icon><NIcon :component="CopyOutline" /></template>
                               </NButton>
                               <NButton
@@ -3143,8 +3147,8 @@ async function handleSend() {
 
                     <div v-else-if="workspaceMode" class="workspace-welcome">
                       <div class="workspace-welcome__mark">G</div>
-                      <h1>开始智能运维分析</h1>
-                      <p>输入告警、性能或流量分析需求，GAIOP 将结合已接入的数据源协助研判与处置。</p>
+                      <h1>{{ locale === 'zh-CN' ? '开始智能运维分析' : 'Start intelligent operations analysis' }}</h1>
+                      <p>{{ locale === 'zh-CN' ? '输入告警、性能或流量分析需求，GAIOP 将结合已接入的数据源协助研判与处置。' : 'Enter an alert, performance, or traffic-analysis request. GAIOP will use connected data sources to assist investigation and response.' }}</p>
                       <div class="workspace-prompt-list">
                         <button
                           v-for="prompt in workspacePrompts"

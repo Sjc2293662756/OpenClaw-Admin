@@ -33,3 +33,17 @@ test('uses historical-missing markers and caps the workbook rows at the TOP ceil
   assert.equal(rows[0][0], '历史未记录')
   assert.equal(rows[0][15], '历史未记录')
 })
+
+test('creates an English audit workbook without translating historical audit text', () => {
+  const zip = new AdmZip(createAuditExportWorkbook([{
+    createdAt: Date.UTC(2026, 7, 4), result: 'denied', username: 'auditor', role: 'auditor', category: 'authorization',
+    action: '历史操作原文', detail: '历史说明原文', target: '历史对象原文', source: 'rest',
+  }], 'en-US'))
+  const workbook = zip.readAsText('xl/workbook.xml')
+  const sheet = zip.readAsText('xl/worksheets/sheet1.xml')
+  assert.match(workbook, /Audit Logs/)
+  assert.match(sheet, /Source address/)
+  assert.match(sheet, /Denied/)
+  assert.match(sheet, /历史操作原文/)
+  assert.match(sheet, /历史说明原文/)
+})

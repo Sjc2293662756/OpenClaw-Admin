@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import AuditLogsPage from './AuditLogsPage.vue'
 import { rangeForPreset } from '@/utils/time-range'
+import { i18n } from '@/i18n'
 
 const messageApi = { error: vi.fn(), success: vi.fn(), warning: vi.fn() }
 
@@ -76,7 +77,7 @@ function responseFor(url: string, action = '查询结果', total = 81, overrides
   }), { status: 200, headers: { 'content-type': 'application/json' } })
 }
 
-function mountPage() { return mount(AuditLogsPage) }
+function mountPage() { return mount(AuditLogsPage, { global: { plugins: [i18n] } }) }
 
 function lastFetchUrl() {
   const calls = vi.mocked(fetch).mock.calls
@@ -85,6 +86,7 @@ function lastFetchUrl() {
 
 describe('AuditLogsPage', () => {
   beforeEach(() => {
+    i18n.global.locale.value = 'zh-CN'
     vi.useFakeTimers()
     vi.setSystemTime(new Date(2026, 7, 3, 10, 30, 0))
     messageApi.error.mockReset()

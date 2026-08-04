@@ -34,7 +34,7 @@ export const routes: RouteRecordRaw[] = [
         path: 'no-access',
         name: 'AccessDenied',
         component: () => import('@/views/AccessDeniedPage.vue'),
-        meta: { title: '无访问权限', hidden: true },
+        meta: { titleKey: 'routes.accessDenied', hidden: true },
       },
       {
         path: '',
@@ -46,7 +46,7 @@ export const routes: RouteRecordRaw[] = [
         path: 'alerts',
         name: 'AlertNotifications',
         component: () => import('@/views/alerts/AlertNotificationsPage.vue'),
-        meta: { title: '告警通知', icon: 'NotificationsOutline', gateway: 'openclaw' },
+        meta: { titleKey: 'routes.alerts', icon: 'NotificationsOutline', gateway: 'openclaw' },
       },
       {
         path: 'sessions',
@@ -105,7 +105,7 @@ export const routes: RouteRecordRaw[] = [
         path: 'files',
         name: 'Files',
         component: () => import('@/views/files/FilesPage.vue'),
-        meta: { title: '报告文件管理', icon: 'FolderOutline', gateway: 'openclaw' },
+        meta: { titleKey: 'routes.reports', icon: 'FolderOutline', gateway: 'openclaw' },
       },
       {
         path: 'agents',
@@ -141,7 +141,7 @@ export const routes: RouteRecordRaw[] = [
         path: 'audit-logs',
         name: 'AuditLogs',
         component: () => import('@/views/audit/AuditLogsPage.vue'),
-        meta: { title: '审计信息', icon: 'DocumentTextOutline', gateway: 'openclaw' },
+        meta: { titleKey: 'routes.auditLogs', icon: 'DocumentTextOutline', gateway: 'openclaw' },
       },
       {
         path: 'settings',
@@ -153,7 +153,7 @@ export const routes: RouteRecordRaw[] = [
           path: 'system-configuration',
           name: 'SystemConfiguration',
           component: () => import('@/views/settings/SystemConfigurationPage.vue'),
-          meta: { title: '系统配置', icon: 'SettingsOutline', gateway: 'openclaw' },
+          meta: { titleKey: 'routes.systemConfiguration', icon: 'SettingsOutline', gateway: 'openclaw' },
         },
       {
         path: 'system-configuration/gaiop-service',
@@ -214,13 +214,13 @@ export const routes: RouteRecordRaw[] = [
         path: 'settings/session-management',
         name: 'SessionManagement',
         component: () => import('@/views/settings/SessionManagementPage.vue'),
-        meta: { title: '会话时长管理', hidden: true, gateway: 'openclaw' },
+        meta: { titleKey: 'routes.sessionManagement', hidden: true, gateway: 'openclaw' },
       },
       {
         path: 'settings/report-storage',
         name: 'ReportStorage',
         redirect: { name: 'Settings' },
-        meta: { title: '报告存储位置', hidden: true, gateway: 'openclaw' },
+        meta: { titleKey: 'routes.reportStorage', hidden: true, gateway: 'openclaw' },
       },
     ],
   },

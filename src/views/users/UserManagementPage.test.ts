@@ -5,12 +5,16 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { defineComponent, h, nextTick, Transition, type Component as VueComponent } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '@/stores/auth'
 import UserCreatePage from './UserCreatePage.vue'
 import UserManagementPage from './UserManagementPage.vue'
+import { i18n } from '@/i18n'
 
 describe('user management page routing', () => {
+  beforeEach(() => {
+    i18n.global.locale.value = 'zh-CN'
+  })
   afterEach(() => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -71,7 +75,7 @@ describe('user management page routing', () => {
 
     await router.push('/users')
     await router.isReady()
-    const wrapper = mount(Harness, { global: { plugins: [pinia, router] } })
+    const wrapper = mount(Harness, { global: { plugins: [pinia, router, i18n] } })
     await flushPromises()
 
     await router.push('/users/create')
@@ -131,7 +135,7 @@ describe('user management page routing', () => {
         })
       },
     })
-    const wrapper = mount(Harness, { global: { plugins: [pinia, router] } })
+    const wrapper = mount(Harness, { global: { plugins: [pinia, router, i18n] } })
     await flushPromises()
 
     expect(wrapper.text()).toContain('当前为审计用户，仅可查看账户信息')

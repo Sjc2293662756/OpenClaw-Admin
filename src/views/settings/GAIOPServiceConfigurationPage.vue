@@ -17,6 +17,7 @@ import {
 } from 'naive-ui'
 import { RefreshOutline, SaveOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
+import { useI18n } from 'vue-i18n'
 
 type ServiceState = 'connected' | 'disconnected'
 
@@ -30,6 +31,7 @@ const router = useRouter()
 defineProps<{ embedded?: boolean }>()
 const authStore = useAuthStore()
 const message = useMessage()
+const { t } = useI18n()
 const loading = ref(false)
 const saving = ref(false)
 const endpoint = ref('')
@@ -37,7 +39,7 @@ const accessToken = ref('')
 const service = ref<ServiceConfig | null>(null)
 
 const connected = computed(() => service.value?.state === 'connected')
-const statusText = computed(() => connected.value ? '已连接' : '未连接')
+const statusText = computed(() => connected.value ? t('pages.gaiop.systemConfig.connected') : t('pages.gaiop.systemConfig.disconnected'))
 const statusType = computed(() => connected.value ? 'success' : 'warning')
 
 function headers(includeJson = false) {
@@ -52,12 +54,12 @@ async function loadService() {
   try {
     const response = await fetch('/api/system-config/gaiop-service', { headers: headers() })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || '读取 GAIOP 服务配置失败')
+    if (!response.ok || !result.ok) throw new Error(result.error || t('pages.gaiop.systemConfig.loadFailed'))
     service.value = result.service
     endpoint.value = result.service.endpoint || ''
     accessToken.value = ''
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '读取 GAIOP 服务配置失败')
+    message.error(error instanceof Error ? error.message : t('pages.gaiop.systemConfig.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -74,13 +76,13 @@ async function saveService() {
       body: JSON.stringify(body),
     })
     const result = await response.json()
-    if (!response.ok || !result.ok) throw new Error(result.error || '保存 GAIOP 服务配置失败')
+    if (!response.ok || !result.ok) throw new Error(result.error || t('pages.gaiop.systemConfig.saveFailed'))
     service.value = result.service
     accessToken.value = ''
-    message.success('已保存，并已发起服务重新连接')
+    message.success(t('pages.gaiop.systemConfig.saveSuccess'))
     window.setTimeout(() => { void loadService() }, 900)
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '保存 GAIOP 服务配置失败')
+    message.error(error instanceof Error ? error.message : t('pages.gaiop.systemConfig.saveFailed'))
   } finally {
     saving.value = false
   }
@@ -91,15 +93,15 @@ onMounted(() => { void loadService() })
 
 <template>
   <section class="gaiop-service-page">
-    <NButton v-if="!embedded" quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← 返回系统配置</NButton>
+    <NButton v-if="!embedded" quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← {{ t('pages.gaiop.systemConfig.back') }}</NButton>
 
     <NSpin :show="loading">
       <NCard v-if="!embedded" class="app-card service-hero">
         <div class="service-hero__header">
           <div>
-            <NTag type="success" round :bordered="false">GAIOP 服务配置</NTag>
-            <h1>GAIOP 服务连接</h1>
-            <p>维护服务接入地址、访问令牌和当前连接状态。</p>
+            <NTag type="success" round :bordered="false">{{ t('pages.gaiop.systemConfig.serviceConfig') }}</NTag>
+            <h1>{{ t('pages.gaiop.systemConfig.connection') }}</h1>
+            <p>{{ t('pages.gaiop.systemConfig.connectionDescription') }}</p>
           </div>
           <NTag :type="statusType" round size="large">{{ statusText }}</NTag>
         </div>
@@ -107,36 +109,36 @@ onMounted(() => { void loadService() })
       </NCard>
 
       <div class="service-grid">
-        <NCard class="app-card" title="服务接入配置">
+        <NCard class="app-card" :title="t('pages.gaiop.systemConfig.connectionConfig')">
           <NForm label-placement="top" class="service-form">
-            <NFormItem label="服务接入地址">
+            <NFormItem :label="t('pages.gaiop.systemConfig.endpoint')">
               <NInput v-model:value="endpoint" placeholder="例如：ws://127.0.0.1:3003" />
             </NFormItem>
-            <NFormItem label="服务访问令牌">
+            <NFormItem :label="t('pages.gaiop.systemConfig.token')">
               <NInput
                 v-model:value="accessToken"
                 type="password"
                 show-password-on="click"
-                :placeholder="service?.accessTokenConfigured ? '已配置；留空保持不变' : '请输入服务访问令牌'"
+                :placeholder="service?.accessTokenConfigured ? t('pages.gaiop.systemConfig.tokenConfigured') : t('pages.gaiop.systemConfig.tokenRequired')"
               />
             </NFormItem>
             <NButton type="primary" :loading="saving" @click="saveService">
               <template #icon><NIcon :component="SaveOutline" /></template>
-              保存并重新连接
+              {{ t('pages.gaiop.systemConfig.saveReconnect') }}
             </NButton>
           </NForm>
         </NCard>
 
-        <NCard class="app-card" title="当前连接状态">
+        <NCard class="app-card" :title="t('pages.gaiop.systemConfig.currentStatus')">
           <template #header-extra>
             <NButton size="small" :loading="loading" @click="loadService">
               <template #icon><NIcon :component="RefreshOutline" /></template>
-              刷新状态
+              {{ t('pages.gaiop.systemConfig.refreshStatus') }}
             </NButton>
           </template>
           <NDescriptions label-placement="left" :column="1" bordered size="small">
-            <NDescriptionsItem label="连接状态"><NTag :type="statusType" size="small">{{ statusText }}</NTag></NDescriptionsItem>
-            <NDescriptionsItem label="访问令牌"><NTag :type="service?.accessTokenConfigured ? 'success' : 'warning'" size="small">{{ service?.accessTokenConfigured ? '已配置' : '未配置' }}</NTag></NDescriptionsItem>
+            <NDescriptionsItem :label="t('pages.gaiop.systemConfig.currentStatus')"><NTag :type="statusType" size="small">{{ statusText }}</NTag></NDescriptionsItem>
+            <NDescriptionsItem :label="t('pages.gaiop.systemConfig.token')"><NTag :type="service?.accessTokenConfigured ? 'success' : 'warning'" size="small">{{ service?.accessTokenConfigured ? t('pages.gaiop.systemConfig.configured') : t('pages.gaiop.systemConfig.notConfigured') }}</NTag></NDescriptionsItem>
           </NDescriptions>
         </NCard>
       </div>

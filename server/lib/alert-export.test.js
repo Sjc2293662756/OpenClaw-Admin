@@ -19,3 +19,15 @@ test('bounds and cleans alert export rows', () => {
   assert.equal(rows.length, 1)
   assert.equal(rows[0][2], 'ab')
 })
+
+test('creates an English alert workbook with localized stable fields', () => {
+  const zip = new AdmZip(createAlertExportWorkbook([{
+    occurredAt: '2026-08-04 10:00', severity: '紧急', name: '真实告警名称', category: '应用性能告警', sourceHost: '10.0.0.1', status: '触发中',
+  }], 'en-US'))
+  const workbook = zip.readAsText('xl/workbook.xml')
+  const sheet = zip.readAsText('xl/worksheets/sheet1.xml')
+  assert.match(workbook, /Alerts/)
+  assert.match(sheet, /Alert time/)
+  assert.match(sheet, /Critical/)
+  assert.match(sheet, /真实告警名称/)
+})

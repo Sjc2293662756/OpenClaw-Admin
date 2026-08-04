@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NRadio, NRadioGroup, NSelect, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
@@ -8,7 +9,9 @@ import { type DataSourceType } from './dataSources'
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const { locale } = useI18n()
 const message = useMessage()
+const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
 const formRef = ref<FormInst | null>(null)
 const loading = ref(false)
 const editingId = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
@@ -21,13 +24,13 @@ const form = reactive({
   status: 'untested',
 })
 
-const typeOptions = [{ label: '本机', value: 'local' }, { label: '远程', value: 'remote' }]
-const rules: FormRules = {
-  ip: [{ required: true, message: '请输入 NAPM 的 IP 地址', trigger: ['input', 'blur'] }],
-  type: [{ required: true, message: '请选择类型', trigger: ['change', 'blur'] }],
-  username: [{ required: true, message: '请输入账号', trigger: ['input', 'blur'] }],
-  password: [{ required: !editingId.value, message: '请输入密码', trigger: ['input', 'blur'] }],
-}
+const typeOptions = computed(() => [{ label: text('本机', 'Local'), value: 'local' }, { label: text('远程', 'Remote'), value: 'remote' }])
+const rules = computed<FormRules>(() => ({
+  ip: [{ required: true, message: text('请输入 NAPM 的 IP 地址', 'Enter the NAPM IP address'), trigger: ['input', 'blur'] }],
+  type: [{ required: true, message: text('请选择类型', 'Select a type'), trigger: ['change', 'blur'] }],
+  username: [{ required: true, message: text('请输入账号', 'Enter the account'), trigger: ['input', 'blur'] }],
+  password: [{ required: !editingId.value, message: text('请输入密码', 'Enter the password'), trigger: ['input', 'blur'] }],
+}))
 
 function headers() { return { 'Content-Type': 'application/json', Authorization: `Bearer ${authStore.getToken()}` } }
 
@@ -51,14 +54,14 @@ async function loadExisting() {
     const source = Array.isArray(payload.dataSources)
       ? payload.dataSources.find((item: { id: string }) => item.id === editingId.value)
       : null
-    if (!response.ok || !data.ok || !source) throw new Error(data.error || '数据源不存在')
+    if (!response.ok || !data.ok || !source) throw new Error(data.error || text('数据源不存在', 'Data source does not exist'))
     form.ip = source.ip
     form.description = source.description || ''
     form.type = source.type
     form.username = source.username
     form.status = source.status === 'disabled' ? 'disabled' : 'untested'
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '获取数据源失败')
+    message.error(error instanceof Error ? error.message : text('获取数据源失败', 'Failed to load data source'))
     returnToSystemConfiguration()
   } finally {
     loading.value = false
@@ -66,7 +69,7 @@ async function loadExisting() {
 }
 
 async function submit() {
-  if (!authStore.isAdmin) { message.error('仅管理员可维护数据源'); return }
+  if (!authStore.isAdmin) { message.error(text('仅管理员可维护数据源', 'Only administrators can manage data sources')); return }
   try { await formRef.value?.validate() } catch { return }
   loading.value = true
   try {
@@ -74,11 +77,11 @@ async function submit() {
       method: editingId.value ? 'PUT' : 'POST', headers: headers(), body: JSON.stringify(form),
     })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || '保存数据源失败')
-    message.success(editingId.value ? '数据源已更新' : '数据源已添加')
+    if (!response.ok || !data.ok) throw new Error(data.error || text('保存数据源失败', 'Failed to save data source'))
+    message.success(editingId.value ? text('数据源已更新', 'Data source updated') : text('数据源已添加', 'Data source added'))
     returnToSystemConfiguration()
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '保存数据源失败')
+    message.error(error instanceof Error ? error.message : text('保存数据源失败', 'Failed to save data source'))
   } finally {
     loading.value = false
   }
@@ -88,18 +91,18 @@ loadExisting()
 </script>
 
 <template>
-  <NCard :title="editingId ? '编辑数据源' : '添加新的数据源'" :bordered="false" class="form-card">
+  <NCard :title="editingId ? text('编辑数据源', 'Edit data source') : text('添加新的数据源', 'Add data source')" :bordered="false" class="form-card">
     <NAlert type="info" :bordered="false" class="form-note">
-      密码将加密保存于服务端，编辑时留空表示不修改。新增后可在列表中发起真实连接测试。
+      {{ text('密码将加密保存于服务端，编辑时留空表示不修改。新增后可在列表中发起真实连接测试。', 'Passwords are encrypted on the server. Leave this blank when editing to keep the current password. A real connection test is available after creation.') }}
     </NAlert>
     <NForm ref="formRef" :model="form" :rules="rules" label-placement="left" label-width="104" class="data-source-form">
-      <NFormItem label="IP" path="ip" required><NInput v-model:value="form.ip" placeholder="请输入 NAPM IP，例如 10.0.0.10" /></NFormItem>
-      <NFormItem label="描述" path="description"><NInput v-model:value="form.description" type="textarea" placeholder="可选，用于说明该 NAPM 数据源用途" :autosize="{ minRows: 3, maxRows: 5 }" maxlength="300" /></NFormItem>
-      <NFormItem label="类型" path="type" required><NSelect v-model:value="form.type" :options="typeOptions" /></NFormItem>
-      <NFormItem label="账号" path="username" required><NInput v-model:value="form.username" placeholder="请输入 NAPM 访问账号" /></NFormItem>
-      <NFormItem label="密码" path="password" :required="!editingId"><NInput v-model:value="form.password" type="password" show-password-on="click" :placeholder="editingId ? '留空表示不修改' : '请输入 NAPM 访问密码'" /></NFormItem>
-      <NFormItem label="状态"><NRadioGroup v-model:value="form.status"><NSpace><NRadio value="untested">未测试</NRadio><NRadio value="disabled">停用</NRadio></NSpace></NRadioGroup></NFormItem>
-      <NFormItem label=""><NSpace><NButton :disabled="loading" @click="returnToSystemConfiguration">返回系统配置</NButton><NButton type="primary" :loading="loading" @click="submit">提交</NButton></NSpace></NFormItem>
+      <NFormItem label="IP" path="ip" required><NInput v-model:value="form.ip" :placeholder="text('请输入 NAPM IP，例如 10.0.0.10', 'Enter a NAPM IP, for example 10.0.0.10')" /></NFormItem>
+      <NFormItem :label="text('描述', 'Description')" path="description"><NInput v-model:value="form.description" type="textarea" :placeholder="text('可选，用于说明该 NAPM 数据源用途', 'Optional: describe this NAPM data source')" :autosize="{ minRows: 3, maxRows: 5 }" maxlength="300" /></NFormItem>
+      <NFormItem :label="text('类型', 'Type')" path="type" required><NSelect v-model:value="form.type" :options="typeOptions" /></NFormItem>
+      <NFormItem :label="text('账号', 'Account')" path="username" required><NInput v-model:value="form.username" :placeholder="text('请输入 NAPM 访问账号', 'Enter the NAPM account')" /></NFormItem>
+      <NFormItem :label="text('密码', 'Password')" path="password" :required="!editingId"><NInput v-model:value="form.password" type="password" show-password-on="click" :placeholder="editingId ? text('留空表示不修改', 'Leave blank to keep unchanged') : text('请输入 NAPM 访问密码', 'Enter the NAPM password')" /></NFormItem>
+      <NFormItem :label="text('状态', 'Status')"><NRadioGroup v-model:value="form.status"><NSpace><NRadio value="untested">{{ text('未测试', 'Not tested') }}</NRadio><NRadio value="disabled">{{ text('停用', 'Disabled') }}</NRadio></NSpace></NRadioGroup></NFormItem>
+      <NFormItem label=""><NSpace><NButton :disabled="loading" @click="returnToSystemConfiguration">{{ text('返回系统配置', 'Back to system configuration') }}</NButton><NButton type="primary" :loading="loading" @click="submit">{{ text('提交', 'Submit') }}</NButton></NSpace></NFormItem>
     </NForm>
   </NCard>
 </template>

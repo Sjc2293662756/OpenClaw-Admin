@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { sendError } from '../lib/api-response.js'
-import { createAuditExportWorkbook } from '../lib/audit-export.js'
+import { createAuditExportWorkbook, normalizeExportLocale } from '../lib/audit-export.js'
 
 const MAX_PAGE_SIZE = 200
 const DEFAULT_MAX_RESULTS = 200
@@ -144,6 +144,7 @@ export function createAuditRouter({ db, auditViewerMiddleware, recordAudit }) {
   })
 
   router.post('/export', auditViewerMiddleware, (req, res) => {
+    const locale = normalizeExportLocale(req.body?.locale)
     const { filters, where, values, maxResults } = buildAuditQuery(req.body || {}, 1)
     try {
       const logs = db.prepare(`
@@ -156,10 +157,11 @@ export function createAuditRouter({ db, auditViewerMiddleware, recordAudit }) {
         recordExportAudit(recordAudit, req, filters, maxResults, 'failed', 0, 'AUDIT_EXPORT_EMPTY')
         return sendError(res, { status: 400, code: 'AUDIT_EXPORT_EMPTY', message: '当前筛选条件没有可导出的审计记录' })
       }
-      const workbook = createAuditExportWorkbook(logs.map(publicAuditLog))
+      const workbook = createAuditExportWorkbook(logs.map(publicAuditLog), locale)
       recordExportAudit(recordAudit, req, filters, maxResults, 'success', logs.length)
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-      res.setHeader('Content-Disposition', 'attachment; filename="GAIOP-audit-logs.xlsx"')
+      const fileName = `${locale === 'en-US' ? 'GAIOP-audit-logs' : 'GAIOP-审计信息'}.xlsx`
+      res.setHeader('Content-Disposition', `attachment; filename="GAIOP-audit-logs.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`)
       res.setHeader('X-GAIOP-Export-Count', String(logs.length))
       return res.send(workbook)
     } catch {

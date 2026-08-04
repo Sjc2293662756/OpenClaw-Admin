@@ -3,6 +3,9 @@ import { NCard, NTag, NText } from 'naive-ui'
 import GAIOPServiceConfigurationPage from './GAIOPServiceConfigurationPage.vue'
 import DataSourceManagementPage from './DataSourceManagementPage.vue'
 import AlertIngestionConfigurationPage from './AlertIngestionConfigurationPage.vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
 </script>
 
 <template>
@@ -10,11 +13,11 @@ import AlertIngestionConfigurationPage from './AlertIngestionConfigurationPage.v
     <NCard class="app-card configuration-intro" :bordered="false">
       <div class="configuration-intro__content">
         <div>
-          <NTag type="success" round :bordered="false">部署与数据接入</NTag>
-          <h1>GAIOP 系统配置</h1>
-          <NText depth="3">按实际部署顺序完成连接、告警接入和运行数据源配置；每一步独立保存与生效。</NText>
+          <NTag type="success" round :bordered="false">{{ t('pages.gaiop.systemConfig.introTag') }}</NTag>
+          <h1>{{ t('pages.gaiop.systemConfig.title') }}</h1>
+          <NText depth="3">{{ t('pages.gaiop.systemConfig.intro') }}</NText>
         </div>
-        <span class="configuration-intro__hint">无需全页保存</span>
+        <span class="configuration-intro__hint">{{ t('pages.gaiop.systemConfig.noGlobalSave') }}</span>
       </div>
 
     </NCard>
@@ -22,7 +25,7 @@ import AlertIngestionConfigurationPage from './AlertIngestionConfigurationPage.v
     <section id="gaiop-service" class="configuration-section configuration-section--service">
       <div class="configuration-section__heading">
         <NTag type="success" :bordered="false">1</NTag>
-        <div><h2>GAIOP 服务连接</h2><p>先建立 Admin BFF 与 GAIOP Gateway 的受控连接。</p></div>
+        <div><h2>{{ t('pages.gaiop.systemConfig.serviceTitle') }}</h2><p>{{ t('pages.gaiop.systemConfig.serviceDescription') }}</p></div>
       </div>
       <div class="configuration-section__body"><GAIOPServiceConfigurationPage embedded /></div>
     </section>
@@ -30,7 +33,7 @@ import AlertIngestionConfigurationPage from './AlertIngestionConfigurationPage.v
     <section id="alert-ingestion" class="configuration-section configuration-section--alert">
       <div class="configuration-section__heading">
         <NTag type="error" :bordered="false">2</NTag>
-        <div><h2>Syslog 告警接入</h2><p>维护 GAIOP 接收 NAPM Syslog 告警的运行目标。</p></div>
+        <div><h2>{{ t('pages.gaiop.systemConfig.alertTitle') }}</h2><p>{{ t('pages.gaiop.systemConfig.alertDescription') }}</p></div>
       </div>
       <div class="configuration-section__body"><AlertIngestionConfigurationPage embedded /></div>
     </section>
@@ -38,7 +41,7 @@ import AlertIngestionConfigurationPage from './AlertIngestionConfigurationPage.v
     <section id="data-sources" class="configuration-section configuration-section--source">
       <div class="configuration-section__heading">
         <NTag type="info" :bordered="false">3</NTag>
-        <div><h2>运行数据源</h2><p>维护并启用当前 GAIOP 运行时使用的 NAPM 数据源。</p></div>
+        <div><h2>{{ t('pages.gaiop.systemConfig.dataSourceTitle') }}</h2><p>{{ t('pages.gaiop.systemConfig.dataSourceDescription') }}</p></div>
       </div>
       <div class="configuration-section__body configuration-section__body--source"><DataSourceManagementPage embedded /></div>
     </section>

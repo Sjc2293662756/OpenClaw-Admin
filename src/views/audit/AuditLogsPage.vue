@@ -27,6 +27,7 @@ import { CopyOutline, DownloadOutline, InformationCircleOutline, RefreshOutline,
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
+import { useI18n } from 'vue-i18n'
 
 type AuditValue = 'success' | 'failed' | 'denied' | null
 type AuditLog = {
@@ -66,6 +67,8 @@ const DEFAULT_MAX_RESULTS = 200
 const MAX_RESULTS = 3000
 const authStore = useAuthStore()
 const message = useMessage()
+const { t, locale } = useI18n()
+const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
 const loading = ref(false)
 const exportLoading = ref(false)
 const forbidden = ref(false)
@@ -85,19 +88,19 @@ const pagination = ref<AuditPagination>({ page: 1, pageSize: 20, total: 0, brows
 const summary = ref<AuditSummary>({ total: 0, success: 0, failed: 0, denied: 0, unclassified: 0 })
 const filters = ref<AuditFilters>({ keyword: '', username: null, role: null, category: null, result: null, source: null, errorCode: '' })
 const auditTimeRangePresets: readonly TimeRangePreset[] = ['today', 'yesterday', 'last7days', 'last30days', 'custom']
-const pageSizeOptions = [10, 20, 50, 100].map((value) => ({ label: `${value} 条/页`, value }))
-const resultLimitOptions = [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: '自定义 TOP', value: 'custom' }])
-const roleLabels: Record<string, string> = { basic: '基础用户', auditor: '审计用户', standard: '标准用户', admin: '管理员', system: '系统' }
+const pageSizeOptions = computed(() => [10, 20, 50, 100].map((value) => ({ label: locale.value === 'zh-CN' ? `${value} 条/页` : `${value} / page`, value })))
+const resultLimitOptions = computed(() => [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: locale.value === 'zh-CN' ? '自定义 TOP' : 'Custom TOP', value: 'custom' }]))
+const roleLabels = computed<Record<string, string>>(() => ({ basic: t('pages.gaiop.audit.roles.basic'), auditor: t('pages.gaiop.audit.roles.auditor'), standard: t('pages.gaiop.audit.roles.standard'), admin: t('pages.gaiop.audit.roles.admin'), system: t('pages.gaiop.audit.roles.system') }))
 const roleTypes: Record<string, 'default' | 'info' | 'success' | 'warning'> = { basic: 'default', auditor: 'info', standard: 'success', admin: 'warning', system: 'default' }
-const statusLabels: Record<string, string> = { active: '已激活', inactive: '未激活' }
-const categoryLabels: Record<string, string> = { authentication: '身份认证', authorization: '权限校验', resource_access: '资源访问', operation: '业务操作', system: '系统事件' }
-const sourceLabels: Record<string, string> = { auth: '登录认证', rest: 'REST接口', rpc: 'Gateway RPC', system: '系统' }
-const resultLabels: Record<Exclude<AuditValue, null>, string> = { success: '成功', failed: '失败', denied: '拒绝' }
+const statusLabels = computed<Record<string, string>>(() => ({ active: locale.value === 'zh-CN' ? '已激活' : 'Active', inactive: locale.value === 'zh-CN' ? '未激活' : 'Inactive' }))
+const categoryLabels = computed<Record<string, string>>(() => ({ authentication: t('pages.gaiop.audit.categories.authentication'), authorization: t('pages.gaiop.audit.categories.authorization'), resource_access: t('pages.gaiop.audit.categories.resource_access'), operation: t('pages.gaiop.audit.categories.operation'), system: t('pages.gaiop.audit.categories.system') }))
+const sourceLabels = computed<Record<string, string>>(() => ({ auth: t('pages.gaiop.audit.sources.auth'), rest: t('pages.gaiop.audit.sources.rest'), rpc: t('pages.gaiop.audit.sources.rpc'), system: t('pages.gaiop.audit.sources.system') }))
+const resultLabels = computed<Record<Exclude<AuditValue, null>, string>>(() => ({ success: t('pages.gaiop.audit.results.success'), failed: t('pages.gaiop.audit.results.failed'), denied: t('pages.gaiop.audit.results.denied') }))
 const resultTypes: Record<Exclude<AuditValue, null>, 'success' | 'error' | 'warning'> = { success: 'success', failed: 'error', denied: 'warning' }
-const roleOptions = Object.entries(roleLabels).map(([value, label]) => ({ value, label }))
-const categoryOptions = Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))
-const resultOptions = Object.entries(resultLabels).map(([value, label]) => ({ value, label }))
-const sourceOptions = Object.entries(sourceLabels).map(([value, label]) => ({ value, label }))
+const roleOptions = computed(() => Object.entries(roleLabels.value).map(([value, label]) => ({ value, label })))
+const categoryOptions = computed(() => Object.entries(categoryLabels.value).map(([value, label]) => ({ value, label })))
+const resultOptions = computed(() => Object.entries(resultLabels.value).map(([value, label]) => ({ value, label })))
+const sourceOptions = computed(() => Object.entries(sourceLabels.value).map(([value, label]) => ({ value, label })))
 
 let requestSequence = 0
 let activeController: AbortController | null = null
@@ -106,21 +109,21 @@ const isCustomLimit = computed(() => resultLimitChoice.value === 'custom')
 const effectiveMaxResults = computed(() => pagination.value.maxResults || maxResults.value)
 const topLimited = computed(() => pagination.value.total > effectiveMaxResults.value)
 const userOptions = computed(() => [
-  { label: 'system（系统事件）', value: 'system' },
+  { label: locale.value === 'zh-CN' ? 'system（系统事件）' : 'system (system event)', value: 'system' },
   ...users.value
     .filter((user) => user.username !== 'system')
-    .map((user) => ({ label: `${user.username}（${displayRole(user.role)}，${statusLabels[user.status] || user.status}）`, value: user.username })),
+    .map((user) => ({ label: locale.value === 'zh-CN' ? `${user.username}（${displayRole(user.role)}，${statusLabels.value[user.status] || user.status}）` : `${user.username} (${displayRole(user.role)}, ${statusLabels.value[user.status] || user.status})`, value: user.username })),
 ])
 const summaryItems = computed(() => [
-  { label: '总记录', value: summary.value.total, className: 'summary-total' },
-  { label: '成功', value: summary.value.success, className: 'summary-success' },
-  { label: '失败', value: summary.value.failed, className: 'summary-failed' },
-  { label: '已记录拒绝', value: summary.value.denied, className: 'summary-denied' },
-  { label: '历史未结构化', value: summary.value.unclassified, className: 'summary-unclassified', hint: '早期审计记录没有结果分类字段，不代表操作失败。' },
+  { label: locale.value === 'zh-CN' ? '总记录' : 'Total', value: summary.value.total, className: 'summary-total' },
+  { label: t('pages.gaiop.audit.results.success'), value: summary.value.success, className: 'summary-success' },
+  { label: t('pages.gaiop.audit.results.failed'), value: summary.value.failed, className: 'summary-failed' },
+  { label: locale.value === 'zh-CN' ? '已记录拒绝' : 'Recorded denials', value: summary.value.denied, className: 'summary-denied' },
+  { label: locale.value === 'zh-CN' ? '历史未结构化' : 'Unclassified history', value: summary.value.unclassified, className: 'summary-unclassified', hint: locale.value === 'zh-CN' ? '早期审计记录没有结果分类字段，不代表操作失败。' : 'Early audit logs do not have a result classification; this does not mean the operation failed.' },
 ])
 
 function displayValue(value: unknown) {
-  return value === null || value === undefined || String(value).trim() === '' ? '历史未记录' : String(value)
+  return value === null || value === undefined || String(value).trim() === '' ? t('pages.gaiop.audit.notRecorded') : String(value)
 }
 
 function displayTableValue(value: unknown) {
@@ -128,25 +131,24 @@ function displayTableValue(value: unknown) {
 }
 
 function displayRole(role: string | null | undefined) {
-  return roleLabels[String(role || '')] || displayValue(role)
+  return roleLabels.value[String(role || '')] || displayValue(role)
 }
 
 function displayCategory(category: string | null | undefined) {
-  return categoryLabels[String(category || '')] || displayValue(category)
+  return categoryLabels.value[String(category || '')] || displayValue(category)
 }
 
 function displaySource(source: string | null | undefined) {
-  return sourceLabels[String(source || '')] || displayValue(source)
+  return sourceLabels.value[String(source || '')] || displayValue(source)
 }
 
 function displayResult(result: AuditValue) {
-  return result ? resultLabels[result] : '历史未记录'
+  return result ? resultLabels.value[result] : t('pages.gaiop.audit.notRecorded')
 }
 
 function formatTime(timestamp: number) {
   const date = new Date(timestamp)
-  const two = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}`
+  return new Intl.DateTimeFormat(locale.value, { dateStyle: 'medium', timeStyle: 'medium' }).format(date)
 }
 
 function addTextParameter(params: URLSearchParams, name: string, value: string | null) {
@@ -185,6 +187,7 @@ function buildRequestUrl() {
 
 function buildExportPayload() {
   return {
+    locale: locale.value,
     from: timeRange.value[0],
     to: timeRange.value[1],
     maxResults: effectiveMaxResults.value,
@@ -201,7 +204,8 @@ function buildExportPayload() {
 function exportFileName(timestamp = Date.now()) {
   const date = new Date(timestamp)
   const two = (value: number) => String(value).padStart(2, '0')
-  return `GAIOP-审计信息-${date.getFullYear()}${two(date.getMonth() + 1)}${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}${two(date.getSeconds())}.xlsx`
+  const prefix = locale.value === 'zh-CN' ? 'GAIOP-审计信息' : 'GAIOP-audit-logs'
+  return `${prefix}-${date.getFullYear()}${two(date.getMonth() + 1)}${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}${two(date.getSeconds())}.xlsx`
 }
 
 async function loadUsers() {
@@ -233,7 +237,7 @@ async function loadLogs() {
       forbidden.value = true
       return
     }
-    if (!response.ok || !data.ok) throw new Error(data.error || '获取审计信息失败')
+    if (!response.ok || !data.ok) throw new Error(data.error || (locale.value === 'zh-CN' ? '获取审计信息失败' : 'Failed to load audit logs'))
     logs.value = data.logs
     pagination.value = data.pagination
     summary.value = data.summary
@@ -244,7 +248,7 @@ async function loadLogs() {
     detailVisible.value = false
   } catch (error) {
     if (controller.signal.aborted || currentRequest !== requestSequence) return
-    loadError.value = error instanceof Error ? error.message : '获取审计信息失败'
+    loadError.value = error instanceof Error ? error.message : (locale.value === 'zh-CN' ? 'Failed to load audit logs' : 'Failed to load audit logs')
     message.error(loadError.value)
   } finally {
     if (currentRequest === requestSequence) loading.value = false
@@ -305,7 +309,7 @@ function changePage(value: number) {
 async function exportAuditLogs() {
   if (exportLoading.value) return
   if (!pagination.value.browseTotal) {
-    message.warning('当前筛选条件没有可导出的审计记录')
+    message.warning(t('pages.gaiop.audit.exportEmpty'))
     return
   }
   exportLoading.value = true
@@ -317,7 +321,7 @@ async function exportAuditLogs() {
     })
     if (!response.ok) {
       const data = await response.json().catch(() => null) as { error?: string } | null
-      throw new Error(data?.error || '导出审计信息失败')
+      throw new Error(data?.error || t('pages.gaiop.audit.exportFailed'))
     }
     const downloadUrl = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
@@ -328,9 +332,9 @@ async function exportAuditLogs() {
     link.remove()
     URL.revokeObjectURL(downloadUrl)
     const count = Number(response.headers.get('x-gaiop-export-count'))
-    message.success(`已导出 ${Number.isFinite(count) && count > 0 ? count : pagination.value.browseTotal} 条审计记录`)
+    message.success(t('pages.gaiop.audit.exportSuccess', { count: Number.isFinite(count) && count > 0 ? count : pagination.value.browseTotal }))
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '导出审计信息失败')
+    message.error(error instanceof Error ? error.message : t('pages.gaiop.audit.exportFailed'))
   } finally {
     exportLoading.value = false
   }
@@ -356,9 +360,9 @@ async function copyRequestId(requestId: string | null) {
       document.execCommand('copy')
       element.remove()
     }
-    message.success('请求编号已复制')
+    message.success(text('请求编号已复制', 'Request ID copied'))
   } catch {
-    message.error('复制请求编号失败')
+    message.error(text('复制请求编号失败', 'Failed to copy request ID'))
   }
 }
 
@@ -370,18 +374,18 @@ function renderOperation(row: AuditLog) {
   ])
 }
 
-const columns: DataTableColumns<AuditLog> = [
-  { title: '时间', key: 'createdAt', width: 174, render: (row) => formatTime(row.createdAt) },
-  { title: '结果', key: 'result', width: 96, render: (row) => h(NTag, { type: row.result ? resultTypes[row.result] : 'default', bordered: false }, { default: () => displayResult(row.result) }) },
-  { title: '操作用户', key: 'username', width: 118, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.username) },
-  { title: '用户角色', key: 'role', width: 112, render: (row) => h(NTag, { type: roleTypes[row.role] || 'default', bordered: false }, { default: () => displayRole(row.role) }) },
-  { title: '分类', key: 'category', width: 112, ellipsis: { tooltip: true }, render: (row) => displayCategory(row.category) },
-  { title: '操作 / 说明', key: 'action', minWidth: 210, render: renderOperation },
-  { title: '对象', key: 'target', minWidth: 150, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.target) },
-  { title: '来源', key: 'source', width: 104, ellipsis: { tooltip: true }, render: (row) => row.source ? displaySource(row.source) : '—' },
-  { title: '错误码', key: 'errorCode', width: 138, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.errorCode) },
-  { title: '详情', key: 'detailEntry', width: 76, fixed: 'right', render: (row) => h(NButton, { size: 'small', tertiary: true, onClick: () => openDetail(row) }, { default: () => '查看' }) },
-]
+const columns = computed<DataTableColumns<AuditLog>>(() => [
+  { title: t('pages.gaiop.audit.time'), key: 'createdAt', width: 174, render: (row) => formatTime(row.createdAt) },
+  { title: t('pages.gaiop.audit.result'), key: 'result', width: 96, render: (row) => h(NTag, { type: row.result ? resultTypes[row.result] : 'default', bordered: false }, { default: () => displayResult(row.result) }) },
+  { title: t('pages.gaiop.audit.user'), key: 'username', width: 118, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.username) },
+  { title: t('pages.gaiop.audit.role'), key: 'role', width: 112, render: (row) => h(NTag, { type: roleTypes[row.role] || 'default', bordered: false }, { default: () => displayRole(row.role) }) },
+  { title: t('pages.gaiop.audit.category'), key: 'category', width: 112, ellipsis: { tooltip: true }, render: (row) => displayCategory(row.category) },
+  { title: t('pages.gaiop.audit.actionDetail'), key: 'action', minWidth: 210, render: renderOperation },
+  { title: t('pages.gaiop.audit.target'), key: 'target', minWidth: 150, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.target) },
+  { title: t('pages.gaiop.audit.source'), key: 'source', width: 104, ellipsis: { tooltip: true }, render: (row) => row.source ? displaySource(row.source) : '—' },
+  { title: t('pages.gaiop.audit.errorCode'), key: 'errorCode', width: 138, ellipsis: { tooltip: true }, render: (row) => displayTableValue(row.errorCode) },
+  { title: t('pages.gaiop.audit.details'), key: 'detailEntry', width: 76, fixed: 'right', render: (row) => h(NButton, { size: 'small', tertiary: true, onClick: () => openDetail(row) }, { default: () => t('pages.gaiop.audit.details') }) },
+])
 
 onMounted(() => {
   void loadLogs()
@@ -392,20 +396,20 @@ onBeforeUnmount(() => activeController?.abort())
 
 <template>
   <section class="audit-page">
-    <NCard title="审计信息" :bordered="false" class="audit-card">
+    <NCard :title="t('pages.gaiop.audit.title')" :bordered="false" class="audit-card">
       <template #header-extra>
         <NSpace class="time-toolbar" align="center" wrap :size="8">
           <TimeRangePicker v-model="timeRange" :preset="timePreset" :presets="auditTimeRangePresets" compact placement="bottom-end" @apply="applyTimeRange" />
-          <NButton size="small" :loading="loading" @click="loadLogs"><template #icon><NIcon><RefreshOutline /></NIcon></template>刷新</NButton>
+          <NButton size="small" :loading="loading" @click="loadLogs"><template #icon><NIcon><RefreshOutline /></NIcon></template>{{ t('pages.gaiop.audit.refresh') }}</NButton>
         </NSpace>
       </template>
 
-      <NAlert v-if="forbidden" type="warning" :bordered="false">审计信息仅审计用户和管理员可查看。</NAlert>
+      <NAlert v-if="forbidden" type="warning" :bordered="false">{{ text('审计信息仅审计用户和管理员可查看。', 'Audit logs are visible only to audit users and administrators.') }}</NAlert>
       <template v-else>
-        <NAlert v-if="topLimited" type="warning" :bordered="false" class="audit-alert">当前筛选结果超过 TOP {{ effectiveMaxResults }}，可提高 TOP 值继续查看。</NAlert>
-        <NAlert v-if="loadError" type="error" :bordered="false" class="audit-alert">{{ loadError }}；已保留上次查询结果。</NAlert>
+        <NAlert v-if="topLimited" type="warning" :bordered="false" class="audit-alert">{{ text(`当前筛选结果超过 TOP ${effectiveMaxResults}，可提高 TOP 值继续查看。`, `Current filters exceed TOP ${effectiveMaxResults}; increase TOP to continue viewing.`) }}</NAlert>
+        <NAlert v-if="loadError" type="error" :bordered="false" class="audit-alert">{{ loadError }}{{ text('；已保留上次查询结果。', '; the previous query results have been retained.') }}</NAlert>
 
-        <div class="audit-summary" aria-label="当前筛选范围汇总">
+        <div class="audit-summary" :aria-label="text('当前筛选范围汇总', 'Current filter summary')">
           <NCard v-for="item in summaryItems" :key="item.label" :bordered="true" size="small" :class="['audit-summary__item', item.className]">
             <NStatistic :value="item.value">
               <template #label>
@@ -418,63 +422,63 @@ onBeforeUnmount(() => activeController?.abort())
 
         <div class="filters">
           <div class="filter-keyword">
-            <NInput v-model:value="filters.keyword" clearable class="audit-keyword" placeholder="关键词：操作、对象、说明或历史用户" @keyup.enter="queryFromFirstPage">
+            <NInput v-model:value="filters.keyword" clearable class="audit-keyword" :placeholder="text('关键词：操作、对象、说明或历史用户', 'Keywords: action, target, detail, or historical user')" @keyup.enter="queryFromFirstPage">
               <template #prefix><NIcon><SearchOutline /></NIcon></template>
             </NInput>
           </div>
 
           <div class="filter-conditions">
-            <NSelect v-model:value="filters.username" clearable filterable placeholder="全部用户" :options="userOptions" style="width: 220px" />
-            <NSelect v-model:value="filters.role" clearable placeholder="全部角色" :options="roleOptions" style="width: 140px" />
-            <NSelect v-model:value="filters.category" clearable placeholder="全部分类" :options="categoryOptions" style="width: 150px" />
-            <NSelect v-model:value="filters.result" clearable placeholder="全部结果" :options="resultOptions" style="width: 128px" />
-            <NSelect v-model:value="filters.source" clearable placeholder="全部来源" :options="sourceOptions" style="width: 140px" />
-            <NInput v-model:value="filters.errorCode" clearable placeholder="错误码" style="width: 150px" @keyup.enter="queryFromFirstPage" />
-            <NButton type="primary" :disabled="loading" @click="queryFromFirstPage">查询</NButton>
-            <NButton secondary :disabled="loading" @click="resetFilters">重置</NButton>
+            <NSelect v-model:value="filters.username" clearable filterable :placeholder="text('全部用户', 'All users')" :options="userOptions" style="width: 220px" />
+            <NSelect v-model:value="filters.role" clearable :placeholder="text('全部角色', 'All roles')" :options="roleOptions" style="width: 140px" />
+            <NSelect v-model:value="filters.category" clearable :placeholder="text('全部分类', 'All categories')" :options="categoryOptions" style="width: 150px" />
+            <NSelect v-model:value="filters.result" clearable :placeholder="text('全部结果', 'All results')" :options="resultOptions" style="width: 128px" />
+            <NSelect v-model:value="filters.source" clearable :placeholder="text('全部来源', 'All sources')" :options="sourceOptions" style="width: 140px" />
+            <NInput v-model:value="filters.errorCode" clearable :placeholder="text('错误码', 'Error code')" style="width: 150px" @keyup.enter="queryFromFirstPage" />
+            <NButton type="primary" :disabled="loading" @click="queryFromFirstPage">{{ t('pages.gaiop.audit.query') }}</NButton>
+            <NButton secondary :disabled="loading" @click="resetFilters">{{ t('pages.gaiop.audit.reset') }}</NButton>
           </div>
 
           <div class="display-controls">
             <NSelect :value="pageSize" :options="pageSizeOptions" style="width: 112px" @update:value="applyPageSize" />
             <NSelect :value="resultLimitChoice" :options="resultLimitOptions" style="width: 148px" @update:value="handleResultLimitChoice" />
-            <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="MAX_RESULTS" :precision="0" placeholder="最高 3000 条" style="width: 150px" />
-            <NButton v-if="isCustomLimit" type="primary" :disabled="loading" @click="applyCustomResultLimit">应用 TOP</NButton>
-            <NButton :loading="exportLoading" :disabled="!pagination.browseTotal || exportLoading" @click="exportAuditLogs"><template #icon><NIcon><DownloadOutline /></NIcon></template>导出 Excel</NButton>
+            <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="MAX_RESULTS" :precision="0" :placeholder="text('最高 3000 条', 'Up to 3000')" style="width: 150px" />
+            <NButton v-if="isCustomLimit" type="primary" :disabled="loading" @click="applyCustomResultLimit">{{ text('应用 TOP', 'Apply TOP') }}</NButton>
+            <NButton :loading="exportLoading" :disabled="!pagination.browseTotal || exportLoading" @click="exportAuditLogs"><template #icon><NIcon><DownloadOutline /></NIcon></template>{{ t('pages.gaiop.audit.export') }}</NButton>
           </div>
         </div>
 
         <NDataTable :columns="columns" :data="logs" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1400" :pagination="false">
-          <template #empty><NEmpty description="当前条件暂无审计记录" /></template>
+          <template #empty><NEmpty :description="t('pages.gaiop.audit.empty')" /></template>
         </NDataTable>
 
         <div class="audit-pagination">
-          <NText depth="3">匹配 {{ pagination.total }} 条，当前最多查看 TOP {{ effectiveMaxResults }}。</NText>
+          <NText depth="3">{{ text(`匹配 ${pagination.total} 条，当前最多查看 TOP ${effectiveMaxResults}。`, `${pagination.total} matching records; currently showing up to TOP ${effectiveMaxResults}.`) }}</NText>
           <NPagination :page="page" :page-count="pagination.totalPages" :disabled="loading || pagination.totalPages <= 1" @update:page="changePage" />
         </div>
       </template>
     </NCard>
 
     <NDrawer v-model:show="detailVisible" :width="560" placement="right">
-      <NDrawerContent title="审计详情" closable>
+      <NDrawerContent :title="text('审计详情', 'Audit details')" closable>
         <NDescriptions v-if="selectedLog" label-placement="left" :column="1" bordered>
-          <NDescriptionsItem label="完整时间">{{ formatTime(selectedLog.createdAt) }}</NDescriptionsItem>
-          <NDescriptionsItem label="操作用户">{{ displayValue(selectedLog.username) }}</NDescriptionsItem>
-          <NDescriptionsItem label="用户 ID">{{ displayValue(selectedLog.actorUserId) }}</NDescriptionsItem>
-          <NDescriptionsItem label="当时角色">{{ displayRole(selectedLog.role) }}</NDescriptionsItem>
-          <NDescriptionsItem label="结果">{{ displayResult(selectedLog.result) }}</NDescriptionsItem>
-          <NDescriptionsItem label="分类">{{ displayCategory(selectedLog.category) }}</NDescriptionsItem>
-          <NDescriptionsItem label="来源">{{ displaySource(selectedLog.source) }}</NDescriptionsItem>
-          <NDescriptionsItem label="操作">{{ displayValue(selectedLog.action) }}</NDescriptionsItem>
-          <NDescriptionsItem label="对象">{{ displayValue(selectedLog.target) }}</NDescriptionsItem>
-          <NDescriptionsItem label="完整说明"><span class="audit-detail-text">{{ displayValue(selectedLog.detail) }}</span></NDescriptionsItem>
-          <NDescriptionsItem label="REST 方法">{{ displayValue(selectedLog.restMethod) }}</NDescriptionsItem>
-          <NDescriptionsItem label="规范化 REST 路径">{{ displayValue(selectedLog.restPath) }}</NDescriptionsItem>
-          <NDescriptionsItem label="RPC 方法">{{ displayValue(selectedLog.rpcMethod) }}</NDescriptionsItem>
-          <NDescriptionsItem label="错误码">{{ displayValue(selectedLog.errorCode) }}</NDescriptionsItem>
-          <NDescriptionsItem label="请求编号">
-            <NSpace align="center" :wrap="false"><span class="audit-request-id">{{ displayValue(selectedLog.requestId) }}</span><NButton v-if="selectedLog.requestId" size="small" @click="copyRequestId(selectedLog.requestId)"><template #icon><NIcon><CopyOutline /></NIcon></template>复制</NButton></NSpace>
+          <NDescriptionsItem :label="text('完整时间', 'Full time')">{{ formatTime(selectedLog.createdAt) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('操作用户', 'Acting user')">{{ displayValue(selectedLog.username) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('用户 ID', 'User ID')">{{ displayValue(selectedLog.actorUserId) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('当时角色', 'Role at the time')">{{ displayRole(selectedLog.role) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('pages.gaiop.audit.result')">{{ displayResult(selectedLog.result) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('pages.gaiop.audit.category')">{{ displayCategory(selectedLog.category) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('pages.gaiop.audit.source')">{{ displaySource(selectedLog.source) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('操作', 'Action')">{{ displayValue(selectedLog.action) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('pages.gaiop.audit.target')">{{ displayValue(selectedLog.target) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('完整说明', 'Full detail')"><span class="audit-detail-text">{{ displayValue(selectedLog.detail) }}</span></NDescriptionsItem>
+          <NDescriptionsItem :label="text('REST 方法', 'REST method')">{{ displayValue(selectedLog.restMethod) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('规范化 REST 路径', 'Normalized REST path')">{{ displayValue(selectedLog.restPath) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('RPC 方法', 'RPC method')">{{ displayValue(selectedLog.rpcMethod) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="t('pages.gaiop.audit.errorCode')">{{ displayValue(selectedLog.errorCode) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('请求编号', 'Request ID')">
+            <NSpace align="center" :wrap="false"><span class="audit-request-id">{{ displayValue(selectedLog.requestId) }}</span><NButton v-if="selectedLog.requestId" size="small" @click="copyRequestId(selectedLog.requestId)"><template #icon><NIcon><CopyOutline /></NIcon></template>{{ text('复制', 'Copy') }}</NButton></NSpace>
           </NDescriptionsItem>
-          <NDescriptionsItem label="来源地址">{{ displayValue(selectedLog.sourceAddress) }}</NDescriptionsItem>
+          <NDescriptionsItem :label="text('来源地址', 'Source address')">{{ displayValue(selectedLog.sourceAddress) }}</NDescriptionsItem>
         </NDescriptions>
       </NDrawerContent>
     </NDrawer>

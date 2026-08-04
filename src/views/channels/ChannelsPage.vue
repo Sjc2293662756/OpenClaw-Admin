@@ -414,7 +414,7 @@ onUnmounted(() => {
                   <span>{{ card.description }}</span>
                 </div>
 
-                <NCard v-if="!canManageSecurity" size="small" embedded title="安全运行状态">
+                <NCard v-if="!canManageSecurity" size="small" embedded :title="t('pages.channels.safeRuntimeStatus')">
                   <NSpace vertical :size="8">
                     <NSpace :size="8">
                       <NTag :type="pluginStatusType(card)" :bordered="false">{{ pluginStatusLabel(card) }}</NTag>

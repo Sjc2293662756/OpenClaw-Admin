@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 
 type EntryType = 'chat' | 'config'
 
 const route = useRoute()
 const router = useRouter()
+const { t } = useI18n()
 
 function enterPlatform(entry: EntryType) {
   // 入口卡片代表用户主动选择工作空间，不能被退出登录时遗留的 redirect 覆盖。
@@ -24,11 +26,11 @@ function enterPlatform(entry: EntryType) {
           <span class="brand-logo-net">Net</span><span>Inside</span>
         </span>
         <span class="brand-divider"></span>
-        <span class="brand-product">观枢 GAIOP</span>
+        <span class="brand-product">{{ t('pages.gaiop.entrance.product') }}</span>
       </div>
 
       <div class="company-name">
-        <span>北京网深科技有限公司</span>
+        <span>{{ t('pages.gaiop.entrance.company') }}</span>
         <span class="company-dot">·</span>
         <span>NetInside</span>
       </div>
@@ -37,11 +39,9 @@ function enterPlatform(entry: EntryType) {
     <section class="entrance-content" aria-labelledby="platform-title">
       <div class="platform-intro">
         <p class="eyebrow">NETINSIDE INTELLIGENT OPERATIONS</p>
-        <h1 id="platform-title">观枢 <span>GAIOP</span></h1>
-        <p class="platform-full-name">NetInside 观枢 GAIOP 智能运维分析平台</p>
-        <p class="platform-description">
-          让真实流量成为智能运维的核心观测入口，以 AI 驱动全流量性能分析与运维决策。
-        </p>
+        <h1 id="platform-title">{{ t('pages.gaiop.entrance.product') }}</h1>
+        <p class="platform-full-name">{{ t('pages.gaiop.entrance.fullName') }}</p>
+        <p class="platform-description">{{ t('pages.gaiop.entrance.description') }}</p>
 
         <div class="entry-cards">
           <button type="button" class="entry-card" @click="enterPlatform('chat')">
@@ -52,8 +52,8 @@ function enterPlatform(entry: EntryType) {
               </svg>
             </span>
             <span class="card-content">
-              <strong>开始对话</strong>
-              <small>使用 GAIOP 进行智能运维分析</small>
+              <strong>{{ t('pages.gaiop.entrance.chatTitle') }}</strong>
+              <small>{{ t('pages.gaiop.entrance.chatDescription') }}</small>
             </span>
             <span class="card-arrow" aria-hidden="true">→</span>
           </button>
@@ -66,15 +66,15 @@ function enterPlatform(entry: EntryType) {
               </svg>
             </span>
             <span class="card-content">
-              <strong>配置管理</strong>
-              <small>管理模型、Skills 和平台配置</small>
+              <strong>{{ t('pages.gaiop.entrance.configTitle') }}</strong>
+              <small>{{ t('pages.gaiop.entrance.configDescription') }}</small>
             </span>
             <span class="card-arrow" aria-hidden="true">→</span>
           </button>
         </div>
       </div>
 
-      <aside class="company-card" aria-label="北京网深科技介绍">
+      <aside class="company-card" :aria-label="t('pages.gaiop.entrance.companyTitle')">
         <div class="card-grid"></div>
         <div class="orbit orbit-one"></div>
         <div class="orbit orbit-two"></div>
@@ -82,16 +82,14 @@ function enterPlatform(entry: EntryType) {
         <div class="node node-two"></div>
         <div class="company-card-content">
           <p class="company-card-label">BEIJING NETINSIDE TECHNOLOGY</p>
-          <h2>北京网深科技</h2>
-          <p>
-            以网络与应用性能数据为基础，构建面向智能运维的分析与管理能力。
-          </p>
-          <span class="company-card-link">探索观枢 GAIOP <b>→</b></span>
+          <h2>{{ t('pages.gaiop.entrance.companyTitle') }}</h2>
+          <p>{{ t('pages.gaiop.entrance.companyDescription') }}</p>
+          <span class="company-card-link">{{ t('pages.gaiop.entrance.companyLink') }} <b>→</b></span>
         </div>
       </aside>
     </section>
 
-    <footer class="entrance-footer">© {{ new Date().getFullYear() }} 北京网深科技有限公司</footer>
+    <footer class="entrance-footer">© {{ new Date().getFullYear() }} {{ t('pages.gaiop.entrance.company') }}</footer>
   </main>
 </template>
 

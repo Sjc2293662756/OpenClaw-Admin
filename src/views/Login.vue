@@ -5,11 +5,13 @@ import { NAlert, NButton, NForm, NInput, NSpin } from 'naive-ui'
 import { ConnectionState } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
+import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const websocketStore = useWebSocketStore()
+const { t } = useI18n()
 
 const loading = ref(true)
 const checking = ref(true)
@@ -54,7 +56,7 @@ onMounted(async () => {
     setTimeout(() => {
       if (loading.value) {
         loading.value = false
-        if (!isConnected.value) error.value = '服务连接超时，请稍后重试。'
+        if (!isConnected.value) error.value = t('pages.gaiop.login.connectionTimeout')
       }
       unsubscribe()
     }, 10000)
@@ -73,7 +75,7 @@ onMounted(async () => {
 
 async function handleLogin() {
   if (!username.value || !password.value) {
-    error.value = '请输入账户名和密码。'
+    error.value = t('pages.gaiop.login.credentialsRequired')
     return
   }
 
@@ -86,7 +88,7 @@ async function handleLogin() {
     return
   }
 
-  error.value = authStore.error || '登录失败，请稍后重试。'
+  error.value = authStore.error || t('pages.gaiop.login.failed')
   loading.value = false
 }
 
@@ -99,7 +101,7 @@ function handleRetry() {
   setTimeout(() => {
     if (loading.value && !isConnected.value) {
       loading.value = false
-      error.value = '服务连接超时，请稍后重试。'
+      error.value = t('pages.gaiop.login.connectionTimeout')
     }
   }, 10000)
 }
@@ -110,23 +112,23 @@ function handleRetry() {
     <div class="login-halo login-halo-top"></div>
     <div class="login-halo login-halo-bottom"></div>
 
-    <div class="login-brand" aria-label="NetInside 观枢 GAIOP">
+    <div class="login-brand" aria-label="NetInside GAIOP">
       <span class="brand-logo"><span class="brand-net">Net</span><span class="brand-inside">Inside</span></span>
       <span class="brand-divider"></span>
-      <span class="brand-product">观枢 GAIOP</span>
+      <span class="brand-product">{{ t('pages.gaiop.login.brand') }}</span>
     </div>
 
     <section class="login-shell" aria-labelledby="login-title">
       <div class="login-heading">
         <h1 id="login-title">
-          <span class="title-net">Net</span><span class="title-inside">Inside</span><span class="title-name"> 观枢 </span><span class="title-gaiop">GAIOP</span><span class="title-name"> 智能运维分析平台</span>
+          <span class="title-net">Net</span><span class="title-inside">Inside</span><span class="title-name"> </span><span class="title-gaiop">GAIOP</span><span class="title-name"> {{ t('pages.gaiop.login.platform') }}</span>
         </h1>
       </div>
 
       <div class="login-card">
         <div v-if="loading && !checking" class="login-state">
           <NSpin size="medium" />
-          <span>正在连接平台服务...</span>
+          <span>{{ t('pages.gaiop.login.connecting') }}</span>
         </div>
 
         <template v-else-if="authStore.authEnabled || checking">
@@ -135,23 +137,23 @@ function handleRetry() {
           </NAlert>
 
           <NForm @submit.prevent="handleLogin">
-            <label class="form-label" for="gaiop-username">账户名</label>
+            <label class="form-label" for="gaiop-username">{{ t('pages.gaiop.login.username') }}</label>
             <NInput
               id="gaiop-username"
               v-model:value="username"
-              placeholder="请输入账户名"
+              :placeholder="t('pages.gaiop.login.usernamePlaceholder')"
               size="large"
               class="login-input"
               @keydown.enter="handleLogin"
             />
 
-            <label class="form-label password-label" for="gaiop-password">密码</label>
+            <label class="form-label password-label" for="gaiop-password">{{ t('pages.gaiop.login.password') }}</label>
             <div class="password-wrapper">
               <NInput
                 id="gaiop-password"
                 v-model:value="password"
                 :type="showPassword ? 'text' : 'password'"
-                placeholder="请输入密码"
+                :placeholder="t('pages.gaiop.login.passwordPlaceholder')"
                 size="large"
                 class="login-input"
                 @keydown.enter="handleLogin"
@@ -159,7 +161,7 @@ function handleRetry() {
               <button
                 type="button"
                 class="password-toggle"
-                :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                :aria-label="showPassword ? t('pages.gaiop.login.hidePassword') : t('pages.gaiop.login.showPassword')"
                 @click="showPassword = !showPassword"
               >
                 <svg v-if="showPassword" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -180,7 +182,7 @@ function handleRetry() {
               :loading="loading"
               @click="handleLogin"
             >
-              登录
+              {{ t('pages.gaiop.login.login') }}
             </NButton>
           </NForm>
         </template>
@@ -188,7 +190,7 @@ function handleRetry() {
         <template v-else>
           <div v-if="loading || isConnecting" class="login-state">
             <NSpin size="medium" />
-            <span>正在连接平台服务...</span>
+            <span>{{ t('pages.gaiop.login.connecting') }}</span>
           </div>
 
           <NAlert v-if="error" type="error" :bordered="false" class="login-alert">
@@ -203,12 +205,12 @@ function handleRetry() {
             class="login-button"
             @click="handleRetry"
           >
-            重新连接
+            {{ t('pages.gaiop.login.retry') }}
           </NButton>
         </template>
       </div>
 
-      <p class="login-footer">© {{ new Date().getFullYear() }} 北京网深科技有限公司</p>
+      <p class="login-footer">© {{ new Date().getFullYear() }} {{ t('pages.gaiop.entrance.company') }}</p>
     </section>
   </main>
 </template>

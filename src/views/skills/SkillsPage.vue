@@ -139,7 +139,7 @@ const pluginGroups = computed(() => {
 
       <NSpace vertical :size="14">
         <NAlert type="info" :show-icon="true" style="border-radius: var(--radius);">
-          {{ canManageSkills ? t('pages.skills.info') : '当前为只读安全视图，仅展示 Skill 名称、说明、版本和可用状态。' }}
+          {{ canManageSkills ? t('pages.skills.info') : t('pages.skills.readOnlyInfo') }}
         </NAlert>
         <NAlert v-if="skillStore.error" type="error" :show-icon="true" style="border-radius: var(--radius);">
           {{ t('pages.skills.loadFailed', { error: skillStore.error }) }}

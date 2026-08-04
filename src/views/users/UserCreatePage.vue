@@ -3,11 +3,15 @@ import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NRadio, NRadioGroup, NSelect, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
-import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '@/utils/password-policy'
+import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
+import { useI18n } from 'vue-i18n'
+import type { AppLocale } from '@/i18n/locale'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const message = useMessage()
+const { t, locale } = useI18n()
+const passwordHint = computed(() => passwordPolicyMessage(locale.value as AppLocale))
 const formRef = ref<FormInst | null>(null)
 const saving = ref(false)
 const isAdmin = computed(() => authStore.isAdmin)
@@ -15,48 +19,48 @@ const isInitialAdmin = computed(() => Boolean(authStore.currentUser?.isInitialAd
 const form = reactive({ username: '', description: '', role: 'basic', password: '', confirmPassword: '', status: 'active' })
 
 const roleOptions = computed(() => [
-  { label: '基础用户', value: 'basic' }, { label: '审计用户', value: 'auditor' },
-  { label: '标准用户', value: 'standard' }, { label: '管理员', value: 'admin' },
+  { label: t('pages.gaiop.users.basic'), value: 'basic' }, { label: t('pages.gaiop.users.auditor'), value: 'auditor' },
+  { label: t('pages.gaiop.users.standard'), value: 'standard' }, { label: t('pages.gaiop.users.admin'), value: 'admin' },
 ].filter(option => option.value !== 'admin' || isInitialAdmin.value))
-const rules: FormRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: ['input', 'blur'] }],
-  role: [{ required: true, message: '请选择用户类型', trigger: ['change', 'blur'] }],
+const rules = computed<FormRules>(() => ({
+  username: [{ required: true, message: locale.value === 'zh-CN' ? '请输入用户名' : 'Enter a username', trigger: ['input', 'blur'] }],
+  role: [{ required: true, message: locale.value === 'zh-CN' ? '请选择用户类型' : 'Select a user type', trigger: ['change', 'blur'] }],
   password: [
-    { required: true, message: '请输入密码', trigger: ['input', 'blur'] },
-    { validator: () => isValidPassword(form.password), message: PASSWORD_POLICY_MESSAGE, trigger: ['input', 'blur'] },
+    { required: true, message: locale.value === 'zh-CN' ? '请输入密码' : 'Enter a password', trigger: ['input', 'blur'] },
+    { validator: () => isValidPassword(form.password), message: passwordHint.value, trigger: ['input', 'blur'] },
   ],
-  confirmPassword: [{ required: true, message: '请再次输入密码', trigger: ['input', 'blur'] }, { validator: () => form.password === form.confirmPassword, message: '两次输入的密码不一致', trigger: ['input', 'blur'] }],
-}
+  confirmPassword: [{ required: true, message: locale.value === 'zh-CN' ? '请再次输入密码' : 'Re-enter the password', trigger: ['input', 'blur'] }, { validator: () => form.password === form.confirmPassword, message: locale.value === 'zh-CN' ? '两次输入的密码不一致' : 'Passwords do not match', trigger: ['input', 'blur'] }],
+}))
 
 async function submit() {
-  if (!isAdmin.value) { message.error('仅管理员可以添加用户'); return }
+  if (!isAdmin.value) { message.error(t('pages.gaiop.users.createAdminOnly')); return }
   try { await formRef.value?.validate() } catch { return }
   saving.value = true
   try {
     const response = await fetch('/api/users', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authStore.getToken()}` }, body: JSON.stringify(form) })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || '添加用户失败')
-    message.success('用户已添加')
+    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.createFailed'))
+    message.success(t('pages.gaiop.users.createSuccess'))
     router.push({ name: 'UserManagement' })
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '添加用户失败')
+    message.error(error instanceof Error ? error.message : t('pages.gaiop.users.createFailed'))
   } finally { saving.value = false }
 }
 </script>
 
 <template>
-  <NCard title="添加用户" :bordered="false" class="create-card">
-    <NAlert v-if="!isAdmin" type="warning" :bordered="false" class="page-alert">仅管理员可以添加用户。</NAlert>
+  <NCard :title="t('pages.gaiop.users.create')" :bordered="false" class="create-card">
+    <NAlert v-if="!isAdmin" type="warning" :bordered="false" class="page-alert">{{ t('pages.gaiop.users.createAdminOnly') }}</NAlert>
     <NForm v-else ref="formRef" :model="form" :rules="rules" label-placement="left" label-width="100" class="user-form">
-      <NFormItem label="定义内容"><span class="static-value">用户</span></NFormItem>
-      <NFormItem label="名称" path="username" required><NInput v-model:value="form.username" placeholder="请输入用户名" maxlength="64" /></NFormItem>
-      <NFormItem label="描述" path="description"><NInput v-model:value="form.description" type="textarea" placeholder="可选，用于说明该账户用途" maxlength="500" :autosize="{ minRows: 3, maxRows: 5 }" /></NFormItem>
-      <NFormItem label="用户类型" path="role" required><NSelect v-model:value="form.role" :options="roleOptions" /></NFormItem>
-      <NFormItem label="输入密码" path="password" required><NInput v-model:value="form.password" type="password" show-password-on="click" placeholder="请输入密码" /></NFormItem>
-      <NFormItem label="确认密码" path="confirmPassword" required><NInput v-model:value="form.confirmPassword" type="password" show-password-on="click" placeholder="请再次输入密码" /></NFormItem>
-      <NFormItem label=""><span class="password-hint">{{ PASSWORD_POLICY_MESSAGE }}</span></NFormItem>
-      <NFormItem label="状态"><NRadioGroup v-model:value="form.status"><NSpace><NRadio value="active">激活</NRadio><NRadio value="inactive">非激活</NRadio></NSpace></NRadioGroup></NFormItem>
-      <NFormItem label=""><NSpace><NButton @click="router.push({ name: 'UserManagement' })">返回</NButton><NButton type="primary" :loading="saving" @click="submit">提交</NButton></NSpace></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.definition')"><span class="static-value">{{ t('pages.gaiop.users.user') }}</span></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.formName')" path="username" required><NInput v-model:value="form.username" :placeholder="t('pages.gaiop.users.usernamePlaceholder')" maxlength="64" /></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.description')" path="description"><NInput v-model:value="form.description" type="textarea" :placeholder="t('pages.gaiop.users.optionalDescription')" maxlength="500" :autosize="{ minRows: 3, maxRows: 5 }" /></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.userType')" path="role" required><NSelect v-model:value="form.role" :options="roleOptions" /></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.password')" path="password" required><NInput v-model:value="form.password" type="password" show-password-on="click" :placeholder="t('pages.gaiop.users.passwordPlaceholder')" /></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.confirmPassword')" path="confirmPassword" required><NInput v-model:value="form.confirmPassword" type="password" show-password-on="click" :placeholder="t('pages.gaiop.users.confirmPasswordPlaceholder')" /></NFormItem>
+      <NFormItem label=""><span class="password-hint">{{ passwordHint }}</span></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.status')"><NRadioGroup v-model:value="form.status"><NSpace><NRadio value="active">{{ t('pages.gaiop.users.activate') }}</NRadio><NRadio value="inactive">{{ t('pages.gaiop.users.deactivate') }}</NRadio></NSpace></NRadioGroup></NFormItem>
+      <NFormItem label=""><NSpace><NButton @click="router.push({ name: 'UserManagement' })">{{ t('pages.gaiop.users.back') }}</NButton><NButton type="primary" :loading="saving" @click="submit">{{ t('pages.gaiop.users.submit') }}</NButton></NSpace></NFormItem>
     </NForm>
   </NCard>
 </template>

@@ -1,50 +1,54 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSpace, useMessage, type FormInst, type FormRules } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
-import { isValidPassword, PASSWORD_POLICY_MESSAGE } from '@/utils/password-policy'
+import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
+import { useI18n } from 'vue-i18n'
+import type { AppLocale } from '@/i18n/locale'
 
 const router = useRouter()
 const authStore = useAuthStore()
 const message = useMessage()
+const { t, locale } = useI18n()
 const formRef = ref<FormInst | null>(null)
 const saving = ref(false)
 const form = reactive({ currentPassword: '', newPassword: '', confirmPassword: '' })
-const rules: FormRules = {
-  currentPassword: [{ required: true, message: '请输入当前密码', trigger: ['input', 'blur'] }],
+const passwordHint = computed(() => passwordPolicyMessage(locale.value as AppLocale))
+const rules = computed<FormRules>(() => ({
+  currentPassword: [{ required: true, message: locale.value === 'zh-CN' ? '请输入当前密码' : 'Enter the current password', trigger: ['input', 'blur'] }],
   newPassword: [
-    { required: true, message: '请输入新密码', trigger: ['input', 'blur'] },
-    { validator: () => isValidPassword(form.newPassword), message: PASSWORD_POLICY_MESSAGE, trigger: ['input', 'blur'] },
+    { required: true, message: locale.value === 'zh-CN' ? '请输入新密码' : 'Enter a new password', trigger: ['input', 'blur'] },
+    { validator: () => isValidPassword(form.newPassword), message: passwordHint.value, trigger: ['input', 'blur'] },
   ],
-  confirmPassword: [{ required: true, message: '请再次输入新密码', trigger: ['input', 'blur'] }, { validator: () => form.newPassword === form.confirmPassword, message: '两次输入的密码不一致', trigger: ['input', 'blur'] }],
-}
+  confirmPassword: [{ required: true, message: locale.value === 'zh-CN' ? '请再次输入新密码' : 'Re-enter the new password', trigger: ['input', 'blur'] }, { validator: () => form.newPassword === form.confirmPassword, message: locale.value === 'zh-CN' ? '两次输入的密码不一致' : 'Passwords do not match', trigger: ['input', 'blur'] }],
+}))
 async function submit() {
   try { await formRef.value?.validate() } catch { return }
-  if (!authStore.currentUser?.id) { message.error('当前用户信息失效，请重新登录'); return }
+  if (!authStore.currentUser?.id) { message.error(locale.value === 'zh-CN' ? '当前用户信息失效，请重新登录' : 'Current user information is invalid. Please sign in again.'); return }
   saving.value = true
   try {
     const response = await fetch(`/api/users/${authStore.currentUser.id}/password`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authStore.getToken()}` }, body: JSON.stringify(form) })
     const data = await response.json()
-    if (!response.ok || !data.ok) throw new Error(data.error || '修改密码失败')
-    message.success('密码已修改，请使用新密码重新登录')
+    if (!response.ok || !data.ok) throw new Error(data.error || t('pages.gaiop.users.passwordFailed'))
+    message.success(t('pages.gaiop.users.passwordSuccess'))
     await authStore.logout()
     router.replace({ name: 'Welcome' })
-  } catch (error) { message.error(error instanceof Error ? error.message : '修改密码失败') } finally { saving.value = false }
+  } catch (error) { message.error(error instanceof Error ? error.message : t('pages.gaiop.users.passwordFailed')) } finally { saving.value = false }
 }
 </script>
 
 <template>
-  <NCard title="修改我的密码" :bordered="false" class="password-card">
+  <NCard :title="t('pages.gaiop.users.password')" :bordered="false" class="password-card">
     <NAlert v-if="authStore.currentUser?.mustChangePassword" type="warning" :bordered="false" class="password-alert">
-      管理员已重置您的密码。完成密码修改并重新登录前，其他功能不可访问。
+      {{ t('pages.gaiop.users.forcedChange') }}
     </NAlert>
     <NForm ref="formRef" :model="form" :rules="rules" label-placement="left" label-width="100" class="password-form">
-      <NFormItem label="当前密码" path="currentPassword" required><NInput v-model:value="form.currentPassword" type="password" show-password-on="click" placeholder="请输入当前密码" /></NFormItem>
-      <NFormItem label="新密码" path="newPassword" required><NInput v-model:value="form.newPassword" type="password" show-password-on="click" placeholder="请输入新密码" /></NFormItem>
-      <NFormItem label="确认新密码" path="confirmPassword" required><NInput v-model:value="form.confirmPassword" type="password" show-password-on="click" placeholder="请再次输入新密码" /></NFormItem>
-      <NFormItem label=""><span class="password-hint">{{ PASSWORD_POLICY_MESSAGE }}</span></NFormItem>
-      <NFormItem label=""><NSpace><NButton v-if="!authStore.currentUser?.mustChangePassword" @click="router.push({ name: 'UserManagement' })">返回</NButton><NButton type="primary" :loading="saving" @click="submit">提交</NButton></NSpace></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.currentPassword')" path="currentPassword" required><NInput v-model:value="form.currentPassword" type="password" show-password-on="click" :placeholder="t('pages.gaiop.users.passwordPlaceholder')" /></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.newPassword')" path="newPassword" required><NInput v-model:value="form.newPassword" type="password" show-password-on="click" :placeholder="t('pages.gaiop.users.passwordPlaceholder')" /></NFormItem>
+      <NFormItem :label="t('pages.gaiop.users.confirmPassword')" path="confirmPassword" required><NInput v-model:value="form.confirmPassword" type="password" show-password-on="click" :placeholder="t('pages.gaiop.users.confirmPasswordPlaceholder')" /></NFormItem>
+      <NFormItem label=""><span class="password-hint">{{ passwordHint }}</span></NFormItem>
+      <NFormItem label=""><NSpace><NButton v-if="!authStore.currentUser?.mustChangePassword" @click="router.push({ name: 'UserManagement' })">{{ t('pages.gaiop.users.back') }}</NButton><NButton type="primary" :loading="saving" @click="submit">{{ t('pages.gaiop.users.submit') }}</NButton></NSpace></NFormItem>
     </NForm>
   </NCard>
 </template>

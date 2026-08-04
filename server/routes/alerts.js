@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
-import { createAlertExportWorkbook, normalizeAlertExportRows } from '../lib/alert-export.js'
+import { createAlertExportWorkbook, normalizeAlertExportRows, normalizeExportLocale } from '../lib/alert-export.js'
 import { ALERT_CATEGORY_LABELS, filterAlerts } from '../lib/syslog-alerts.js'
 import { readGAIOPAlerts } from '../lib/gaiop-alert-source.js'
 
@@ -21,14 +21,16 @@ function readTimestamp(value) {
 export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSource = readGAIOPAlerts }) {
   const router = Router()
   router.post('/export', authMiddleware, (req, res) => {
-    const rows = normalizeAlertExportRows(req.body?.rows)
+    const locale = normalizeExportLocale(req.body?.locale)
+    const rows = normalizeAlertExportRows(req.body?.rows, locale)
     if (!rows.length) {
       return sendError(res, { status: 400, code: 'ALERT_EXPORT_EMPTY', message: '当前页没有可导出的告警记录' })
     }
     recordAudit(req.user, '导出 Syslog 告警', '告警通知', `导出当前页 ${rows.length} 条记录`)
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    res.setHeader('Content-Disposition', 'attachment; filename="alerts-current-page.xlsx"')
-    return res.send(createAlertExportWorkbook(req.body?.rows))
+    const fileName = `${locale === 'en-US' ? 'GAIOP-alerts-current-page' : 'GAIOP-告警通知-当前页'}.xlsx`
+    res.setHeader('Content-Disposition', `attachment; filename="GAIOP-alerts.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`)
+    return res.send(createAlertExportWorkbook(req.body?.rows, locale))
   })
   router.get('/time', authMiddleware, (_req, res) => {
     sendOk(res, { now: Date.now() })

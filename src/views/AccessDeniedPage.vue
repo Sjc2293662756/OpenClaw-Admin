@@ -5,19 +5,28 @@ import { NButton, NCard, NIcon, NSpace, NText } from 'naive-ui'
 import { ArrowBackOutline, GridOutline, LockClosedOutline } from '@vicons/ionicons5'
 import { ROLE_LABELS, type UserRole } from '@/permissions/access-control'
 import { useAuthStore } from '@/stores/auth'
+import { useI18n } from 'vue-i18n'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const { t } = useI18n()
 
 const moduleName = computed(() => {
   const value = route.query.module
-  return (typeof value === 'string' ? value : '') || '当前模块'
+  return (typeof value === 'string' ? value : '') || t('pages.gaiop.accessDenied.currentModule')
 })
 
 const roleLabel = computed(() => {
   const role = authStore.currentUser?.role as UserRole | undefined
-  return role ? ROLE_LABELS[role] : '未知角色'
+  if (!role) return t('pages.gaiop.accessDenied.unknownRole')
+  const labels: Record<UserRole, string> = {
+    basic: t('pages.gaiop.users.basic'),
+    auditor: t('pages.gaiop.users.auditor'),
+    standard: t('pages.gaiop.users.standard'),
+    admin: t('pages.gaiop.users.admin'),
+  }
+  return labels[role] || ROLE_LABELS[role]
 })
 
 function goBack() {
@@ -39,19 +48,19 @@ function goBack() {
           <NIcon :component="LockClosedOutline" />
         </span>
         <div class="access-denied-copy">
-          <h1>无访问权限</h1>
-          <NText depth="3">当前访问模块：{{ moduleName }}</NText>
-          <NText depth="3">当前用户角色：{{ roleLabel }}</NText>
-          <p>当前账户无权访问此功能，如需使用请联系管理员。</p>
+          <h1>{{ t('pages.gaiop.accessDenied.title') }}</h1>
+          <NText depth="3">{{ t('pages.gaiop.accessDenied.module', { module: moduleName }) }}</NText>
+          <NText depth="3">{{ t('pages.gaiop.accessDenied.role', { role: roleLabel }) }}</NText>
+          <p>{{ t('pages.gaiop.accessDenied.description') }}</p>
         </div>
         <NSpace :size="10">
           <NButton secondary @click="goBack">
             <template #icon><NIcon :component="ArrowBackOutline" /></template>
-            返回上一页
+            {{ t('pages.gaiop.accessDenied.back') }}
           </NButton>
           <NButton type="primary" @click="router.push({ name: 'Dashboard' })">
             <template #icon><NIcon :component="GridOutline" /></template>
-            返回仪表盘
+            {{ t('pages.gaiop.accessDenied.dashboard') }}
           </NButton>
         </NSpace>
       </NSpace>
