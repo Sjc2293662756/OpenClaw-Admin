@@ -3368,7 +3368,7 @@ export default {
         companyTitle: '北京网深科技', companyDescription: '以网络与应用性能数据为基础，构建面向智能运维的分析与管理能力。', companyLink: '探索观枢 GAIOP',
       },
       login: {
-        brand: '观枢 GAIOP', platform: '智能运维分析平台', connecting: '正在连接平台服务...', username: '账户名', usernamePlaceholder: '请输入账户名', password: '密码', passwordPlaceholder: '请输入密码', login: '登录', retry: '重新连接', showPassword: '显示密码', hidePassword: '隐藏密码',
+        brand: '观枢 GAIOP', platform: '智能运维分析平台', title: 'NetInside 观枢 GAIOP 智能运维分析平台', connecting: '正在连接平台服务...', username: '账户名', usernamePlaceholder: '请输入账户名', password: '密码', passwordPlaceholder: '请输入密码', login: '登录', retry: '重新连接', showPassword: '显示密码', hidePassword: '隐藏密码',
         credentialsRequired: '请输入账户名和密码。', connectionTimeout: '服务连接超时，请稍后重试。', failed: '登录失败，请稍后重试。',
       },
       workspace: {

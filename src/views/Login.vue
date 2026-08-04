@@ -112,7 +112,7 @@ function handleRetry() {
     <div class="login-halo login-halo-top"></div>
     <div class="login-halo login-halo-bottom"></div>
 
-    <div class="login-brand" aria-label="NetInside GAIOP">
+    <div class="login-brand" :aria-label="t('pages.gaiop.login.title')">
       <span class="brand-logo"><span class="brand-net">Net</span><span class="brand-inside">Inside</span></span>
       <span class="brand-divider"></span>
       <span class="brand-product">{{ t('pages.gaiop.login.brand') }}</span>
@@ -120,9 +120,7 @@ function handleRetry() {
 
     <section class="login-shell" aria-labelledby="login-title">
       <div class="login-heading">
-        <h1 id="login-title">
-          <span class="title-net">Net</span><span class="title-inside">Inside</span><span class="title-name"> </span><span class="title-gaiop">GAIOP</span><span class="title-name"> {{ t('pages.gaiop.login.platform') }}</span>
-        </h1>
+        <h1 id="login-title">{{ t('pages.gaiop.login.title') }}</h1>
       </div>
 
       <div class="login-card">

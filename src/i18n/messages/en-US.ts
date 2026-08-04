@@ -3362,7 +3362,7 @@ export default {
         companyTitle: 'Beijing Wangshen Technology Co., Ltd.', companyDescription: 'Build analysis and management capabilities for intelligent operations on network and application performance data.', companyLink: 'Explore GAIOP',
       },
       login: {
-        brand: 'GAIOP', platform: 'Intelligent Operations Analytics Platform', connecting: 'Connecting to platform services...', username: 'Username', usernamePlaceholder: 'Enter username', password: 'Password', passwordPlaceholder: 'Enter password', login: 'Log in', retry: 'Reconnect', showPassword: 'Show password', hidePassword: 'Hide password',
+        brand: 'GAIOP', platform: 'Intelligent Operations Analytics Platform', title: 'NetInside Guanshu AI-driven Operations Platform', connecting: 'Connecting to platform services...', username: 'Username', usernamePlaceholder: 'Enter username', password: 'Password', passwordPlaceholder: 'Enter password', login: 'Log in', retry: 'Reconnect', showPassword: 'Show password', hidePassword: 'Hide password',
         credentialsRequired: 'Enter your username and password.', connectionTimeout: 'Connection to platform services timed out. Please try again.', failed: 'Login failed. Please try again.',
       },
       workspace: {
