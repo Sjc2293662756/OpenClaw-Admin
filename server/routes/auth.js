@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
-import { createLoginFailureTracker } from '../lib/account-security.js'
+import { createLoginFailureTracker, createLoginIpRateLimiter } from '../lib/account-security.js'
+import { getSafeSourceAddress } from '../lib/audit-service.js'
 
 export function createAuthRouter({
   db,
@@ -12,6 +13,7 @@ export function createAuthRouter({
   createId,
   getSessionSettings,
   loginFailures = createLoginFailureTracker(),
+  loginRateLimiter = createLoginIpRateLimiter(),
 }) {
   const router = Router()
 
@@ -21,6 +23,19 @@ export function createAuthRouter({
 
   router.post('/login', (req, res) => {
     if (!isAuthEnabled()) return sendOk(res, { message: '认证未启用' })
+
+    const sourceAddress = getSafeSourceAddress(req) || 'unknown'
+    const rateDecision = loginRateLimiter.consume(sourceAddress)
+    if (!rateDecision.allowed) {
+      if (rateDecision.shouldAudit) {
+        recordAudit({ username: 'anonymous', role: 'unknown' }, '登录频率限制', '管理平台', '同一来源登录请求超过服务端限制', {
+          req, category: 'authentication', result: 'denied', source: 'auth', errorCode: 'LOGIN_RATE_LIMITED',
+        })
+      }
+      res.locals.auditRejectionRecorded = true
+      res.setHeader('Retry-After', String(rateDecision.retryAfterSeconds))
+      return sendError(res, { status: 429, code: 'LOGIN_RATE_LIMITED', message: '登录请求过于频繁，请稍后再试' })
+    }
 
     const username = String(req.body?.username || '').trim()
     const password = String(req.body?.password || '')

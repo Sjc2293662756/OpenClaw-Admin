@@ -1,6 +1,8 @@
 export const PASSWORD_POLICY_MESSAGE = '密码至少8位，必须同时包含英文字母和数字'
 export const LOGIN_FAILURE_LIMIT = 5
 export const LOGIN_LOCK_MS = 5 * 60 * 1000
+export const LOGIN_IP_RATE_LIMIT = 30
+export const LOGIN_IP_RATE_WINDOW_MS = 10 * 60 * 1000
 
 export function validatePassword(password) {
   const value = String(password || '')
@@ -56,6 +58,42 @@ export function createLoginFailureTracker({
   }
 
   return { getState, recordFailure, clear }
+}
+
+export function createLoginIpRateLimiter({
+  limit = LOGIN_IP_RATE_LIMIT,
+  windowMs = LOGIN_IP_RATE_WINDOW_MS,
+  maxKeys = 5_000,
+  now = () => Date.now(),
+} = {}) {
+  const entries = new Map()
+
+  function consume(key) {
+    const normalizedKey = String(key || 'unknown').trim().slice(0, 80) || 'unknown'
+    const timestamp = now()
+    let entry = entries.get(normalizedKey)
+    if (!entry || entry.startedAt + windowMs <= timestamp) {
+      if (!entry && entries.size >= maxKeys) entries.delete(entries.keys().next().value)
+      entry = { startedAt: timestamp, count: 0, rejectionAudited: false }
+      entries.set(normalizedKey, entry)
+    }
+
+    entry.count += 1
+    if (entry.count <= limit) {
+      return { allowed: true, remaining: limit - entry.count, retryAfterSeconds: 0, shouldAudit: false }
+    }
+
+    const shouldAudit = !entry.rejectionAudited
+    entry.rejectionAudited = true
+    return {
+      allowed: false,
+      remaining: 0,
+      retryAfterSeconds: Math.max(1, Math.ceil((entry.startedAt + windowMs - timestamp) / 1_000)),
+      shouldAudit,
+    }
+  }
+
+  return { consume, size: () => entries.size }
 }
 
 function hasColumn(db, table, column) {

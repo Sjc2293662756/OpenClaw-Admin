@@ -3,6 +3,7 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import {
   createLoginFailureTracker,
+  createLoginIpRateLimiter,
   migrateUserSecurityColumns,
   validatePassword,
 } from './account-security.js'
@@ -32,6 +33,27 @@ test('login failures are case-insensitive, lock on the fifth failure, expire, an
   tracker.recordFailure('ExampleUser')
   tracker.clear('exampleuser')
   assert.equal(tracker.getState('EXAMPLEUSER').failures, 0)
+})
+
+test('login IP rate limiter returns a stable retry window and bounds tracked sources', () => {
+  let currentTime = 1_000
+  const limiter = createLoginIpRateLimiter({ limit: 2, windowMs: 60_000, maxKeys: 2, now: () => currentTime })
+  assert.deepEqual(limiter.consume('203.0.113.10'), {
+    allowed: true, remaining: 1, retryAfterSeconds: 0, shouldAudit: false,
+  })
+  assert.equal(limiter.consume('203.0.113.10').allowed, true)
+  const rejected = limiter.consume('203.0.113.10')
+  assert.equal(rejected.allowed, false)
+  assert.equal(rejected.retryAfterSeconds, 60)
+  assert.equal(rejected.shouldAudit, true)
+  assert.equal(limiter.consume('203.0.113.10').shouldAudit, false)
+
+  limiter.consume('203.0.113.11')
+  limiter.consume('203.0.113.12')
+  assert.equal(limiter.size(), 2)
+
+  currentTime += 60_000
+  assert.equal(limiter.consume('203.0.113.10').allowed, true)
 })
 
 test('user security migration is idempotent and preserves existing account data', () => {

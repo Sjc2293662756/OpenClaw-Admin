@@ -7,6 +7,7 @@ import express from 'express'
 import { createRoleMiddleware } from '../lib/permissions.js'
 import {
   createLoginFailureTracker,
+  createLoginIpRateLimiter,
   isPasswordChangeRequest,
   migrateUserSecurityColumns,
 } from '../lib/account-security.js'
@@ -50,7 +51,7 @@ function publicUser(user) {
   }
 }
 
-async function createFixture() {
+async function createFixture({ loginRateLimiter } = {}) {
   const db = new Database(':memory:')
   db.exec(`
     CREATE TABLE users (
@@ -99,8 +100,9 @@ async function createFixture() {
   }
   const adminMiddleware = createRoleMiddleware(authMiddleware, ['admin'], '仅管理员可以执行此操作')
   const accountViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '账户信息仅审计用户和管理员可查看')
-  const recordAudit = (user, action, target = '', detail = '') => {
-    audits.push({ user, action, target, detail })
+  const recordAudit = (user, action, target = '', detail = '', metadata = {}) => {
+    const { req: _req, ...safeMetadata } = metadata
+    audits.push({ user, action, target, detail, metadata: safeMetadata })
   }
 
   app.use('/api/auth', createAuthRouter({
@@ -113,6 +115,7 @@ async function createFixture() {
     createId: randomUUID,
     getSessionSettings: () => ({ loginSessionHours: 24 }),
     loginFailures,
+    loginRateLimiter,
   }))
   app.use('/api/users', createUsersRouter({
     db,
@@ -231,6 +234,26 @@ test('administrative reset, deletion, and recreation clear the matching login lo
     assert.equal(recreated.response.status, 201)
     assert.equal(fixture.loginFailures.getState('basic-user').failures, 0)
     assert.equal((await fixture.login('basic-user', PASSWORDS.replacement)).response.status, 200)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('login route applies a server-side source rate limit with 429 and audit metadata', async () => {
+  const fixture = await createFixture({
+    loginRateLimiter: createLoginIpRateLimiter({ limit: 2, windowMs: 60_000 }),
+  })
+  try {
+    assert.equal((await fixture.login('missing-one', 'WrongPass9!')).response.status, 401)
+    assert.equal((await fixture.login('missing-two', 'WrongPass9!')).response.status, 401)
+    const limited = await fixture.login('basic-user', PASSWORDS.basic)
+    assert.equal(limited.response.status, 429)
+    assert.equal(limited.body.code, 'LOGIN_RATE_LIMITED')
+    assert.match(limited.response.headers.get('retry-after'), /^\d+$/)
+    assert.equal(fixture.sessions.size, 0)
+    const audit = fixture.audits.find(entry => entry.action === '登录频率限制')
+    assert.equal(audit.metadata.errorCode, 'LOGIN_RATE_LIMITED')
+    assert.equal(audit.detail.includes('WrongPass9!'), false)
   } finally {
     await fixture.close()
   }

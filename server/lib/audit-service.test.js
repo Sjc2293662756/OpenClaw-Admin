@@ -3,7 +3,7 @@ import { once } from 'node:events'
 import test from 'node:test'
 import Database from 'better-sqlite3'
 import express from 'express'
-import { createAuditRecorder, createAuditRejectionMiddleware, migrateAuditLogColumns } from './audit-service.js'
+import { createAuditRecorder, createAuditRejectionMiddleware, getSafeSourceAddress, migrateAuditLogColumns } from './audit-service.js'
 import { createRoleMiddleware, rpcPermissionMiddleware } from './permissions.js'
 import { registerRetiredApiBarriers } from './legacy-api.js'
 import { createAuditRouter } from '../routes/audit.js'
@@ -69,6 +69,12 @@ test('structured recorder remains compatible with recordAudit and redacts sensit
   } finally {
     db.close()
   }
+})
+
+test('source address accepts forwarded clients only from a loopback trusted proxy', () => {
+  assert.equal(getSafeSourceAddress({ socket: { remoteAddress: '::ffff:127.0.0.1' }, ip: '198.51.100.20' }), '198.51.100.20')
+  assert.equal(getSafeSourceAddress({ socket: { remoteAddress: '203.0.113.30' }, ip: '198.51.100.20' }), '203.0.113.30')
+  assert.equal(getSafeSourceAddress({ socket: { remoteAddress: '::1' }, ip: '::1' }), '::1')
 })
 
 test('audit query bounds browsable pages by server-side TOP without changing real totals or summaries', async () => {

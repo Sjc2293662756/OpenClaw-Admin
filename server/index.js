@@ -1,5 +1,4 @@
 import express from 'express'
-import cors from 'cors'
 import compression from 'compression'
 import { createServer } from 'http'
 import { randomUUID, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
@@ -43,6 +42,7 @@ import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
 import { createMediaRouter } from './routes/media.js'
 import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
+import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   SESSION_LIST_METHODS,
@@ -104,6 +104,7 @@ function loadEnvConfig() {
     GAIOP_REPORT_PROVENANCE_STORE_DIR: value('GAIOP_REPORT_PROVENANCE_STORE_DIR', '/var/lib/gaiop/runtime/report-provenance'),
     GAIOP_UPGRADE_SERVICE_URL: value('GAIOP_UPGRADE_SERVICE_URL'),
     GAIOP_UPGRADE_INTERNAL_TOKEN: value('GAIOP_UPGRADE_INTERNAL_TOKEN'),
+    GAIOP_ALLOWED_ORIGINS: value('GAIOP_ALLOWED_ORIGINS'),
   }
 }
 
@@ -124,6 +125,7 @@ function debug(...args) {
 
 const app = express()
 const server = createServer(app)
+configureTrustedProxy(app)
 
 const distPath = join(__dirname, '../dist')
 const hasDist = existsSync(join(distPath, 'index.html'))
@@ -132,7 +134,10 @@ const sessions = new Map()
 const loginFailures = createLoginFailureTracker()
 const { recordAudit, recordAuditEvent } = createAuditRecorder(db)
 
-app.use(cors())
+app.use(createCorsMiddleware({
+  allowedOrigins: envConfig.GAIOP_ALLOWED_ORIGINS,
+  isDevelopment: process.env.NODE_ENV !== 'production',
+}))
 app.use(compression({
   threshold: 1024,
   filter: (req, res) => req.path !== '/api/events' && compression.filter(req, res),

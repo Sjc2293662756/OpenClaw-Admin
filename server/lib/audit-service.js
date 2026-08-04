@@ -36,7 +36,10 @@ export function normalizeAuditPath(req) {
 }
 
 export function getSafeSourceAddress(req) {
-  const address = String(req.socket?.remoteAddress || '').trim()
+  const socketAddress = String(req.socket?.remoteAddress || '').trim()
+  const normalizedSocket = socketAddress.startsWith('::ffff:') ? socketAddress.slice(7) : socketAddress
+  const trustedProxy = normalizedSocket === '127.0.0.1' || normalizedSocket === '::1'
+  const address = trustedProxy ? String(req.ip || socketAddress).trim() : socketAddress
   if (!address) return null
   return address.startsWith('::ffff:') ? address.slice(7, 80) : address.slice(0, 80)
 }
