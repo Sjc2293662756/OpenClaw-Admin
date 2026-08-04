@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { routes } from './routes'
 import { useAuthStore } from '@/stores/auth'
 import { installChunkLoadRecovery } from './chunk-recovery'
-import { canAccessRoute, getPageAccess } from '@/permissions/access-control'
+import { canAccessRoute, getPageAccess, resolveConfigManagementRedirect } from '@/permissions/access-control'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -41,7 +41,10 @@ router.beforeEach(async (to, from, next) => {
             next({ name: 'PasswordChange' })
           } else {
             const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/workspace'
-            next(redirect)
+            const entry = typeof to.query.entry === 'string' ? to.query.entry : ''
+            next(entry === 'config'
+              ? resolveConfigManagementRedirect(authStore.currentUser?.role, redirect)
+              : redirect)
           }
           return
         }

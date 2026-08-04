@@ -39,6 +39,8 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   admin: '管理员',
 }
 
+export const MANAGEMENT_ACCESS_DENIED_NOTICE = 'management-access-denied'
+
 export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   dashboard: { moduleName: '仪表盘', roles: NON_BASIC_ROLES },
   alerts: { moduleName: '告警通知', roles: NON_BASIC_ROLES },
@@ -106,6 +108,18 @@ export function canAccessPage(role: UserRole | null | undefined, key: PageAccess
 
 export function canUseConversation(role: UserRole | null | undefined): boolean {
   return role === 'basic' || role === 'standard' || role === 'admin'
+}
+
+export function resolveConfigManagementRedirect(
+  role: UserRole | null | undefined,
+  requestedRedirect: string,
+) {
+  if (canAccessPage(role, 'dashboard')) return requestedRedirect
+
+  return {
+    name: 'ChatWorkspace',
+    query: { notice: MANAGEMENT_ACCESS_DENIED_NOTICE },
+  }
 }
 
 export function canAccessRoute(role: UserRole | null | undefined, routeName: string | symbol | null | undefined): boolean {

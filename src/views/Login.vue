@@ -5,6 +5,7 @@ import { NAlert, NButton, NForm, NInput, NSpin } from 'naive-ui'
 import { ConnectionState } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
+import { resolveConfigManagementRedirect } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
@@ -33,7 +34,10 @@ function redirectToPlatform() {
     return
   }
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/workspace'
-  router.push(redirect)
+  const entry = typeof route.query.entry === 'string' ? route.query.entry : ''
+  router.push(entry === 'config'
+    ? resolveConfigManagementRedirect(authStore.currentUser?.role, redirect)
+    : redirect)
 }
 
 onMounted(async () => {

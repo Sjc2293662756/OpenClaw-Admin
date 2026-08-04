@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   PAGE_ACCESS_MATRIX,
+  MANAGEMENT_ACCESS_DENIED_NOTICE,
   canAccessPage,
   canAccessRoute,
   canUseConversation,
   getPageAccess,
+  resolveConfigManagementRedirect,
   type PageAccessKey,
   type UserRole,
 } from './access-control'
@@ -62,5 +64,14 @@ describe('four-role page access matrix', () => {
     expect(canUseConversation('standard')).toBe(true)
     expect(canUseConversation('admin')).toBe(true)
     expect(canUseConversation('auditor')).toBe(false)
+  })
+
+  it('returns a basic user from the configuration-management login to the workspace', () => {
+    expect(resolveConfigManagementRedirect('basic', '/')).toEqual({
+      name: 'ChatWorkspace',
+      query: { notice: MANAGEMENT_ACCESS_DENIED_NOTICE },
+    })
+    expect(resolveConfigManagementRedirect('admin', '/')).toBe('/')
+    expect(resolveConfigManagementRedirect('standard', '/dashboard?range=today')).toBe('/dashboard?range=today')
   })
 })

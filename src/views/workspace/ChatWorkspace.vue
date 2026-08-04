@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAvatar, NButton, NEmpty, NIcon, NPopconfirm, NSpin, NTooltip, useMessage } from 'naive-ui'
+import { NAvatar, NButton, NEmpty, NIcon, NModal, NPopconfirm, NSpin, NSpace, NText, NTooltip, useMessage } from 'naive-ui'
 import {
   AddOutline,
   ArrowBackOutline,
@@ -26,7 +26,7 @@ import {
   isLegacyDefaultSession,
 } from '@/utils/session-presentation'
 import type { Session } from '@/api/types'
-import { canAccessPage } from '@/permissions/access-control'
+import { canAccessPage, MANAGEMENT_ACCESS_DENIED_NOTICE } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
 
 const router = useRouter()
@@ -48,6 +48,7 @@ const ready = ref(wsStore.state === ConnectionState.CONNECTED)
 const creatingSession = ref(false)
 const historyRefreshing = ref(false)
 const userMenuOpen = ref(false)
+const showManagementAccessDenied = ref(false)
 let unsubscribeState: (() => void) | null = null
 
 const connectionText = computed(() => {
@@ -88,6 +89,12 @@ watch(selectedSession, () => {
   clearWorkspacePreviewForNewConversation()
 })
 
+watch(
+  () => route.query.notice,
+  () => consumeManagementAccessNotice(),
+  { immediate: true },
+)
+
 const historySessions = computed(() =>
   [...sessionStore.sessions]
     // OpenClaw's protected default runtime session is not a user conversation.
@@ -103,6 +110,23 @@ function sessionTitle(session: Session) {
 
 function openSession(key: string) {
   router.replace({ name: 'ChatWorkspace', query: { session: key, ...(alertReturnAvailable.value ? { alertReturn: '1' } : {}) } })
+}
+
+function openAdminConsole() {
+  userMenuOpen.value = false
+  if (canAccessAdminConsole.value) {
+    void router.push({ name: 'Dashboard' })
+    return
+  }
+  showManagementAccessDenied.value = true
+}
+
+function consumeManagementAccessNotice() {
+  if (route.query.notice !== MANAGEMENT_ACCESS_DENIED_NOTICE || canAccessAdminConsole.value) return
+
+  showManagementAccessDenied.value = true
+  const { notice: _notice, ...query } = route.query
+  void router.replace({ name: 'ChatWorkspace', query })
 }
 
 function returnToAlertNotifications() {
@@ -258,7 +282,7 @@ onUnmounted(() => {
           <button type="button" @click="router.push({ name: 'PasswordChange' })">
             <NIcon :component="LockClosedOutline" /> {{ t('pages.gaiop.workspace.changePassword') }}
           </button>
-          <button v-if="canAccessAdminConsole" type="button" @click="router.push({ name: 'Dashboard' })">
+          <button type="button" @click="openAdminConsole">
             <NIcon :component="GridOutline" /> {{ t('pages.gaiop.workspace.adminConsole') }}
           </button>
           <button type="button" class="danger" @click="logout">
@@ -281,7 +305,7 @@ onUnmounted(() => {
           </NButton>
           <NTooltip>
             <template #trigger>
-              <NButton v-if="canAccessAdminConsole" secondary type="primary" @click="router.push({ name: 'Dashboard' })">
+              <NButton secondary type="primary" @click="openAdminConsole">
                 <template #icon><NIcon :component="GridOutline" /></template>
                 {{ t('pages.gaiop.workspace.adminConsole') }}
               </NButton>
@@ -300,6 +324,18 @@ onUnmounted(() => {
         <NButton v-if="canRetryConnection" type="primary" secondary @click="retryConnection">{{ t('pages.gaiop.workspace.reconnect') }}</NButton>
       </div>
     </section>
+
+    <NModal v-model:show="showManagementAccessDenied" preset="card" :title="t('pages.gaiop.accessDenied.title')" :style="{ width: 'min(460px, calc(100vw - 32px))' }">
+      <NSpace vertical align="center" :size="16" class="management-access-denied-dialog">
+        <span class="management-access-denied-icon"><NIcon :component="LockClosedOutline" /></span>
+        <NText depth="3">{{ t('pages.gaiop.workspace.managementAccessDenied') }}</NText>
+      </NSpace>
+      <template #footer>
+        <NButton type="primary" @click="showManagementAccessDenied = false">
+          {{ t('pages.gaiop.workspace.managementAccessDeniedConfirm') }}
+        </NButton>
+      </template>
+    </NModal>
   </main>
 </template>
 
@@ -311,6 +347,22 @@ onUnmounted(() => {
   overflow: hidden;
   background: #f8fbf9;
   color: #173e31;
+}
+
+.management-access-denied-dialog {
+  padding: 10px 6px 4px;
+  text-align: center;
+}
+
+.management-access-denied-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  color: var(--primary-color);
+  font-size: 29px;
 }
 
 .workspace-sidebar {
