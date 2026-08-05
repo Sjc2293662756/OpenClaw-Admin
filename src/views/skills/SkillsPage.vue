@@ -19,6 +19,7 @@ import { useI18n } from 'vue-i18n'
 import { useSkillStore } from '@/stores/skill'
 import type { Skill } from '@/api/types'
 import { usePermissions } from '@/composables/usePermissions'
+import { formatGAIOPDisplayText } from '@/utils/platform-branding'
 
 const skillStore = useSkillStore()
 const { t } = useI18n()
@@ -193,7 +194,7 @@ const pluginGroups = computed(() => {
                 <NCard hoverable style="border-radius: var(--radius);">
                   <NSpace vertical :size="10">
                     <NSpace justify="space-between" align="center">
-                      <NText strong style="font-size: 15px;">{{ skill.name }}</NText>
+                      <NText strong style="font-size: 15px;">{{ formatGAIOPDisplayText(skill.name) }}</NText>
                       <NSpace :size="6">
                         <NTag :type="sourceType(skill.source)" size="tiny" :bordered="false" round>
                           {{ sourceLabel(skill.source) }}
@@ -205,7 +206,7 @@ const pluginGroups = computed(() => {
                     </NSpace>
 
                     <NText depth="3" class="skill-desc">
-                      {{ skill.description || t('common.noDescription') }}
+                      {{ formatGAIOPDisplayText(skill.description) || t('common.noDescription') }}
                     </NText>
 
                     <NSpace justify="space-between" align="center">
