@@ -99,7 +99,7 @@ function pathsFromExecResult(message, roots) {
     .filter(Boolean))]
 }
 
-function resolveExecArtifactPair(message, roots) {
+function resolveExecArtifactPair(message, roots, eventTimestamp = null) {
   const referenced = pathsFromExecResult(message, roots)
   const names = new Set(referenced.map((candidate) => basename(candidate)))
   const outputText = messageTexts(message).join('\n')
@@ -133,7 +133,16 @@ function resolveExecArtifactPair(message, roots) {
     const filePath = pairedReportPath(auditPath, audit, root)
     if (filePath && (reports.includes(filePath) || mentionedAudits.includes(auditPath))) matches.push({ filePath, auditPath, reportId: audit.reportId })
   }
-  return matches.length === 1 ? matches[0] : null
+  if (matches.length === 1) return matches[0]
+  const eventTime = Date.parse(String(eventTimestamp || ''))
+  if (!Number.isFinite(eventTime)) return null
+  const timely = matches.filter(({ auditPath }) => {
+    const audit = readJson(auditPath)
+    const generatedAt = Date.parse(String(audit?.generatedAt || ''))
+    const observedAt = Number.isFinite(generatedAt) ? generatedAt : statSync(auditPath).mtimeMs
+    return Math.abs(eventTime - observedAt) <= 15 * 60_000
+  })
+  return timely.length === 1 ? timely[0] : null
 }
 
 function reportToolResults(sessionFile, roots, previousOffset = 0) {
@@ -159,7 +168,7 @@ function reportToolResults(sessionFile, roots, previousOffset = 0) {
       const result = parseToolResult(message)
       if (result) output.results.push({ result, evidence: 'official_tool_result', timestamp: safeText(value.timestamp || message.timestamp, 128) })
     } else if (message?.toolName === 'exec') {
-      const pair = resolveExecArtifactPair(message, roots)
+      const pair = resolveExecArtifactPair(message, roots, value.timestamp || message.timestamp)
       if (pair) output.results.push({ result: pair, evidence: 'exec_tool_result', timestamp: safeText(value.timestamp || message.timestamp, 128) })
     }
   }
@@ -305,7 +314,7 @@ function readExistingEntries(indexPath) {
 
 function readWorkerState(statePath) {
   const payload = readJson(statePath)
-  return payload?.schemaVersion === 'gaiop.report-attribution-state.v7' && payload.files && typeof payload.files === 'object'
+  return payload?.schemaVersion === 'gaiop.report-attribution-state.v8' && payload.files && typeof payload.files === 'object'
     ? payload.files
     : {}
 }
@@ -324,7 +333,7 @@ function writeIndex(indexPath, entries) {
 
 function writeWorkerState(statePath, files) {
   const temporary = `${statePath}.tmp-${process.pid}`
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v7', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v8', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
   renameSync(temporary, statePath)
 }
 
