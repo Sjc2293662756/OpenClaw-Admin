@@ -138,14 +138,17 @@ function syncGeneratedReports(db) {
       const reportId = safeText(audit.reportId)
       const auditDirectory = dirname(auditName)
       const declaredAuditName = safeText(audit.relativeAuditPath)
+      const declaredFileName = safeText(audit.relativeFilePath)
+      const legacyFileName = safeText(audit.fileName)
       // New formal archives must self-identify the exact paired audit file.
       // A deployed legacy generator omitted relativeAuditPath for otherwise
-      // valid nested pairs. Accept only its deterministic audit filename;
+      // valid nested pairs. Accept only a same-directory fileName pair;
       // root-level historical imports remain the only other compatibility path.
-      const legacyNestedAuditName = reportId ? `${auditDirectory}/${reportId}.json` : null
+      const legacyNestedPair = !declaredAuditName && !declaredFileName
+        && legacyFileName && legacyFileName === basename(legacyFileName)
       if (auditDirectory !== '.' && declaredAuditName && declaredAuditName.replace(/\\/g, '/') !== auditName) continue
-      if (auditDirectory !== '.' && !declaredAuditName && legacyNestedAuditName !== auditName) continue
-      const declaredName = safeText(audit.relativeFilePath) || safeText(audit.fileName)
+      if (auditDirectory !== '.' && !declaredAuditName && !legacyNestedPair) continue
+      const declaredName = declaredFileName || legacyFileName
       let storedName = declaredName && resolveStoredReportPath(declaredName) ? declaredName.replace(/\\/g, '/') : null
       if (!storedName) {
         const legacyName = basename(safeText(audit.filePath) || '')
@@ -154,6 +157,7 @@ function syncGeneratedReports(db) {
       if (storedName && auditDirectory !== '.' && !storedName.includes('/')) storedName = `${auditDirectory}/${storedName}`
       const reportPath = resolveStoredReportPath(storedName)
       if (!reportId || !storedName || !reportPath) continue
+      if (auditDirectory !== '.' && legacyNestedPair && !existsSync(reportPath)) continue
       // A JSON audit can only describe its sibling report file. This prevents a
       // malformed audit in one user/type directory from registering another
       // controlled file under an arbitrary ownership record.

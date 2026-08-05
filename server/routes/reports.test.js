@@ -114,8 +114,8 @@ test('formal report archive imports only a matched audit pair and isolates the o
   // Legacy deployed generators wrote the report ID audit name but omitted the
   // relative path fields. It remains safe only when it is the sibling pair.
   writeFileSync(join(reportDirectory, 'legacy-report.docx'), 'legacy report')
-  writeFileSync(join(reportDirectory, 'legacy-report.json'), JSON.stringify({
-    reportId: 'legacy-report',
+  writeFileSync(join(reportDirectory, 'legacy-metadata.json'), JSON.stringify({
+    reportId: 'legacy-report-id',
     fileName: 'legacy-report.docx',
     title: '旧契约正式归档报告',
     reportType: 'quick report',
@@ -123,6 +123,12 @@ test('formal report archive imports only a matched audit pair and isolates the o
     sourceSessionId: 'session-a',
     sourceChannel: 'web',
     generatedAt: new Date().toISOString(),
+  }))
+  writeFileSync(join(reportDirectory, 'legacy-missing.json'), JSON.stringify({
+    reportId: 'legacy-missing',
+    fileName: 'missing.docx',
+    reportType: 'quick report',
+    sourceUserId: 'user a',
   }))
   const deliveryDirectory = join(reportRoot, '.delivery-events')
   mkdirSync(deliveryDirectory)
@@ -168,7 +174,8 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.deepEqual(reportOne, {
       id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: reportOne.createdAt, updatedAt: reportOne.updatedAt,
     })
-    assert.equal(payload.reports.find((report) => report.id === 'legacy-report')?.status, 'ready')
+    assert.equal(payload.reports.find((report) => report.id === 'legacy-report-id')?.status, 'ready')
+    assert.equal(payload.reports.find((report) => report.id === 'legacy-missing'), undefined)
     const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
     const otherUserPayload = await otherUserResponse.json()
     assert.equal(otherUserResponse.status, 200)
