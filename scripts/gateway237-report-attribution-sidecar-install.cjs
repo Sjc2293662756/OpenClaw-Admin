@@ -49,7 +49,8 @@ userctl() {
 }
 phase='service'
 userctl daemon-reload
-userctl enable --now gaiop-report-attribution.service >/dev/null
+userctl enable gaiop-report-attribution.service >/dev/null
+userctl restart gaiop-report-attribution.service
 for _ in $(seq 1 20); do
   userctl is-active --quiet gaiop-report-attribution.service && break
   sleep 1
