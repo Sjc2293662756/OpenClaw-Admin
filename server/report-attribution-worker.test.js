@@ -103,8 +103,8 @@ test('sidecar accepts an exec result only when it names one exact controlled rep
   mkdirSync(migratedDirectory)
   const reportFile = join(migratedDirectory, 'exec-report.docx')
   const auditFile = join(migratedDirectory, 'exec-report.json')
-  const historicalReportPath = join(legacyRoot, 'previous', 'exec-report.docx')
-  const historicalAuditPath = join(legacyRoot, 'previous', 'exec-report.json')
+  const historicalReportPath = '/tmp/previous/exec-report.docx'
+  const historicalAuditPath = '/tmp/previous/exec-report.json'
   writeFileSync(reportFile, 'exec report')
   writeFileSync(auditFile, JSON.stringify({ reportId: 'exec-report', fileName: 'exec-report.docx' }))
   const sessionFile = join(sessionsRoot, 'wecom.jsonl')
