@@ -103,8 +103,6 @@ test('sidecar accepts an exec result only when it names one exact controlled rep
   mkdirSync(migratedDirectory)
   const reportFile = join(migratedDirectory, 'exec-report.docx')
   const auditFile = join(migratedDirectory, 'exec-report.json')
-  const historicalReportPath = '/tmp/previous/exec-report.docx'
-  const historicalAuditPath = '/tmp/previous/exec-report.json'
   writeFileSync(reportFile, 'exec report')
   writeFileSync(auditFile, JSON.stringify({ reportId: 'exec-report', fileName: 'exec-report.docx' }))
   const sessionFile = join(sessionsRoot, 'wecom.jsonl')
@@ -112,7 +110,7 @@ test('sidecar accepts an exec result only when it names one exact controlled rep
     timestamp: new Date().toISOString(),
     message: {
       role: 'toolResult', toolName: 'exec',
-      content: [{ type: 'text', text: `completed\n${historicalReportPath}\n${historicalAuditPath}` }],
+      content: [{ type: 'text', text: 'completed\nexec-report.docx\nexec-report.json' }],
     },
   })}\n`)
   const sessionKey = 'agent:main:wecom:direct:yangs'

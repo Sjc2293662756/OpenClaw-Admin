@@ -102,6 +102,7 @@ function pathsFromExecResult(message, roots) {
 function resolveExecArtifactPair(message, roots) {
   const referenced = pathsFromExecResult(message, roots)
   const names = new Set(referenced.map((candidate) => basename(candidate)))
+  const outputText = messageTexts(message).join('\n')
   const relocated = []
   for (const root of roots) {
     const pending = [root]
@@ -110,7 +111,7 @@ function resolveExecArtifactPair(message, roots) {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
         const entryPath = join(directory, entry.name)
         if (entry.isDirectory()) pending.push(entryPath)
-        else if (entry.isFile() && names.has(entry.name)) relocated.push(entryPath)
+        else if (entry.isFile() && (names.has(entry.name) || outputText.includes(entry.name))) relocated.push(entryPath)
       }
     }
   }
@@ -299,7 +300,7 @@ function readExistingEntries(indexPath) {
 
 function readWorkerState(statePath) {
   const payload = readJson(statePath)
-  return payload?.schemaVersion === 'gaiop.report-attribution-state.v5' && payload.files && typeof payload.files === 'object'
+  return payload?.schemaVersion === 'gaiop.report-attribution-state.v6' && payload.files && typeof payload.files === 'object'
     ? payload.files
     : {}
 }
@@ -318,7 +319,7 @@ function writeIndex(indexPath, entries) {
 
 function writeWorkerState(statePath, files) {
   const temporary = `${statePath}.tmp-${process.pid}`
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v5', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v6', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
   renameSync(temporary, statePath)
 }
 
