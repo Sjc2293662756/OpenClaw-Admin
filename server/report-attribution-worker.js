@@ -121,12 +121,17 @@ function resolveExecArtifactPair(message, roots) {
   ])]
   const reports = candidates.filter((candidate) => extname(candidate).toLowerCase() !== '.json')
   const matches = []
-  for (const auditPath of candidates.filter((candidate) => extname(candidate).toLowerCase() === '.json')) {
+  const mentionedAudits = candidates.filter((candidate) => extname(candidate).toLowerCase() === '.json')
+  const auditCandidates = new Set(mentionedAudits)
+  if (reports.length) {
+    for (const root of roots) for (const auditPath of listJsonFiles(root)) auditCandidates.add(auditPath)
+  }
+  for (const auditPath of auditCandidates) {
     const root = roots.find((candidateRoot) => isWithin(candidateRoot, auditPath))
     const audit = readJson(auditPath)
     if (!root || !safeText(audit?.reportId, 512)) continue
     const filePath = pairedReportPath(auditPath, audit, root)
-    if (filePath && reports.includes(filePath)) matches.push({ filePath, auditPath, reportId: audit.reportId })
+    if (filePath && (reports.includes(filePath) || mentionedAudits.includes(auditPath))) matches.push({ filePath, auditPath, reportId: audit.reportId })
   }
   return matches.length === 1 ? matches[0] : null
 }
@@ -300,7 +305,7 @@ function readExistingEntries(indexPath) {
 
 function readWorkerState(statePath) {
   const payload = readJson(statePath)
-  return payload?.schemaVersion === 'gaiop.report-attribution-state.v6' && payload.files && typeof payload.files === 'object'
+  return payload?.schemaVersion === 'gaiop.report-attribution-state.v7' && payload.files && typeof payload.files === 'object'
     ? payload.files
     : {}
 }
@@ -319,7 +324,7 @@ function writeIndex(indexPath, entries) {
 
 function writeWorkerState(statePath, files) {
   const temporary = `${statePath}.tmp-${process.pid}`
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v6', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v7', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
   renameSync(temporary, statePath)
 }
 

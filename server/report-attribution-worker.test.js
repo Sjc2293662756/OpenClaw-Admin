@@ -110,7 +110,7 @@ test('sidecar accepts an exec result only when it names one exact controlled rep
     timestamp: new Date().toISOString(),
     message: {
       role: 'toolResult', toolName: 'exec',
-      content: [{ type: 'text', text: 'completed\nexec-report.docx\nexec-report.json' }],
+      content: [{ type: 'text', text: 'completed\nexec-report.docx' }],
     },
   })}\n`)
   const sessionKey = 'agent:main:wecom:direct:yangs'
