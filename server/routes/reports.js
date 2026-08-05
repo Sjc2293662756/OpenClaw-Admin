@@ -2,6 +2,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, sta
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'path'
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
+import { readReportAttributionIndex, resolveReportAttribution } from '../lib/report-attribution-index.js'
 import { getReportStorageRoot } from '../lib/report-storage-path.js'
 
 const reportRoot = getReportStorageRoot()
@@ -86,8 +87,8 @@ function readExactFilter(value) {
   return text ? text.slice(0, 160) : null
 }
 
-function resolveReportDataSourceId(db, audit) {
-  const declared = safeText(audit?.dataSourceId)
+function resolveReportDataSourceId(db, audit, attribution = null) {
+  const declared = safeText(audit?.dataSourceId) || safeText(audit?.dataSource?.id) || safeText(attribution?.dataSourceId)
   if (declared) return declared
   try {
     const active = db.prepare('SELECT id FROM data_sources WHERE is_active = 1 ORDER BY id LIMIT 2').all()
@@ -104,6 +105,7 @@ function resolveReportDataSourceId(db, audit) {
  */
 function syncGeneratedReports(db) {
   ensureReportRoot()
+  const attributionEntries = readReportAttributionIndex()
   const insert = db.prepare(`
     INSERT INTO report_files (
       id, stored_name, audit_name, original_name, report_type,
@@ -162,13 +164,23 @@ function syncGeneratedReports(db) {
       // malformed audit in one user/type directory from registering another
       // controlled file under an arbitrary ownership record.
       if (dirname(storedName) !== auditDirectory) continue
-      const sourceUserId = safeText(audit.sourceUserId)
+      const attribution = resolveReportAttribution(attributionEntries, { storedName, auditName, reportId })
+      const declaredSourceUserId = safeText(audit.sourceUserId)
       const storedSegments = storedName.split('/')
       // Legacy archives without trusted provenance must remain unattributed.
       // Their historical directory labels are not an authorization source.
-      const legacyUnattributedPair = auditDirectory !== '.' && legacyNestedPair && !sourceUserId
-      if (!legacyUnattributedPair && auditDirectory !== '.' && storedSegments[0] !== archiveDirectorySegment(sourceUserId, '_unattributed')) continue
+      const legacyUnattributedPair = auditDirectory !== '.' && legacyNestedPair && !declaredSourceUserId
+      if (!legacyUnattributedPair && auditDirectory !== '.' && storedSegments[0] !== archiveDirectorySegment(declaredSourceUserId, '_unattributed')) continue
       if (!legacyUnattributedPair && auditDirectory !== '.' && storedSegments[1] !== archiveDirectorySegment(audit.reportType, 'report')) continue
+
+      // The sidecar observes only successful official report tool results and
+      // records attribution separately. It never edits the Skill's report or
+      // audit JSON. Existing signed audit provenance remains authoritative.
+      const sourceUserId = declaredSourceUserId || safeText(attribution?.sourceUserId)
+      const sourceSessionId = safeText(audit.sourceSessionId) || safeText(attribution?.sourceSessionId)
+      const sourceChannel = safeText(audit.sourceChannel) || safeText(attribution?.sourceChannel)
+      const sourceChannelUserId = safeText(audit.sourceChannelUserId) || safeText(attribution?.sourceChannelUserId)
+      const sourceChannelUserName = safeText(audit.sourceChannelUserName) || safeText(attribution?.sourceChannelUserName)
 
       const exists = existsSync(reportPath)
       const createdAt = Date.parse(audit.generatedAt || '') || statSync(auditPath).mtimeMs || Date.now()
@@ -179,14 +191,14 @@ function syncGeneratedReports(db) {
         auditName,
         basename(safeText(audit.title) || storedName),
         safeText(audit.reportType) || 'analysis',
-        safeText(audit.sourceSessionId),
+        sourceSessionId,
         sourceUserId,
-        safeText(audit.sourceChannel),
-        safeText(audit.sourceChannelUserId),
-        safeText(audit.sourceChannelUserName),
+        sourceChannel,
+        sourceChannelUserId,
+        sourceChannelUserName,
         safeText(audit.sourceMessageId),
         safeText(audit.sourceMessagePreview),
-        resolveReportDataSourceId(db, audit),
+        resolveReportDataSourceId(db, audit, attribution),
         inferMimeType(storedName),
         exists ? statSync(reportPath).size : 0,
         exists ? 'ready' : 'missing',

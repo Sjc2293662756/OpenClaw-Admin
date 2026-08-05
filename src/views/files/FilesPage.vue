@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInputNumber, NSelect, NSpace, NTag, NText, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
 import { DownloadOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
@@ -45,6 +45,7 @@ const pageSize = ref(10)
 const resultLimitChoice = ref('200')
 const customResultLimit = ref<number | null>(null)
 const page = ref(1)
+let refreshTimer: ReturnType<typeof setInterval> | null = null
 
 const isAdmin = computed(() => authStore.isAdmin)
 const isCustomLimit = computed(() => resultLimitChoice.value === 'custom')
@@ -160,8 +161,8 @@ const pagedReports = computed(() => {
 })
 const hasMore = computed(() => page.value < pageCount.value)
 
-async function refresh(showMessage = true) {
-  loading.value = true
+async function refresh(showMessage = true, background = false) {
+  if (!background) loading.value = true
   try {
     const response = await fetch('/api/reports', { headers: headers() })
     const data = await readJsonResponse(response, text('获取报告列表失败', 'Failed to load reports'))
@@ -169,12 +170,12 @@ async function refresh(showMessage = true) {
     const responseTime = Date.parse(response.headers.get('date') || '')
     if (Number.isFinite(responseTime)) serverNow.value = responseTime
     reports.value = data.reports || []
-    page.value = 1
+    if (!background) page.value = 1
     if (showMessage) message.success(text('报告列表已刷新', 'Report list refreshed'))
   } catch (error) {
     message.error(error instanceof Error ? error.message : text('获取报告列表失败', 'Failed to load reports'))
   } finally {
-    loading.value = false
+    if (!background) loading.value = false
   }
 }
 
@@ -269,7 +270,14 @@ const columns = computed<DataTableColumns<ReportFile>>(() => [
   },
 ])
 
-onMounted(() => { void refresh(false) })
+onMounted(() => {
+  void refresh(false)
+  refreshTimer = setInterval(() => { void refresh(false, true) }, 5000)
+})
+onBeforeUnmount(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  refreshTimer = null
+})
 </script>
 
 <template>

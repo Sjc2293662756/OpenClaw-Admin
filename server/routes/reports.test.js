@@ -83,6 +83,7 @@ async function createReportsApp(resolveUser) {
 
 test('formal report archive imports only a matched audit pair and isolates the owner', async () => {
   const previousRoot = process.env.GAIOP_REPORTS_DIR
+  const previousAttributionIndex = process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH
   const reportRoot = mkdtempSync(join(tmpdir(), 'gaiop-report-root-'))
   const reportDirectory = join(reportRoot, 'user_a', 'quick_report')
   mkdirSync(reportDirectory, { recursive: true })
@@ -138,6 +139,24 @@ test('formal report archive imports only a matched audit pair and isolates the o
     filePath: '/legacy-generator/output/legacy-unattributed.docx',
     title: '未归属旧归档报告',
   }))
+  const attributionDirectory = join(reportRoot, '.attribution-test')
+  mkdirSync(attributionDirectory)
+  const attributionIndex = join(attributionDirectory, 'index.json')
+  writeFileSync(attributionIndex, JSON.stringify({
+    schemaVersion: 'gaiop.report-attribution.v1',
+    entries: [{
+      storedName: 'legacy-producer/summary_report/legacy-unattributed.docx',
+      auditName: 'legacy-producer/summary_report/legacy-unattributed.json',
+      reportId: 'legacy-unattributed',
+      sourceUserId: 'user a',
+      sourceSessionId: 'session-sidecar',
+      sourceChannel: 'web',
+      sourceChannelUserId: 'user a',
+      sourceChannelUserName: '用户A',
+      dataSourceId: 'data-source-a',
+      evidence: 'official_tool_result',
+    }],
+  }))
   const deliveryDirectory = join(reportRoot, '.delivery-events')
   mkdirSync(deliveryDirectory)
   const preparedAt = new Date(Date.now() - 1000).toISOString()
@@ -165,6 +184,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     updatedAt: handedOffAt,
   }))
   process.env.GAIOP_REPORTS_DIR = reportRoot
+  process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH = attributionIndex
 
   const server = (await createReportsApp((req) => {
     if (req.get('x-test-role') === 'auditor') return { id: 'auditor-1', role: 'auditor' }
@@ -177,12 +197,20 @@ test('formal report archive imports only a matched audit pair and isolates the o
     const response = await fetch(`http://127.0.0.1:${server.address().port}/reports`)
     const payload = await response.json()
     assert.equal(response.status, 200)
-    assert.equal(payload.reports.length, 2)
+    assert.equal(payload.reports.length, 3)
     const reportOne = payload.reports.find((report) => report.id === 'report-1')
     assert.deepEqual(reportOne, {
       id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: reportOne.createdAt, updatedAt: reportOne.updatedAt,
     })
     assert.equal(payload.reports.find((report) => report.id === 'legacy-report-id')?.status, 'ready')
+    assert.deepEqual(
+      {
+        user: payload.reports.find((report) => report.id === 'legacy-unattributed')?.sourceUserId,
+        session: payload.reports.find((report) => report.id === 'legacy-unattributed')?.sourceSessionId,
+        channel: payload.reports.find((report) => report.id === 'legacy-unattributed')?.sourceChannel,
+      },
+      { user: 'user a', session: 'session-sidecar', channel: 'web' },
+    )
     assert.equal(payload.reports.find((report) => report.id === 'legacy-missing'), undefined)
     const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
     const otherUserPayload = await otherUserResponse.json()
@@ -195,7 +223,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     const auditorPayload = await auditorResponse.json()
     assert.equal(auditorResponse.status, 200)
     assert.equal(auditorPayload.reports.length, 3)
-    assert.equal(auditorPayload.reports.find((report) => report.id === 'legacy-unattributed')?.sourceUserId, null)
+    assert.equal(auditorPayload.reports.find((report) => report.id === 'legacy-unattributed')?.sourceUserId, 'user a')
 
     const deniedDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
       headers: { 'x-test-user': 'user-b' },
@@ -211,6 +239,8 @@ test('formal report archive imports only a matched audit pair and isolates the o
     server.close()
     if (previousRoot === undefined) delete process.env.GAIOP_REPORTS_DIR
     else process.env.GAIOP_REPORTS_DIR = previousRoot
+    if (previousAttributionIndex === undefined) delete process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH
+    else process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH = previousAttributionIndex
   }
 })
 

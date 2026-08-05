@@ -1,0 +1,19 @@
+[Unit]
+Description=GAIOP report attribution sidecar
+After=openclaw-gateway.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gaiop/admin
+ExecStart=/usr/bin/node /opt/gaiop/admin/server/report-attribution-worker.js
+Restart=on-failure
+RestartSec=3
+UMask=0027
+Environment=GAIOP_REPORTS_DIR=/var/lib/gaiop/reports
+Environment=GAIOP_REPORT_LEGACY_DIR=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/output
+Environment=GAIOP_GATEWAY_SESSIONS_DIR=/home/netinside/.openclaw/agents/main/sessions
+Environment=GAIOP_REPORT_PROVENANCE_STORE_DIR=/var/lib/gaiop/runtime/report-provenance
+Environment=GAIOP_REPORT_ATTRIBUTION_DIR=/var/lib/gaiop/report-attribution
+
+[Install]
+WantedBy=default.target
