@@ -35,6 +35,7 @@ import { formatDate, formatRelativeTime, parseSessionKey, truncate } from '@/uti
 import { renderSimpleMarkdown } from '@/utils/markdown'
 import { loadSelectedSessionWithBackgroundList } from '@/utils/session-loading'
 import { selectWorkspacePromptTexts } from '@/utils/workspace-prompts'
+import { stripInternalDocxMediaPaths } from '@/utils/report-media'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { usePermissions } from '@/composables/usePermissions'
@@ -159,9 +160,9 @@ function toggleToolResultExpand(key: string) {
 
 function getMessageContent(entry: RenderMessage): string {
   if (entry.structured) {
-    return entry.structured.plainTexts.join('\n')
+    return stripInternalDocxMediaPaths(entry.structured.plainTexts.join('\n'))
   }
-  return entry.item.content || ''
+  return stripInternalDocxMediaPaths(entry.item.content || '')
 }
 
 async function copyMessageContent(entry: RenderMessage) {
@@ -176,7 +177,7 @@ async function copyMessageContent(entry: RenderMessage) {
 
 async function copyToClipboard(text: string) {
   try {
-    await navigator.clipboard.writeText(text)
+    await navigator.clipboard.writeText(stripInternalDocxMediaPaths(text))
     message.success(t('common.copied'))
   } catch {
     message.error(t('common.copyFailed'))
@@ -447,7 +448,7 @@ function parseToolResultMessage(item: ChatMessage): StructuredMessageView | null
     id: item.toolCallId,
     name: item.toolName || 'unknown',
     status: item.isError ? 'error' : undefined,
-    content: contentText,
+    content: stripInternalDocxMediaPaths(contentText),
   })
   
   return {
@@ -496,7 +497,7 @@ function normalizeMediaPath(path: string): string {
 
 function extractImageFromText(text: string): { images: ImageItemView[]; cleanedText: string } {
   const images: ImageItemView[] = []
-  let cleanedText = text
+  let cleanedText = stripInternalDocxMediaPaths(text)
   
   const mdImageRegex = /!\[([^\]]*)\]\(([^)]+)\)/g
   let match
@@ -1528,7 +1529,7 @@ function renderPlainText(content: string): string {
 }
 
 function renderChatMarkdown(content: string, role?: ChatMessage['role']): string {
-  const text = content || ''
+  const text = stripInternalDocxMediaPaths(content)
   if (!looksLikeMarkdown(text)) {
     return renderPlainText(text)
   }
@@ -2064,7 +2065,7 @@ function parseStructuredMessage(content: string): StructuredMessageView | null {
         id: asString(row.id || row.tool_call_id || row.toolCallId || row.call_id) || undefined,
         name: asString(row.name || row.tool || row.toolName || row.tool_name) || undefined,
         status: asString(row.status || row.state || row.error) || undefined,
-        content: contentText,
+        content: stripInternalDocxMediaPaths(contentText),
       })
       recognized += 1
       continue
