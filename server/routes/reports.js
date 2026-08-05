@@ -139,9 +139,12 @@ function syncGeneratedReports(db) {
       const auditDirectory = dirname(auditName)
       const declaredAuditName = safeText(audit.relativeAuditPath)
       // New formal archives must self-identify the exact paired audit file.
-      // Root-level historical imports did not have this field, so retain only
-      // that narrow compatibility path.
-      if (auditDirectory !== '.' && (!declaredAuditName || declaredAuditName.replace(/\\/g, '/') !== auditName)) continue
+      // A deployed legacy generator omitted relativeAuditPath for otherwise
+      // valid nested pairs. Accept only its deterministic audit filename;
+      // root-level historical imports remain the only other compatibility path.
+      const legacyNestedAuditName = reportId ? `${auditDirectory}/${reportId}.json` : null
+      if (auditDirectory !== '.' && declaredAuditName && declaredAuditName.replace(/\\/g, '/') !== auditName) continue
+      if (auditDirectory !== '.' && !declaredAuditName && legacyNestedAuditName !== auditName) continue
       const declaredName = safeText(audit.relativeFilePath) || safeText(audit.fileName)
       let storedName = declaredName && resolveStoredReportPath(declaredName) ? declaredName.replace(/\\/g, '/') : null
       if (!storedName) {

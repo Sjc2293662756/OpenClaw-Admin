@@ -111,6 +111,19 @@ test('formal report archive imports only a matched audit pair and isolates the o
     reportId: 'wrong-type', reportType: 'diagnostic report', sourceUserId: 'user a',
     relativeFilePath: 'user_a/quick_report/wrong-type.docx', relativeAuditPath: 'user_a/quick_report/wrong-type.json',
   }))
+  // Legacy deployed generators wrote the report ID audit name but omitted the
+  // relative path fields. It remains safe only when it is the sibling pair.
+  writeFileSync(join(reportDirectory, 'legacy-report.docx'), 'legacy report')
+  writeFileSync(join(reportDirectory, 'legacy-report.json'), JSON.stringify({
+    reportId: 'legacy-report',
+    fileName: 'legacy-report.docx',
+    title: '旧契约正式归档报告',
+    reportType: 'quick report',
+    sourceUserId: 'user a',
+    sourceSessionId: 'session-a',
+    sourceChannel: 'web',
+    generatedAt: new Date().toISOString(),
+  }))
   const deliveryDirectory = join(reportRoot, '.delivery-events')
   mkdirSync(deliveryDirectory)
   const preparedAt = new Date(Date.now() - 1000).toISOString()
@@ -150,10 +163,12 @@ test('formal report archive imports only a matched audit pair and isolates the o
     const response = await fetch(`http://127.0.0.1:${server.address().port}/reports`)
     const payload = await response.json()
     assert.equal(response.status, 200)
-    assert.equal(payload.reports.length, 1)
-    assert.deepEqual(payload.reports[0], {
-      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: payload.reports[0].createdAt, updatedAt: payload.reports[0].updatedAt,
+    assert.equal(payload.reports.length, 2)
+    const reportOne = payload.reports.find((report) => report.id === 'report-1')
+    assert.deepEqual(reportOne, {
+      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: reportOne.createdAt, updatedAt: reportOne.updatedAt,
     })
+    assert.equal(payload.reports.find((report) => report.id === 'legacy-report')?.status, 'ready')
     const otherUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, { headers: { 'x-test-user': 'user-b' } })
     const otherUserPayload = await otherUserResponse.json()
     assert.equal(otherUserResponse.status, 200)
@@ -164,7 +179,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     })
     const auditorPayload = await auditorResponse.json()
     assert.equal(auditorResponse.status, 200)
-    assert.equal(auditorPayload.reports.length, 1)
+    assert.equal(auditorPayload.reports.length, 2)
 
     const deniedDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
       headers: { 'x-test-user': 'user-b' },
