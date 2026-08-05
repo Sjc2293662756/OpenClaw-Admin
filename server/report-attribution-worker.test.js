@@ -90,3 +90,34 @@ test('sidecar ignores exec fallbacks and failed report exports', () => {
   const result = scanReportAttributions(directories)
   assert.equal(result.entries, 0)
 })
+
+test('sidecar accepts an exec result only when it names one exact controlled report and audit pair', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gaiop-report-attribution-exec-'))
+  const sessionsRoot = join(root, 'sessions')
+  const legacyRoot = join(root, 'legacy')
+  const reportRoot = join(root, 'formal')
+  const provenanceRoot = join(root, 'provenance')
+  const attributionRoot = join(root, 'attribution')
+  for (const directory of [sessionsRoot, legacyRoot, reportRoot, provenanceRoot, attributionRoot]) mkdirSync(directory, { recursive: true })
+  const reportFile = join(legacyRoot, 'exec-report.docx')
+  const auditFile = join(legacyRoot, 'exec-report.json')
+  writeFileSync(reportFile, 'exec report')
+  writeFileSync(auditFile, JSON.stringify({ reportId: 'exec-report', fileName: 'exec-report.docx' }))
+  const sessionFile = join(sessionsRoot, 'wecom.jsonl')
+  writeFileSync(sessionFile, `${JSON.stringify({
+    timestamp: new Date().toISOString(),
+    message: {
+      role: 'toolResult', toolName: 'exec',
+      content: [{ type: 'text', text: `completed\n${reportFile}\n${auditFile}` }],
+    },
+  })}\n`)
+  const sessionKey = 'agent:main:wecom:direct:yangs'
+  writeFileSync(join(sessionsRoot, 'sessions.json'), JSON.stringify({ [sessionKey]: { sessionFile, channel: 'wecom' } }))
+
+  const result = scanReportAttributions({ sessionsRoot, legacyRoot, reportRoot, provenanceRoot, attributionRoot })
+  assert.equal(result.entries, 1)
+  const [entry] = JSON.parse(readFileSync(result.indexPath, 'utf8')).entries
+  assert.equal(entry.evidence, 'exec_tool_result')
+  assert.equal(entry.sourceSessionId, sessionKey)
+  assert.equal(entry.sourceChannel, 'wecom')
+})

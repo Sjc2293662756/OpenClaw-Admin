@@ -79,7 +79,42 @@ function parseToolResult(message) {
   return null
 }
 
-function reportToolResults(sessionFile, previousOffset = 0) {
+function messageTexts(message) {
+  const output = []
+  if (typeof message?.details === 'string') output.push(message.details)
+  if (message?.details && typeof message.details === 'object') {
+    for (const key of ['output', 'stdout', 'text']) if (typeof message.details[key] === 'string') output.push(message.details[key])
+  }
+  for (const item of Array.isArray(message?.content) ? message.content : []) {
+    if (typeof item === 'string') output.push(item)
+    else if (typeof item?.text === 'string') output.push(item.text)
+  }
+  return output
+}
+
+function pathsFromExecResult(message, roots) {
+  const escapedRoots = roots.map((root) => root.replace(/\\/g, '/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  const pattern = new RegExp(`(?:${escapedRoots})[\\s\\S]*?\\.(?:docx|pdf|xlsx|csv|md|txt|json)`, 'gu')
+  return [...new Set(messageTexts(message)
+    .flatMap((text) => [...text.replace(/\\/g, '/').matchAll(pattern)].map((match) => resolve(match[0].trim())))
+    .filter((candidate) => roots.some((root) => isWithin(root, candidate)) && existsSync(candidate)))]
+}
+
+function resolveExecArtifactPair(message, roots) {
+  const candidates = pathsFromExecResult(message, roots)
+  const reports = candidates.filter((candidate) => extname(candidate).toLowerCase() !== '.json')
+  const matches = []
+  for (const auditPath of candidates.filter((candidate) => extname(candidate).toLowerCase() === '.json')) {
+    const root = roots.find((candidateRoot) => isWithin(candidateRoot, auditPath))
+    const audit = readJson(auditPath)
+    if (!root || !safeText(audit?.reportId, 512)) continue
+    const filePath = pairedReportPath(auditPath, audit, root)
+    if (filePath && reports.includes(filePath)) matches.push({ filePath, auditPath, reportId: audit.reportId })
+  }
+  return matches.length === 1 ? matches[0] : null
+}
+
+function reportToolResults(sessionFile, roots, previousOffset = 0) {
   const output = { results: [], nextOffset: previousOffset }
   if (!sessionFile || !existsSync(sessionFile)) return output
   const size = statSync(sessionFile).size
@@ -97,10 +132,14 @@ function reportToolResults(sessionFile, previousOffset = 0) {
     let value
     try { value = JSON.parse(row) } catch { continue }
     const message = value?.message
-    if (message?.role !== 'toolResult' || message?.toolName !== 'napm-report-export') continue
-    const result = parseToolResult(message)
-    if (!result) continue
-    output.results.push({ result, timestamp: safeText(value.timestamp || message.timestamp, 128) })
+    if (message?.role !== 'toolResult') continue
+    if (message?.toolName === 'napm-report-export') {
+      const result = parseToolResult(message)
+      if (result) output.results.push({ result, evidence: 'official_tool_result', timestamp: safeText(value.timestamp || message.timestamp, 128) })
+    } else if (message?.toolName === 'exec') {
+      const pair = resolveExecArtifactPair(message, roots)
+      if (pair) output.results.push({ result: pair, evidence: 'exec_tool_result', timestamp: safeText(value.timestamp || message.timestamp, 128) })
+    }
   }
   return output
 }
@@ -244,7 +283,7 @@ function readExistingEntries(indexPath) {
 
 function readWorkerState(statePath) {
   const payload = readJson(statePath)
-  return payload?.schemaVersion === 'gaiop.report-attribution-state.v2' && payload.files && typeof payload.files === 'object'
+  return payload?.schemaVersion === 'gaiop.report-attribution-state.v3' && payload.files && typeof payload.files === 'object'
     ? payload.files
     : {}
 }
@@ -263,7 +302,7 @@ function writeIndex(indexPath, entries) {
 
 function writeWorkerState(statePath, files) {
   const temporary = `${statePath}.tmp-${process.pid}`
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v2', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v3', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
   renameSync(temporary, statePath)
 }
 
@@ -288,7 +327,7 @@ export function scanReportAttributions(options = {}) {
     if (!identity) continue
     const sessionFile = safeText(record?.sessionFile, 4096)
     const stateKey = sessionFile ? sha256(sessionFile) : null
-    const parsed = reportToolResults(sessionFile, dryRun ? 0 : Number(workerState[stateKey]?.offset || 0))
+    const parsed = reportToolResults(sessionFile, allowedRoots, dryRun ? 0 : Number(workerState[stateKey]?.offset || 0))
     if (stateKey) nextWorkerState[stateKey] = { offset: parsed.nextOffset }
     for (const event of parsed.results) {
       const pair = resolveArtifactPair(event.result, allowedRoots, entries)
@@ -309,7 +348,7 @@ export function scanReportAttributions(options = {}) {
         sourceChannelUserId: identity.sourceChannelUserId || null,
         sourceChannelUserName: identity.sourceChannelUserName || null,
         dataSourceId: identity.dataSourceId || safeText(audit?.dataSourceId || audit?.dataSource?.id, 512),
-        evidence: 'official_tool_result',
+        evidence: event.evidence,
         toolCompletedAt: event.timestamp,
         fileSha256: sha256(readFileSync(filePath)),
         observedAt: new Date().toISOString(),

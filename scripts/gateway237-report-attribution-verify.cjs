@@ -83,25 +83,57 @@ function findResult(message) {
 for (const [label, key] of Object.entries(targets)) {
   const record = sessions[key]
   let official = 0
+  let publicResult = 0
+  let successReply = 0
+  let docxReply = 0
   let failed = 0
   let exec = 0
+  let execReportPath = 0
+  let execAuditPath = 0
   if (record?.sessionFile && fs.existsSync(record.sessionFile)) {
     for (const line of fs.readFileSync(record.sessionFile, 'utf8').split(/\r?\n/)) {
       let value
       try { value = JSON.parse(line) } catch { continue }
       const message = value?.message
       if (message?.role !== 'toolResult') continue
-      if (message.toolName === 'napm-report-export') findResult(message) ? official++ : failed++
-      if (message.toolName === 'exec') exec++
+      if (message.toolName === 'napm-report-export') {
+        const replyText = (Array.isArray(message.content) ? message.content : [])
+          .map((item) => typeof item === 'string' ? item : typeof item?.text === 'string' ? item.text : '')
+          .join('\n')
+        if (replyText.includes('Word 报告已生成：')) successReply++
+        if (/\.docx(?:\s|$)/i.test(replyText)) docxReply++
+        const candidates = []
+        if (message.details && typeof message.details === 'object') candidates.push(message.details)
+        for (const item of Array.isArray(message.content) ? message.content : []) {
+          const text = typeof item === 'string' ? item : item?.text
+          if (typeof text !== 'string') continue
+          try { candidates.push(JSON.parse(text)) } catch {}
+        }
+        if (candidates.some((item) => item?.ok === true && typeof item?.reportId === 'string')) publicResult++
+        findResult(message) ? official++ : failed++
+      }
+      if (message.toolName === 'exec') {
+        exec++
+        const text = (Array.isArray(message.content) ? message.content : [])
+          .map((item) => typeof item === 'string' ? item : typeof item?.text === 'string' ? item.text : '')
+          .join('\n')
+        if (/\.(?:docx|pdf|xlsx|csv|md|txt)(?:[\s"']|$)/i.test(text)) execReportPath++
+        if (/\.json(?:[\s"']|$)/i.test(text)) execAuditPath++
+      }
     }
   }
-  const externalActor = Boolean(record?.channelUserId || record?.senderId || record?.userId || record?.peer?.id || record?.peer)
+  const externalActor = Boolean(record?.channelUserId || record?.senderId || record?.userId || record?.peer?.id || record?.peer || key.split(':').slice(4).join(':'))
   const snapshot = path.join(provenanceRoot, crypto.createHash('sha256').update(key).digest('hex') + '.json')
   console.log('TARGET_' + label + '_RECORD=' + String(Boolean(record)))
   console.log('TARGET_' + label + '_TRANSCRIPT=' + String(Boolean(record?.sessionFile && fs.existsSync(record.sessionFile))))
   console.log('TARGET_' + label + '_OFFICIAL=' + official)
+  console.log('TARGET_' + label + '_PUBLIC=' + publicResult)
+  console.log('TARGET_' + label + '_SUCCESS_REPLY=' + successReply)
+  console.log('TARGET_' + label + '_DOCX_REPLY=' + docxReply)
   console.log('TARGET_' + label + '_FAILED=' + failed)
   console.log('TARGET_' + label + '_EXEC=' + exec)
+  console.log('TARGET_' + label + '_EXEC_REPORT=' + execReportPath)
+  console.log('TARGET_' + label + '_EXEC_AUDIT=' + execAuditPath)
   console.log('TARGET_' + label + '_IDENTITY=' + String(label === 'WEB' ? fs.existsSync(snapshot) : externalActor))
 }
 NODE
@@ -156,12 +188,18 @@ client.on('ready', async () => {
         web: {
           record: values.TARGET_WEB_RECORD === 'true', transcript: values.TARGET_WEB_TRANSCRIPT === 'true',
           official: Number(values.TARGET_WEB_OFFICIAL || 0), failed: Number(values.TARGET_WEB_FAILED || 0),
+          publicResult: Number(values.TARGET_WEB_PUBLIC || 0),
+          successReply: Number(values.TARGET_WEB_SUCCESS_REPLY || 0), docxReply: Number(values.TARGET_WEB_DOCX_REPLY || 0),
           exec: Number(values.TARGET_WEB_EXEC || 0), identity: values.TARGET_WEB_IDENTITY === 'true',
+          execReport: Number(values.TARGET_WEB_EXEC_REPORT || 0), execAudit: Number(values.TARGET_WEB_EXEC_AUDIT || 0),
         },
         wecom: {
           record: values.TARGET_WECOM_RECORD === 'true', transcript: values.TARGET_WECOM_TRANSCRIPT === 'true',
           official: Number(values.TARGET_WECOM_OFFICIAL || 0), failed: Number(values.TARGET_WECOM_FAILED || 0),
+          publicResult: Number(values.TARGET_WECOM_PUBLIC || 0),
+          successReply: Number(values.TARGET_WECOM_SUCCESS_REPLY || 0), docxReply: Number(values.TARGET_WECOM_DOCX_REPLY || 0),
           exec: Number(values.TARGET_WECOM_EXEC || 0), identity: values.TARGET_WECOM_IDENTITY === 'true',
+          execReport: Number(values.TARGET_WECOM_EXEC_REPORT || 0), execAudit: Number(values.TARGET_WECOM_EXEC_AUDIT || 0),
         },
       },
     }
