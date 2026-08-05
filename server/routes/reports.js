@@ -139,7 +139,7 @@ function syncGeneratedReports(db) {
       const auditDirectory = dirname(auditName)
       const declaredAuditName = safeText(audit.relativeAuditPath)
       const declaredFileName = safeText(audit.relativeFilePath)
-      const legacyFileName = safeText(audit.fileName)
+      const legacyFileName = safeText(audit.fileName) || basename(safeText(audit.filePath) || '')
       // New formal archives must self-identify the exact paired audit file.
       // A deployed legacy generator omitted relativeAuditPath for otherwise
       // valid nested pairs. Accept only a same-directory fileName pair;

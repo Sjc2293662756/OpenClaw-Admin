@@ -116,7 +116,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
   writeFileSync(join(reportDirectory, 'legacy-report.docx'), 'legacy report')
   writeFileSync(join(reportDirectory, 'legacy-metadata.json'), JSON.stringify({
     reportId: 'legacy-report-id',
-    fileName: 'legacy-report.docx',
+    filePath: '/legacy-generator/output/legacy-report.docx',
     title: '旧契约正式归档报告',
     reportType: 'quick report',
     sourceUserId: 'user a',
