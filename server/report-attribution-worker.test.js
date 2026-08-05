@@ -39,7 +39,10 @@ test('sidecar attributes official web and channel exports without changing gener
   writeFileSync(channelFile, 'channel report')
   writeFileSync(channelAudit, JSON.stringify({ reportId: 'channel-report', dataSource: { id: 'source-b' } }))
   writeSession(join(sessionsRoot, 'web.jsonl'), { ok: true, reportId: 'web-report', filePath: webFile, auditPath: webAudit })
-  writeSession(join(sessionsRoot, 'channel.jsonl'), { ok: true, reportId: 'channel-report', filePath: channelFile, auditPath: channelAudit })
+  // The coworker-maintained plugin intentionally exposes reportId but omits
+  // host file paths from public tool details. The sidecar resolves the unique
+  // audit/report pair inside the two controlled report roots.
+  writeSession(join(sessionsRoot, 'channel.jsonl'), { ok: true, reportId: 'channel-report' })
   writeFileSync(join(sessionsRoot, 'sessions.json'), JSON.stringify({
     [webKey]: { sessionFile: join(sessionsRoot, 'web.jsonl') },
     [channelKey]: { sessionFile: join(sessionsRoot, 'channel.jsonl'), channel: 'wecom', senderName: '杨硕' },

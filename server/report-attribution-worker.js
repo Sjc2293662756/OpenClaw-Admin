@@ -71,7 +71,7 @@ function parseToolResult(message) {
     const value = queue.shift()
     if (!value || typeof value !== 'object' || visited.has(value)) continue
     visited.add(value)
-    if (value.ok === true && safeText(value.filePath) && safeText(value.auditPath)) return value
+    if (value.ok === true && safeText(value.reportId)) return value
     for (const key of ['result', 'data', 'details', 'output']) {
       if (value[key] && typeof value[key] === 'object') queue.push(value[key])
     }
@@ -181,6 +181,61 @@ function archivePair(filePath, auditPath, reportRoot, dryRun = false) {
   }
 }
 
+function listJsonFiles(root) {
+  const output = []
+  if (!existsSync(root)) return output
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const entryPath = join(root, entry.name)
+    if (entry.isDirectory()) output.push(...listJsonFiles(entryPath))
+    else if (entry.isFile() && extname(entry.name).toLowerCase() === '.json') output.push(entryPath)
+  }
+  return output
+}
+
+function pairedReportPath(auditPath, audit, root) {
+  const candidates = []
+  const relativeFilePath = safeText(audit?.relativeFilePath, 4096)
+  if (relativeFilePath) {
+    const candidate = resolve(root, relativeFilePath)
+    if (isWithin(root, candidate)) candidates.push(candidate)
+  }
+  const fileName = basename(safeText(audit?.fileName || audit?.filePath, 4096) || '')
+  if (fileName) candidates.push(join(dirname(auditPath), fileName))
+  const stem = auditPath.slice(0, -extname(auditPath).length)
+  for (const extension of ['.docx', '.pdf', '.xlsx', '.csv', '.md', '.txt']) candidates.push(`${stem}${extension}`)
+  const existing = [...new Set(candidates.map((candidate) => resolve(candidate)))]
+    .filter((candidate) => isWithin(root, candidate) && existsSync(candidate) && extname(candidate).toLowerCase() !== '.json')
+  return existing.length === 1 ? existing[0] : null
+}
+
+function resolveArtifactPair(result, roots, existingEntries) {
+  const explicitFile = canonicalArtifactPath(result.filePath, roots)
+  const explicitAudit = canonicalArtifactPath(result.auditPath, roots)
+  if (explicitFile && explicitAudit && existsSync(explicitFile) && existsSync(explicitAudit)) {
+    return { filePath: explicitFile, auditPath: explicitAudit }
+  }
+  const reportId = safeText(result.reportId, 512)
+  if (!reportId) return null
+  const existing = [...existingEntries.values()].filter((entry) => entry.reportId === reportId)
+  if (existing.length === 1) {
+    const filePath = resolve(roots[0], existing[0].storedName)
+    const auditPath = resolve(roots[0], existing[0].auditName)
+    if (isWithin(roots[0], filePath) && isWithin(roots[0], auditPath) && existsSync(filePath) && existsSync(auditPath)) {
+      return { filePath, auditPath }
+    }
+  }
+  const matches = []
+  for (const root of roots) {
+    for (const auditPath of listJsonFiles(root)) {
+      const audit = readJson(auditPath)
+      if (safeText(audit?.reportId, 512) !== reportId) continue
+      const filePath = pairedReportPath(auditPath, audit, root)
+      if (filePath) matches.push({ filePath, auditPath })
+    }
+  }
+  return matches.length === 1 ? matches[0] : null
+}
+
 function readExistingEntries(indexPath) {
   const payload = readJson(indexPath)
   if (payload?.schemaVersion !== REPORT_ATTRIBUTION_SCHEMA || !Array.isArray(payload.entries)) return []
@@ -189,7 +244,7 @@ function readExistingEntries(indexPath) {
 
 function readWorkerState(statePath) {
   const payload = readJson(statePath)
-  return payload?.schemaVersion === 'gaiop.report-attribution-state.v1' && payload.files && typeof payload.files === 'object'
+  return payload?.schemaVersion === 'gaiop.report-attribution-state.v2' && payload.files && typeof payload.files === 'object'
     ? payload.files
     : {}
 }
@@ -208,7 +263,7 @@ function writeIndex(indexPath, entries) {
 
 function writeWorkerState(statePath, files) {
   const temporary = `${statePath}.tmp-${process.pid}`
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v1', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v2', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
   renameSync(temporary, statePath)
 }
 
@@ -236,9 +291,10 @@ export function scanReportAttributions(options = {}) {
     const parsed = reportToolResults(sessionFile, dryRun ? 0 : Number(workerState[stateKey]?.offset || 0))
     if (stateKey) nextWorkerState[stateKey] = { offset: parsed.nextOffset }
     for (const event of parsed.results) {
-      const filePath = canonicalArtifactPath(event.result.filePath, allowedRoots)
-      const auditPath = canonicalArtifactPath(event.result.auditPath, allowedRoots)
-      if (!filePath || !auditPath || !existsSync(filePath) || !existsSync(auditPath)) continue
+      const pair = resolveArtifactPair(event.result, allowedRoots, entries)
+      const filePath = pair?.filePath
+      const auditPath = pair?.auditPath
+      if (!filePath || !auditPath) continue
       if (extname(filePath).toLowerCase() === '.json' || extname(auditPath).toLowerCase() !== '.json') continue
       const audit = readJson(auditPath)
       const reportId = safeText(event.result.reportId || audit?.reportId, 512)

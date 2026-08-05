@@ -21,20 +21,24 @@ userctl() {
 
 sudo -u gaiop env GAIOP_REPORTS_DIR=/var/lib/gaiop/reports GAIOP_REPORT_ATTRIBUTION_INDEX_PATH=/var/lib/gaiop/report-attribution/index.json /usr/local/bin/node --input-type=module - <<'NODE'
 import Database from '/opt/gaiop/admin/node_modules/better-sqlite3/lib/index.js'
+import fs from 'node:fs'
 const { __test__ } = await import('/opt/gaiop/admin/server/routes/reports.js')
 const db = new Database('/var/lib/gaiop/admin/wizard.db')
 try {
   __test__.syncGeneratedReports(db)
-  const summary = db.prepare([
-    'SELECT',
-    'COUNT(*) AS total,',
-    'SUM(CASE WHEN source_session_id IS NOT NULL THEN 1 ELSE 0 END) AS sessions,',
-    'SUM(CASE WHEN source_user_id IS NOT NULL THEN 1 ELSE 0 END) AS users,',
-    'SUM(CASE WHEN source_channel IS NOT NULL THEN 1 ELSE 0 END) AS channels,',
-    "SUM(CASE WHEN source_channel = 'webchat' THEN 1 ELSE 0 END) AS webchat,",
-    "SUM(CASE WHEN source_channel = 'wecom' THEN 1 ELSE 0 END) AS wecom",
-    "FROM report_files WHERE stored_name LIKE '_sidecar/%'",
-  ].join(' ')).get()
+  const index = JSON.parse(fs.readFileSync('/var/lib/gaiop/report-attribution/index.json', 'utf8'))
+  const select = db.prepare('SELECT source_session_id, source_user_id, source_channel FROM report_files WHERE id = ?')
+  const summary = { total: 0, sessions: 0, users: 0, channels: 0, webchat: 0, wecom: 0 }
+  for (const entry of index.entries || []) {
+    const row = select.get(entry.reportId)
+    if (!row) continue
+    summary.total += 1
+    if (row.source_session_id) summary.sessions += 1
+    if (row.source_user_id) summary.users += 1
+    if (row.source_channel) summary.channels += 1
+    if (row.source_channel === 'web' || row.source_channel === 'webchat') summary.webchat += 1
+    if (row.source_channel === 'wecom') summary.wecom += 1
+  }
   for (const [key, value] of Object.entries(summary)) process.stdout.write('DB_' + key.toUpperCase() + '=' + Number(value || 0) + '\n')
 } finally { db.close() }
 NODE
@@ -46,6 +50,60 @@ const age = Date.now() - Date.parse(value.updatedAt)
 process.stdout.write('INDEX_SCHEMA=' + String(value.schemaVersion === 'gaiop.report-attribution.v1') + '\n')
 process.stdout.write('INDEX_ENTRIES=' + Number(value.entries?.length || 0) + '\n')
 process.stdout.write('INDEX_FRESH=' + String(Number.isFinite(age) && age >= -60000 && age <= 120000) + '\n')
+NODE
+
+sudo -u netinside /usr/local/bin/node - <<'NODE'
+const fs = require('fs')
+const crypto = require('crypto')
+const path = require('path')
+const root = '/home/netinside/.openclaw/agents/main/sessions'
+const provenanceRoot = '/var/lib/gaiop/runtime/report-provenance'
+const sessions = JSON.parse(fs.readFileSync(path.join(root, 'sessions.json'), 'utf8'))
+const targets = {
+  WEB: 'agent:main:main:dm:webchat-3afb3e9266714554a83c3547fa85e749',
+  WECOM: 'agent:main:wecom:direct:yangs',
+}
+function findResult(message) {
+  const queue = []
+  if (message && typeof message.details === 'object') queue.push(message.details)
+  for (const item of Array.isArray(message?.content) ? message.content : []) {
+    if (typeof item?.text !== 'string') continue
+    try { queue.push(JSON.parse(item.text)) } catch {}
+  }
+  const seen = new Set()
+  while (queue.length) {
+    const value = queue.shift()
+    if (!value || typeof value !== 'object' || seen.has(value)) continue
+    seen.add(value)
+    if (value.ok === true && typeof value.filePath === 'string' && typeof value.auditPath === 'string') return true
+    for (const key of ['result', 'data', 'details', 'output']) if (value[key] && typeof value[key] === 'object') queue.push(value[key])
+  }
+  return false
+}
+for (const [label, key] of Object.entries(targets)) {
+  const record = sessions[key]
+  let official = 0
+  let failed = 0
+  let exec = 0
+  if (record?.sessionFile && fs.existsSync(record.sessionFile)) {
+    for (const line of fs.readFileSync(record.sessionFile, 'utf8').split(/\r?\n/)) {
+      let value
+      try { value = JSON.parse(line) } catch { continue }
+      const message = value?.message
+      if (message?.role !== 'toolResult') continue
+      if (message.toolName === 'napm-report-export') findResult(message) ? official++ : failed++
+      if (message.toolName === 'exec') exec++
+    }
+  }
+  const externalActor = Boolean(record?.channelUserId || record?.senderId || record?.userId || record?.peer?.id || record?.peer)
+  const snapshot = path.join(provenanceRoot, crypto.createHash('sha256').update(key).digest('hex') + '.json')
+  console.log('TARGET_' + label + '_RECORD=' + String(Boolean(record)))
+  console.log('TARGET_' + label + '_TRANSCRIPT=' + String(Boolean(record?.sessionFile && fs.existsSync(record.sessionFile))))
+  console.log('TARGET_' + label + '_OFFICIAL=' + official)
+  console.log('TARGET_' + label + '_FAILED=' + failed)
+  console.log('TARGET_' + label + '_EXEC=' + exec)
+  console.log('TARGET_' + label + '_IDENTITY=' + String(label === 'WEB' ? fs.existsSync(snapshot) : externalActor))
+}
 NODE
 
 printf 'ADMIN_ACTIVE='; systemctl is-active gaiop-admin.service
@@ -94,6 +152,18 @@ client.on('ready', async () => {
       webchat: Number(values.DB_WEBCHAT || 0),
       wecom: Number(values.DB_WECOM || 0),
       autoRefresh: values.AUTO_REFRESH === 'present',
+      targets: {
+        web: {
+          record: values.TARGET_WEB_RECORD === 'true', transcript: values.TARGET_WEB_TRANSCRIPT === 'true',
+          official: Number(values.TARGET_WEB_OFFICIAL || 0), failed: Number(values.TARGET_WEB_FAILED || 0),
+          exec: Number(values.TARGET_WEB_EXEC || 0), identity: values.TARGET_WEB_IDENTITY === 'true',
+        },
+        wecom: {
+          record: values.TARGET_WECOM_RECORD === 'true', transcript: values.TARGET_WECOM_TRANSCRIPT === 'true',
+          official: Number(values.TARGET_WECOM_OFFICIAL || 0), failed: Number(values.TARGET_WECOM_FAILED || 0),
+          exec: Number(values.TARGET_WECOM_EXEC || 0), identity: values.TARGET_WECOM_IDENTITY === 'true',
+        },
+      },
     }
     process.stdout.write(`${JSON.stringify(payload)}\n`)
     if (!result.ok) process.exitCode = 1
