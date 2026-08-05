@@ -130,6 +130,14 @@ test('formal report archive imports only a matched audit pair and isolates the o
     reportType: 'quick report',
     sourceUserId: 'user a',
   }))
+  const unattributedDirectory = join(reportRoot, 'legacy-producer', 'summary_report')
+  mkdirSync(unattributedDirectory, { recursive: true })
+  writeFileSync(join(unattributedDirectory, 'legacy-unattributed.docx'), 'legacy unattributed report')
+  writeFileSync(join(unattributedDirectory, 'legacy-unattributed.json'), JSON.stringify({
+    reportId: 'legacy-unattributed',
+    filePath: '/legacy-generator/output/legacy-unattributed.docx',
+    title: '未归属旧归档报告',
+  }))
   const deliveryDirectory = join(reportRoot, '.delivery-events')
   mkdirSync(deliveryDirectory)
   const preparedAt = new Date(Date.now() - 1000).toISOString()
@@ -186,7 +194,8 @@ test('formal report archive imports only a matched audit pair and isolates the o
     })
     const auditorPayload = await auditorResponse.json()
     assert.equal(auditorResponse.status, 200)
-    assert.equal(auditorPayload.reports.length, 2)
+    assert.equal(auditorPayload.reports.length, 3)
+    assert.equal(auditorPayload.reports.find((report) => report.id === 'legacy-unattributed')?.sourceUserId, null)
 
     const deniedDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
       headers: { 'x-test-user': 'user-b' },

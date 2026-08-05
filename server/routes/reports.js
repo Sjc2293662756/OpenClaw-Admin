@@ -164,8 +164,11 @@ function syncGeneratedReports(db) {
       if (dirname(storedName) !== auditDirectory) continue
       const sourceUserId = safeText(audit.sourceUserId)
       const storedSegments = storedName.split('/')
-      if (auditDirectory !== '.' && storedSegments[0] !== archiveDirectorySegment(sourceUserId, '_unattributed')) continue
-      if (auditDirectory !== '.' && storedSegments[1] !== archiveDirectorySegment(audit.reportType, 'report')) continue
+      // Legacy archives without trusted provenance must remain unattributed.
+      // Their historical directory labels are not an authorization source.
+      const legacyUnattributedPair = auditDirectory !== '.' && legacyNestedPair && !sourceUserId
+      if (!legacyUnattributedPair && auditDirectory !== '.' && storedSegments[0] !== archiveDirectorySegment(sourceUserId, '_unattributed')) continue
+      if (!legacyUnattributedPair && auditDirectory !== '.' && storedSegments[1] !== archiveDirectorySegment(audit.reportType, 'report')) continue
 
       const exists = existsSync(reportPath)
       const createdAt = Date.parse(audit.generatedAt || '') || statSync(auditPath).mtimeMs || Date.now()
