@@ -40,6 +40,13 @@ try {
     if (row.source_channel === 'wecom') summary.wecom += 1
   }
   for (const [key, value] of Object.entries(summary)) process.stdout.write('DB_' + key.toUpperCase() + '=' + Number(value || 0) + '\n')
+  const target = db.prepare('SELECT COUNT(*) AS total, SUM(CASE WHEN source_user_id IS NOT NULL AND source_channel IS NOT NULL THEN 1 ELSE 0 END) AS complete FROM report_files WHERE source_session_id = ?')
+  const web = target.get('agent:main:main:dm:webchat-3afb3e9266714554a83c3547fa85e749')
+  const wecom = target.get('agent:main:wecom:direct:yangs')
+  process.stdout.write('TARGET_WEB_REGISTERED=' + Number(web.total || 0) + '\n')
+  process.stdout.write('TARGET_WEB_COMPLETE=' + Number(web.complete || 0) + '\n')
+  process.stdout.write('TARGET_WECOM_REGISTERED=' + Number(wecom.total || 0) + '\n')
+  process.stdout.write('TARGET_WECOM_COMPLETE=' + Number(wecom.complete || 0) + '\n')
 } finally { db.close() }
 NODE
 
@@ -90,6 +97,10 @@ for (const [label, key] of Object.entries(targets)) {
   let exec = 0
   let execReportPath = 0
   let execAuditPath = 0
+  let execExistingReport = 0
+  let execExistingAudit = 0
+  let execAuditReportId = 0
+  let execAuditFileReference = 0
   if (record?.sessionFile && fs.existsSync(record.sessionFile)) {
     for (const line of fs.readFileSync(record.sessionFile, 'utf8').split(/\r?\n/)) {
       let value
@@ -119,6 +130,19 @@ for (const [label, key] of Object.entries(targets)) {
           .join('\n')
         if (/\.(?:docx|pdf|xlsx|csv|md|txt)(?:[\s"']|$)/i.test(text)) execReportPath++
         if (/\.json(?:[\s"']|$)/i.test(text)) execAuditPath++
+        const paths = [...text.matchAll(/(?:\/var\/lib\/gaiop\/reports|\/home\/netinside\/\.openclaw\/workspace\/skills\/openclaw-napm-report\/output)[\s\S]*?\.(?:docx|pdf|xlsx|csv|md|txt|json)/gu)]
+          .map((match) => match[0].trim())
+        for (const candidate of new Set(paths)) {
+          if (!fs.existsSync(candidate)) continue
+          if (candidate.endsWith('.json')) {
+            execExistingAudit++
+            try {
+              const audit = JSON.parse(fs.readFileSync(candidate, 'utf8'))
+              if (audit?.reportId) execAuditReportId++
+              if (audit?.fileName || audit?.filePath || audit?.relativeFilePath) execAuditFileReference++
+            } catch {}
+          } else execExistingReport++
+        }
       }
     }
   }
@@ -134,6 +158,10 @@ for (const [label, key] of Object.entries(targets)) {
   console.log('TARGET_' + label + '_EXEC=' + exec)
   console.log('TARGET_' + label + '_EXEC_REPORT=' + execReportPath)
   console.log('TARGET_' + label + '_EXEC_AUDIT=' + execAuditPath)
+  console.log('TARGET_' + label + '_EXEC_EXISTING_REPORT=' + execExistingReport)
+  console.log('TARGET_' + label + '_EXEC_EXISTING_AUDIT=' + execExistingAudit)
+  console.log('TARGET_' + label + '_EXEC_AUDIT_REPORT_ID=' + execAuditReportId)
+  console.log('TARGET_' + label + '_EXEC_AUDIT_FILE_REFERENCE=' + execAuditFileReference)
   console.log('TARGET_' + label + '_IDENTITY=' + String(label === 'WEB' ? fs.existsSync(snapshot) : externalActor))
 }
 NODE
@@ -192,6 +220,9 @@ client.on('ready', async () => {
           successReply: Number(values.TARGET_WEB_SUCCESS_REPLY || 0), docxReply: Number(values.TARGET_WEB_DOCX_REPLY || 0),
           exec: Number(values.TARGET_WEB_EXEC || 0), identity: values.TARGET_WEB_IDENTITY === 'true',
           execReport: Number(values.TARGET_WEB_EXEC_REPORT || 0), execAudit: Number(values.TARGET_WEB_EXEC_AUDIT || 0),
+          registered: Number(values.TARGET_WEB_REGISTERED || 0), complete: Number(values.TARGET_WEB_COMPLETE || 0),
+          existingReport: Number(values.TARGET_WEB_EXEC_EXISTING_REPORT || 0), existingAudit: Number(values.TARGET_WEB_EXEC_EXISTING_AUDIT || 0),
+          auditReportId: Number(values.TARGET_WEB_EXEC_AUDIT_REPORT_ID || 0), auditFileReference: Number(values.TARGET_WEB_EXEC_AUDIT_FILE_REFERENCE || 0),
         },
         wecom: {
           record: values.TARGET_WECOM_RECORD === 'true', transcript: values.TARGET_WECOM_TRANSCRIPT === 'true',
@@ -200,6 +231,9 @@ client.on('ready', async () => {
           successReply: Number(values.TARGET_WECOM_SUCCESS_REPLY || 0), docxReply: Number(values.TARGET_WECOM_DOCX_REPLY || 0),
           exec: Number(values.TARGET_WECOM_EXEC || 0), identity: values.TARGET_WECOM_IDENTITY === 'true',
           execReport: Number(values.TARGET_WECOM_EXEC_REPORT || 0), execAudit: Number(values.TARGET_WECOM_EXEC_AUDIT || 0),
+          registered: Number(values.TARGET_WECOM_REGISTERED || 0), complete: Number(values.TARGET_WECOM_COMPLETE || 0),
+          existingReport: Number(values.TARGET_WECOM_EXEC_EXISTING_REPORT || 0), existingAudit: Number(values.TARGET_WECOM_EXEC_EXISTING_AUDIT || 0),
+          auditReportId: Number(values.TARGET_WECOM_EXEC_AUDIT_REPORT_ID || 0), auditFileReference: Number(values.TARGET_WECOM_EXEC_AUDIT_FILE_REFERENCE || 0),
         },
       },
     }

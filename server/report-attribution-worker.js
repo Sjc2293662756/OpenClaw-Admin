@@ -97,11 +97,25 @@ function pathsFromExecResult(message, roots) {
   const pattern = new RegExp(`(?:${escapedRoots})[\\s\\S]*?\\.(?:docx|pdf|xlsx|csv|md|txt|json)`, 'gu')
   return [...new Set(messageTexts(message)
     .flatMap((text) => [...text.replace(/\\/g, '/').matchAll(pattern)].map((match) => resolve(match[0].trim())))
-    .filter((candidate) => roots.some((root) => isWithin(root, candidate)) && existsSync(candidate)))]
+    .filter((candidate) => roots.some((root) => isWithin(root, candidate))))]
 }
 
 function resolveExecArtifactPair(message, roots) {
-  const candidates = pathsFromExecResult(message, roots)
+  const referenced = pathsFromExecResult(message, roots)
+  const names = new Set(referenced.map((candidate) => basename(candidate)))
+  const relocated = []
+  for (const root of roots) {
+    const pending = [root]
+    while (pending.length) {
+      const directory = pending.pop()
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const entryPath = join(directory, entry.name)
+        if (entry.isDirectory()) pending.push(entryPath)
+        else if (entry.isFile() && names.has(entry.name)) relocated.push(entryPath)
+      }
+    }
+  }
+  const candidates = [...new Set([...referenced.filter((candidate) => existsSync(candidate)), ...relocated])]
   const reports = candidates.filter((candidate) => extname(candidate).toLowerCase() !== '.json')
   const matches = []
   for (const auditPath of candidates.filter((candidate) => extname(candidate).toLowerCase() === '.json')) {
@@ -283,7 +297,7 @@ function readExistingEntries(indexPath) {
 
 function readWorkerState(statePath) {
   const payload = readJson(statePath)
-  return payload?.schemaVersion === 'gaiop.report-attribution-state.v3' && payload.files && typeof payload.files === 'object'
+  return payload?.schemaVersion === 'gaiop.report-attribution-state.v4' && payload.files && typeof payload.files === 'object'
     ? payload.files
     : {}
 }
@@ -302,7 +316,7 @@ function writeIndex(indexPath, entries) {
 
 function writeWorkerState(statePath, files) {
   const temporary = `${statePath}.tmp-${process.pid}`
-  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v3', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
+  writeFileSync(temporary, `${JSON.stringify({ schemaVersion: 'gaiop.report-attribution-state.v4', files }, null, 2)}\n`, { encoding: 'utf8', mode: 0o640 })
   renameSync(temporary, statePath)
 }
 

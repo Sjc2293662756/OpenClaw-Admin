@@ -99,8 +99,12 @@ test('sidecar accepts an exec result only when it names one exact controlled rep
   const provenanceRoot = join(root, 'provenance')
   const attributionRoot = join(root, 'attribution')
   for (const directory of [sessionsRoot, legacyRoot, reportRoot, provenanceRoot, attributionRoot]) mkdirSync(directory, { recursive: true })
-  const reportFile = join(legacyRoot, 'exec-report.docx')
-  const auditFile = join(legacyRoot, 'exec-report.json')
+  const migratedDirectory = join(reportRoot, 'migrated')
+  mkdirSync(migratedDirectory)
+  const reportFile = join(migratedDirectory, 'exec-report.docx')
+  const auditFile = join(migratedDirectory, 'exec-report.json')
+  const historicalReportPath = join(legacyRoot, 'previous', 'exec-report.docx')
+  const historicalAuditPath = join(legacyRoot, 'previous', 'exec-report.json')
   writeFileSync(reportFile, 'exec report')
   writeFileSync(auditFile, JSON.stringify({ reportId: 'exec-report', fileName: 'exec-report.docx' }))
   const sessionFile = join(sessionsRoot, 'wecom.jsonl')
@@ -108,7 +112,7 @@ test('sidecar accepts an exec result only when it names one exact controlled rep
     timestamp: new Date().toISOString(),
     message: {
       role: 'toolResult', toolName: 'exec',
-      content: [{ type: 'text', text: `completed\n${reportFile}\n${auditFile}` }],
+      content: [{ type: 'text', text: `completed\n${historicalReportPath}\n${historicalAuditPath}` }],
     },
   })}\n`)
   const sessionKey = 'agent:main:wecom:direct:yangs'
