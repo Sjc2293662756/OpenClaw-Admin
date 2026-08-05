@@ -34,6 +34,7 @@ import { useWebSocketStore } from '@/stores/websocket'
 import { formatDate, formatRelativeTime, parseSessionKey, truncate } from '@/utils/format'
 import { renderSimpleMarkdown } from '@/utils/markdown'
 import { loadSelectedSessionWithBackgroundList } from '@/utils/session-loading'
+import { selectWorkspacePromptTexts } from '@/utils/workspace-prompts'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { usePermissions } from '@/composables/usePermissions'
@@ -105,15 +106,13 @@ const quickReplies = ref<Array<{
 const expandedToolCalls = ref(new Set<string>())
 const expandedToolResults = ref(new Set<string>())
 
-const workspacePrompts = computed(() => locale.value === 'zh-CN' ? [
-  '分析最近三小时告警情况，列出对应告警对象',
-  '生成今日系统运行综述报告',
-  '分析今日业务系统运行情况，排查报错和慢访问',
-] : [
-  'Analyze alerts from the last three hours and list the affected alert objects.',
-  'Generate a summary report of today\'s system operations.',
-  'Analyze today\'s business-system operation and investigate errors and slow access.',
-])
+const workspacePrompts = ref(selectWorkspacePromptTexts(locale.value))
+
+function refreshWorkspacePrompts() {
+  workspacePrompts.value = selectWorkspacePromptTexts(locale.value)
+}
+
+watch(locale, refreshWorkspacePrompts)
 
 function applyWorkspacePrompt(prompt: string) {
   draft.value = prompt
@@ -2678,6 +2677,7 @@ watch(
   (value) => {
     const key = normalizeSessionSelectValue(Array.isArray(value) ? value[0] : value)
     if (workspaceMode.value && !key) {
+      refreshWorkspacePrompts()
       sessionKeyInput.value = ''
       chatStore.setSessionKey('')
       void chatStore.fetchHistory('')
