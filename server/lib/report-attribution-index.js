@@ -53,3 +53,15 @@ export function resolveReportAttribution(entries, { storedName, auditName, repor
   if (entry.reportId !== String(reportId || '').trim()) return null
   return entry
 }
+
+export function resolveReportAttributionByAudit(entries, { auditName, reportId }) {
+  const expectedAuditName = String(auditName || '').replace(/\\/g, '/')
+  const expectedReportId = String(reportId || '').trim()
+  let match = null
+  for (const entry of entries.values()) {
+    if (entry.auditName !== expectedAuditName || entry.reportId !== expectedReportId) continue
+    if (match) return null
+    match = entry
+  }
+  return match
+}

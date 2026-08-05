@@ -4,8 +4,8 @@ After=openclaw-gateway.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/gaiop/admin
-ExecStart=/usr/local/bin/node /opt/gaiop/admin/server/report-attribution-worker.js
+WorkingDirectory=/home/netinside/.local/lib/gaiop-report-attribution
+ExecStart=/usr/local/bin/node /home/netinside/.local/lib/gaiop-report-attribution/report-attribution-worker.js
 Restart=on-failure
 RestartSec=3
 UMask=0027

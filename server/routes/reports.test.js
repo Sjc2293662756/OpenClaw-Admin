@@ -26,6 +26,29 @@ function createMemoryDb() {
           },
         }
       }
+      if (sql.includes('SELECT stored_name FROM report_files WHERE id = ?')) {
+        return {
+          get(id) {
+            const row = [...rows.values()].find((value) => value.id === id)
+            return row ? { stored_name: row.stored_name } : null
+          },
+        }
+      }
+      if (sql.includes('UPDATE report_files SET') && sql.includes('source_session_id = COALESCE')) {
+        return {
+          run(sourceSessionId, sourceUserId, sourceChannel, sourceChannelUserId, sourceChannelUserName, dataSourceId, updatedAt, id) {
+            const row = [...rows.values()].find((value) => value.id === id)
+            if (!row) return
+            row.source_session_id ||= sourceSessionId
+            row.source_user_id ||= sourceUserId
+            row.source_channel ||= sourceChannel
+            row.source_channel_user_id ||= sourceChannelUserId
+            row.source_channel_user_name ||= sourceChannelUserName
+            row.data_source_id ||= dataSourceId
+            row.updated_at = Math.max(row.updated_at, updatedAt)
+          },
+        }
+      }
       if (sql.includes('SELECT * FROM report_files WHERE id = ?')) {
         return {
           get(id) {
@@ -131,12 +154,15 @@ test('formal report archive imports only a matched audit pair and isolates the o
     reportType: 'quick report',
     sourceUserId: 'user a',
   }))
-  const unattributedDirectory = join(reportRoot, 'legacy-producer', 'summary_report')
+  const unattributedDirectory = join(reportRoot, '_sidecar', 'artifact-hash')
   mkdirSync(unattributedDirectory, { recursive: true })
   writeFileSync(join(unattributedDirectory, 'legacy-unattributed.docx'), 'legacy unattributed report')
   writeFileSync(join(unattributedDirectory, 'legacy-unattributed.json'), JSON.stringify({
     reportId: 'legacy-unattributed',
     filePath: '/legacy-generator/output/legacy-unattributed.docx',
+    relativeFilePath: 'original-user/summary_report/legacy-unattributed.docx',
+    relativeAuditPath: 'original-user/summary_report/legacy-unattributed.json',
+    reportType: 'summary report',
     title: '未归属旧归档报告',
   }))
   const attributionDirectory = join(reportRoot, '.attribution-test')
@@ -145,8 +171,8 @@ test('formal report archive imports only a matched audit pair and isolates the o
   writeFileSync(attributionIndex, JSON.stringify({
     schemaVersion: 'gaiop.report-attribution.v1',
     entries: [{
-      storedName: 'legacy-producer/summary_report/legacy-unattributed.docx',
-      auditName: 'legacy-producer/summary_report/legacy-unattributed.json',
+      storedName: '_sidecar/artifact-hash/legacy-unattributed.docx',
+      auditName: '_sidecar/artifact-hash/legacy-unattributed.json',
       reportId: 'legacy-unattributed',
       sourceUserId: 'user a',
       sourceSessionId: 'session-sidecar',

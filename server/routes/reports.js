@@ -2,7 +2,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, sta
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'path'
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
-import { readReportAttributionIndex, resolveReportAttribution } from '../lib/report-attribution-index.js'
+import { readReportAttributionIndex, resolveReportAttribution, resolveReportAttributionByAudit } from '../lib/report-attribution-index.js'
 import { getReportStorageRoot } from '../lib/report-storage-path.js'
 
 const reportRoot = getReportStorageRoot()
@@ -130,6 +130,18 @@ function syncGeneratedReports(db) {
       status = excluded.status,
       updated_at = excluded.updated_at
   `)
+  const existingById = db.prepare('SELECT stored_name FROM report_files WHERE id = ?')
+  const enrichExisting = db.prepare(`
+    UPDATE report_files SET
+      source_session_id = COALESCE(source_session_id, ?),
+      source_user_id = COALESCE(source_user_id, ?),
+      source_channel = COALESCE(source_channel, ?),
+      source_channel_user_id = COALESCE(source_channel_user_id, ?),
+      source_channel_user_name = COALESCE(source_channel_user_name, ?),
+      data_source_id = COALESCE(data_source_id, ?),
+      updated_at = MAX(updated_at, ?)
+    WHERE id = ?
+  `)
 
   for (const auditPath of listAuditPaths()) {
     const auditName = toStoredName(auditPath)
@@ -139,6 +151,12 @@ function syncGeneratedReports(db) {
       const audit = JSON.parse(readFileSync(auditPath, 'utf8'))
       const reportId = safeText(audit.reportId)
       const auditDirectory = dirname(auditName)
+      const sidecarAttribution = resolveReportAttributionByAudit(attributionEntries, { auditName, reportId })
+      const sidecarPair = Boolean(
+        sidecarAttribution
+        && dirname(sidecarAttribution.storedName) === auditDirectory
+        && resolveStoredReportPath(sidecarAttribution.storedName),
+      )
       const declaredAuditName = safeText(audit.relativeAuditPath)
       const declaredFileName = safeText(audit.relativeFilePath)
       const legacyFileName = safeText(audit.fileName) || basename(safeText(audit.filePath) || '')
@@ -148,10 +166,12 @@ function syncGeneratedReports(db) {
       // root-level historical imports remain the only other compatibility path.
       const legacyNestedPair = !declaredAuditName && !declaredFileName
         && legacyFileName && legacyFileName === basename(legacyFileName)
-      if (auditDirectory !== '.' && declaredAuditName && declaredAuditName.replace(/\\/g, '/') !== auditName) continue
+      if (!sidecarPair && auditDirectory !== '.' && declaredAuditName && declaredAuditName.replace(/\\/g, '/') !== auditName) continue
       if (auditDirectory !== '.' && !declaredAuditName && !legacyNestedPair) continue
       const declaredName = declaredFileName || legacyFileName
-      let storedName = declaredName && resolveStoredReportPath(declaredName) ? declaredName.replace(/\\/g, '/') : null
+      let storedName = sidecarPair
+        ? sidecarAttribution.storedName
+        : declaredName && resolveStoredReportPath(declaredName) ? declaredName.replace(/\\/g, '/') : null
       if (!storedName) {
         const legacyName = basename(safeText(audit.filePath) || '')
         storedName = legacyName || null
@@ -164,14 +184,16 @@ function syncGeneratedReports(db) {
       // malformed audit in one user/type directory from registering another
       // controlled file under an arbitrary ownership record.
       if (dirname(storedName) !== auditDirectory) continue
-      const attribution = resolveReportAttribution(attributionEntries, { storedName, auditName, reportId })
+      const attribution = sidecarPair
+        ? sidecarAttribution
+        : resolveReportAttribution(attributionEntries, { storedName, auditName, reportId })
       const declaredSourceUserId = safeText(audit.sourceUserId)
       const storedSegments = storedName.split('/')
       // Legacy archives without trusted provenance must remain unattributed.
       // Their historical directory labels are not an authorization source.
       const legacyUnattributedPair = auditDirectory !== '.' && legacyNestedPair && !declaredSourceUserId
-      if (!legacyUnattributedPair && auditDirectory !== '.' && storedSegments[0] !== archiveDirectorySegment(declaredSourceUserId, '_unattributed')) continue
-      if (!legacyUnattributedPair && auditDirectory !== '.' && storedSegments[1] !== archiveDirectorySegment(audit.reportType, 'report')) continue
+      if (!sidecarPair && !legacyUnattributedPair && auditDirectory !== '.' && storedSegments[0] !== archiveDirectorySegment(declaredSourceUserId, '_unattributed')) continue
+      if (!sidecarPair && !legacyUnattributedPair && auditDirectory !== '.' && storedSegments[1] !== archiveDirectorySegment(audit.reportType, 'report')) continue
 
       // The sidecar observes only successful official report tool results and
       // records attribution separately. It never edits the Skill's report or
@@ -181,6 +203,26 @@ function syncGeneratedReports(db) {
       const sourceChannel = safeText(audit.sourceChannel) || safeText(attribution?.sourceChannel)
       const sourceChannelUserId = safeText(audit.sourceChannelUserId) || safeText(attribution?.sourceChannelUserId)
       const sourceChannelUserName = safeText(audit.sourceChannelUserName) || safeText(attribution?.sourceChannelUserName)
+      const dataSourceId = resolveReportDataSourceId(db, audit, attribution)
+
+      // Historical migrations may already have registered the same report ID
+      // under a different storage path. In that case the sidecar is evidence
+      // for attribution only; enrich the existing row and avoid a duplicate-ID
+      // insert while preserving any provenance already recorded by the audit.
+      const existing = attribution ? existingById.get(reportId) : null
+      if (existing && existing.stored_name !== storedName) {
+        enrichExisting.run(
+          sourceSessionId,
+          sourceUserId,
+          sourceChannel,
+          sourceChannelUserId,
+          sourceChannelUserName,
+          dataSourceId,
+          Date.now(),
+          reportId,
+        )
+        continue
+      }
 
       const exists = existsSync(reportPath)
       const createdAt = Date.parse(audit.generatedAt || '') || statSync(auditPath).mtimeMs || Date.now()
@@ -198,7 +240,7 @@ function syncGeneratedReports(db) {
         sourceChannelUserName,
         safeText(audit.sourceMessageId),
         safeText(audit.sourceMessagePreview),
-        resolveReportDataSourceId(db, audit, attribution),
+        dataSourceId,
         inferMimeType(storedName),
         exists ? statSync(reportPath).size : 0,
         exists ? 'ready' : 'missing',
