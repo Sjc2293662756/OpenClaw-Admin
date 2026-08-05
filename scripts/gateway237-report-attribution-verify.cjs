@@ -171,6 +171,8 @@ printf 'SIDECAR_ACTIVE='; userctl is-active gaiop-report-attribution.service
 printf 'SIDECAR_ENABLED='; userctl is-enabled gaiop-report-attribution.service
 printf 'SIDECAR_LISTENERS='; ss -lntup 2>/dev/null | grep -c 'report-attribution' || true
 printf 'AUTO_REFRESH='; grep -Fq '5000' /opt/gaiop/admin/dist/assets/FilesPage-*.js && echo present || echo missing
+printf 'REPORT_RESTORE_BACKUP='; find /var/backups/gaiop -maxdepth 1 -type d -name 'report-backend-restore-*' -printf '%f\n' | LC_ALL=C sort | tail -n 1
+printf 'UPGRADE_GUARD_BACKUP='; find /var/backups/gaiop -maxdepth 1 -type d -name 'upgrade-guard-*' -printf '%f\n' | LC_ALL=C sort | tail -n 1
 `
 
 function execute(client) {
@@ -212,6 +214,8 @@ client.on('ready', async () => {
       webchat: Number(values.DB_WEBCHAT || 0),
       wecom: Number(values.DB_WECOM || 0),
       autoRefresh: values.AUTO_REFRESH === 'present',
+      reportRestoreBackup: values.REPORT_RESTORE_BACKUP || null,
+      upgradeGuardBackup: values.UPGRADE_GUARD_BACKUP || null,
       targets: {
         web: {
           record: values.TARGET_WEB_RECORD === 'true', transcript: values.TARGET_WEB_TRANSCRIPT === 'true',
