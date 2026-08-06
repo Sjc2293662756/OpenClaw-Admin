@@ -54,6 +54,7 @@ const verificationCode = ref('')
 const polling = ref(false)
 const notifiedTerminalSessionId = ref<string | null>(null)
 let onboardingTimer: ReturnType<typeof setInterval> | null = null
+let statusTimer: ReturnType<typeof setInterval> | null = null
 
 const qrSource = computed(() => normalizePersonalWechatQrSource(store.onboarding?.qrDataUrl))
 const onboardingActive = computed(() => {
@@ -75,6 +76,19 @@ const pluginStatusLabel = computed(() => {
 function stopPolling(): void {
   if (onboardingTimer) clearInterval(onboardingTimer)
   onboardingTimer = null
+}
+
+function stopStatusPolling(): void {
+  if (statusTimer) clearInterval(statusTimer)
+  statusTimer = null
+}
+
+function startStatusPolling(): void {
+  stopStatusPolling()
+  statusTimer = setInterval(() => {
+    if (store.loading || store.mutating) return
+    void store.refresh().catch(() => {})
+  }, 20_000)
 }
 
 async function handleTerminalStatus(session: PersonalWechatOnboardingSession): Promise<void> {
@@ -228,8 +242,8 @@ function formatExpiry(value?: number): string {
   return new Date(value).toLocaleTimeString()
 }
 
-onMounted(() => { void handleRefresh() })
-onUnmounted(stopPolling)
+  onMounted(() => { void handleRefresh().finally(startStatusPolling) })
+  onUnmounted(() => { stopStatusPolling(); stopPolling() })
 </script>
 
 <template>

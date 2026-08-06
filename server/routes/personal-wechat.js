@@ -47,6 +47,13 @@ function runtimeAccountStatus(runtimeAccount, metadata, runtimeAvailable) {
   if (!runtimeAccount.configured) {
     return { status: 'error', lastErrorCode: 'PERSONAL_WECHAT_ACCOUNT_NOT_CONFIGURED' }
   }
+  // The adapter snapshot alone does not carry a running flag. "unknown" (not
+  // "offline") is returned when the Gateway runtime state is unavailable so a
+  // working account is not shown as deliberately stopped during Gateway
+  // reconnects or when the runtime merge failed.
+  if (typeof runtimeAccount.running !== 'boolean') {
+    return { status: 'unknown' }
+  }
   return { status: runtimeAccount.running ? 'online' : 'offline' }
 }
 
@@ -88,6 +95,43 @@ export function createPersonalWechatRouter({
   const router = Router()
   const metadataStore = injectedMetadataStore || createPersonalWechatMetadataStore(db)
   const runtime = injectedRuntime || createPersonalWechatRuntime({ adapterBaseUrl, adapterToken })
+
+  async function loadAccountSnapshot() {
+    const snapshot = await runtime.getStatus()
+    const runtimeMap = new Map(snapshot.accounts.map((item) => [item.accountId, item]))
+    const gateway = typeof getGateway === 'function' ? getGateway() : undefined
+    if (gateway?.isConnected) {
+      try {
+        const gatewayStatus = await gateway.call('status', {}, 8_000)
+        const liveAccounts = gatewayStatus?.channelAccounts?.['openclaw-weixin']
+        if (Array.isArray(liveAccounts)) {
+          for (const item of liveAccounts) {
+            const accountId = String(item?.accountId || '').trim()
+            if (!accountId) continue
+            runtimeMap.set(accountId, {
+              ...runtimeMap.get(accountId),
+              accountId,
+              wechatId: runtimeMap.get(accountId)?.wechatId || String(item?.userId || '').trim() || undefined,
+              enabled: item?.enabled !== false,
+              configured: item?.configured === true,
+              running: item?.running === true,
+              lastErrorCode: safeErrorCode(item?.lastError) || undefined,
+              lastInboundAt: item?.lastInboundAt,
+              lastOutboundAt: item?.lastOutboundAt,
+            })
+          }
+        }
+      } catch {
+        // Gateway status is advisory; the adapter snapshot remains
+        // authoritative for account existence and configuration.
+      }
+    }
+    return {
+      accounts: Array.from(runtimeMap.values()),
+      available: snapshot.available,
+      version: snapshot.version,
+    }
+  }
   const onboarding = injectedOnboarding || createPersonalWechatOnboarding({
     runtime,
     metadataStore,
@@ -106,43 +150,16 @@ export function createPersonalWechatRouter({
   router.get('/', adminMiddleware, async (_req, res) => {
     const metadataAccounts = metadataStore.list()
     try {
-      const snapshot = await runtime.getStatus()
-      const runtimeMap = new Map(snapshot.accounts.map((item) => [item.accountId, item]))
-      const gateway = typeof getGateway === 'function' ? getGateway() : undefined
-      if (gateway?.isConnected) {
-        try {
-          const gatewayStatus = await gateway.call('status', {}, 8_000)
-          const liveAccounts = gatewayStatus?.channelAccounts?.['openclaw-weixin']
-          if (Array.isArray(liveAccounts)) {
-            for (const item of liveAccounts) {
-              const accountId = String(item?.accountId || '').trim()
-              if (!accountId) continue
-              runtimeMap.set(accountId, {
-                ...runtimeMap.get(accountId),
-                accountId,
-                wechatId: runtimeMap.get(accountId)?.wechatId || String(item?.userId || '').trim() || undefined,
-                enabled: item?.enabled !== false,
-                configured: item?.configured === true,
-                running: item?.running === true,
-                lastErrorCode: safeErrorCode(item?.lastError) || undefined,
-                lastInboundAt: item?.lastInboundAt,
-                lastOutboundAt: item?.lastOutboundAt,
-              })
-            }
-          }
-        } catch {
-          // Adapter/Gateway partial availability must not break the list view.
-        }
-      }
+      const { accounts: runtimeAccounts, available, version } = await loadAccountSnapshot()
       return sendOk(res, {
         plugin: {
           installed: true,
-          available: snapshot.available,
-          version: snapshot.version,
-          reason: snapshot.available ? undefined : 'PERSONAL_WECHAT_PLUGIN_UNAVAILABLE',
-          reasonCode: snapshot.available ? undefined : 'PERSONAL_WECHAT_PLUGIN_UNAVAILABLE',
+          available,
+          version,
+          reason: available ? undefined : 'PERSONAL_WECHAT_PLUGIN_UNAVAILABLE',
+          reasonCode: available ? undefined : 'PERSONAL_WECHAT_PLUGIN_UNAVAILABLE',
         },
-        accounts: mergeAccounts(metadataAccounts, Array.from(runtimeMap.values()), snapshot.available),
+        accounts: mergeAccounts(metadataAccounts, runtimeAccounts, available),
       })
     } catch (error) {
       const code = safeErrorCode(error, 'PERSONAL_WECHAT_RUNTIME_FAILED')
@@ -260,10 +277,15 @@ export function createPersonalWechatRouter({
       })
     }
     try {
-      const runtimeAccount = await runtime.setAccountEnabled(existing.accountId, req.body.enabled)
+      await runtime.setAccountEnabled(existing.accountId, req.body.enabled)
       const saved = metadataStore.setEnabled(existing.accountId, req.body.enabled)
       if (!saved) throw Object.assign(new Error('metadata update failed'), { code: 'PERSONAL_WECHAT_METADATA_UPDATE_FAILED' })
-      const [account] = mergeAccounts([saved], runtimeAccount ? [runtimeAccount] : [], true)
+      const { accounts: runtimeAccounts, available } = await loadAccountSnapshot()
+      const [account] = mergeAccounts([saved], runtimeAccounts, available)
+        .filter((item) => item.accountId === existing.accountId)
+      if (!account) {
+        throw Object.assign(new Error('account snapshot missing'), { code: 'PERSONAL_WECHAT_ACCOUNT_STATE_FAILED' })
+      }
       recordAudit?.(
         req.user,
         req.body.enabled ? '启用个人微信账号' : '停用个人微信账号',

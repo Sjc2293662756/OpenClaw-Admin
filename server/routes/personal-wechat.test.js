@@ -114,6 +114,7 @@ async function startTestServer() {
     calls,
     audits,
     wait,
+    runtimeAccounts,
   }
 }
 
@@ -219,6 +220,10 @@ test('personal WeChat enable, disable and delete target only one account and nev
       body: JSON.stringify({ enabled: true }),
     })
     assert.equal(enabledResponse.status, 200)
+    const enabled = await enabledResponse.json()
+    assert.equal(enabled.account.enabled, true)
+    assert.notEqual(enabled.account.status, 'error')
+    assert.equal(enabled.account.status, 'online')
 
     const deletedResponse = await fetch(`${context.baseUrl}/accounts/wx-account-one`, {
       method: 'DELETE',
@@ -234,6 +239,41 @@ test('personal WeChat enable, disable and delete target only one account and nev
       { method: 'account.delete', accountId: 'wx-account-one' },
     ])
     assert.equal(context.calls.some((item) => /install|update|uninstall|npm|npx/i.test(item.method)), false)
+  } finally {
+    context.server.close()
+    context.db.close()
+  }
+})
+
+test('personal WeChat shows unknown (not offline) when Gateway runtime state is unavailable', async () => {
+  const context = await startTestServer()
+  try {
+    await fetch(`${context.baseUrl}/onboarding`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin', 'x-test-user-id': 'admin-one' },
+      body: JSON.stringify({ displayName: '状态测试' }),
+    })
+    context.wait.resolve({
+      loginId: 'private-login-id',
+      status: 'connected',
+      accountId: 'wx-account-one',
+      wechatId: 'wx-user-one',
+    })
+    await nextTurn()
+
+    // Adapter-only snapshot without a running flag (Gateway status merge failed).
+    context.runtimeAccounts.set('wx-account-one', {
+      accountId: 'wx-account-one',
+      enabled: true,
+      configured: true,
+    })
+
+    const collectionResponse = await fetch(context.baseUrl, {
+      headers: { 'x-test-role': 'admin', 'x-test-user-id': 'admin-one' },
+    })
+    const collection = await collectionResponse.json()
+    assert.equal(collection.accounts[0].status, 'unknown')
+    assert.notEqual(collection.accounts[0].status, 'offline')
   } finally {
     context.server.close()
     context.db.close()
