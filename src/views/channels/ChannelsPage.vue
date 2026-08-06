@@ -39,6 +39,7 @@ import {
 } from '@/utils/channel-config'
 import { maskSecretValue } from '@/utils/secret-mask'
 import { usePermissions } from '@/composables/usePermissions'
+import PersonalWeChatPanel from './PersonalWeChatPanel.vue'
 
 interface ChinaChannelMeta {
   key: 'feishu' | 'dingtalk' | 'wecom'
@@ -638,6 +639,7 @@ onUnmounted(() => {
         </NSpin>
       </NSpace>
     </NCard>
+    <PersonalWeChatPanel :can-manage="canManageSecurity" :read-only-hint="readOnlyHint" />
   </NSpace>
 </template>
 

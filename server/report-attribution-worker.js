@@ -22,7 +22,12 @@ const DEFAULT_LEGACY_ROOT = '/home/netinside/.openclaw/workspace/skills/openclaw
 const DEFAULT_REPORT_ROOT = '/var/lib/gaiop/reports'
 const DEFAULT_PROVENANCE_ROOT = '/var/lib/gaiop/runtime/report-provenance'
 const DEFAULT_ATTRIBUTION_ROOT = '/var/lib/gaiop/report-attribution'
-const EXTERNAL_CHANNELS = new Set(['wecom', 'wecom-openclaw-plugin', 'feishu', 'lark', 'openclaw-lark', 'dingtalk', 'dingtalk-connector'])
+const EXTERNAL_CHANNELS = new Set([
+  'wecom', 'wecom-openclaw-plugin',
+  'feishu', 'lark', 'openclaw-lark',
+  'dingtalk', 'dingtalk-connector',
+  'openclaw-weixin', 'weixin',
+])
 
 function safeText(value, maxLength = 1024) {
   if (typeof value !== 'string' && typeof value !== 'number') return null
@@ -180,8 +185,17 @@ function parseSessionIdentity(sessionKey, record = {}) {
   const parsedChannel = safeText(parts[2], 128)?.toLowerCase()
   const channel = safeText(record.channel || record.lastChannel || parsedChannel, 128)?.toLowerCase()
   if (!channel || !EXTERNAL_CHANNELS.has(channel)) return null
+  // Session keys may carry an account segment between the channel and the
+  // peer kind when the channel uses per-account-channel-peer dmScope
+  // (e.g. agent:main:openclaw-weixin:<accountId>:direct:<peer>). Resolve the
+  // actor from the segment after "direct" when present, otherwise keep the
+  // legacy slice(4) behavior for per-channel-peer and group keys.
+  const directIndex = parts.indexOf('direct')
+  const parsedActorId = directIndex >= 0 && parts[directIndex + 1]
+    ? parts.slice(directIndex + 1).join(':')
+    : parts.slice(4).join(':')
   const actorId = firstText([
-    record.channelUserId, record.senderId, record.userId, record.peer?.id, record.peer, parts.slice(4).join(':'),
+    record.channelUserId, record.senderId, record.userId, record.peer?.id, record.peer, parsedActorId,
   ])
   if (!actorId) return null
   const actorName = firstText([

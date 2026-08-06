@@ -36,6 +36,7 @@ import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
 import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
 import { createAlertIngestionRouter } from './routes/alert-ingestion.js'
 import { createChannelsRouter } from './routes/channels.js'
+import { createPersonalWechatRouter } from './routes/personal-wechat.js'
 import { createSystemUpgradeRouter } from './routes/system-upgrade.js'
 import { createDashboardUsageRouter } from './routes/dashboard-usage.js'
 import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
@@ -99,6 +100,8 @@ function loadEnvConfig() {
     HERMES_API_KEY: value('HERMES_API_KEY'),
     HERMES_CLI_PATH: value('HERMES_CLI_PATH'),
     HERMES_HOME: value('HERMES_HOME'),
+    PERSONAL_WECHAT_ADAPTER_URL: value('PERSONAL_WECHAT_ADAPTER_URL', 'http://127.0.0.1:19091'),
+    PERSONAL_WECHAT_ADAPTER_TOKEN: value('PERSONAL_WECHAT_ADAPTER_TOKEN'),
     GAIOP_REPORT_PROVENANCE_ENABLED: value('GAIOP_REPORT_PROVENANCE_ENABLED', 'false'),
     GAIOP_REPORT_PROVENANCE_SIGNING_KEY: value('GAIOP_REPORT_PROVENANCE_SIGNING_KEY'),
     GAIOP_REPORT_PROVENANCE_STORE_DIR: value('GAIOP_REPORT_PROVENANCE_STORE_DIR', '/var/lib/gaiop/runtime/report-provenance'),
@@ -513,6 +516,15 @@ app.use('/api/dashboard/summary', createDashboardSummaryRouter({
   authMiddleware,
   getGateway: () => gateway,
   db,
+}))
+app.use('/api/channels/personal-wechat', createPersonalWechatRouter({
+  db,
+  adminMiddleware,
+  recordAudit,
+  gateway,
+  getGateway: () => gateway,
+  adapterBaseUrl: envConfig.PERSONAL_WECHAT_ADAPTER_URL,
+  adapterToken: envConfig.PERSONAL_WECHAT_ADAPTER_TOKEN,
 }))
 app.use('/api/channels', createChannelsRouter({
   authMiddleware,

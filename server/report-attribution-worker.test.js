@@ -68,6 +68,48 @@ test('sidecar attributes official web and channel exports without changing gener
   assert.equal(scanReportAttributions({ sessionsRoot, legacyRoot, reportRoot, provenanceRoot, attributionRoot }).discovered, 0)
 })
 
+test('sidecar attributes personal WeChat reports for per-account and per-channel session keys', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gaiop-report-attribution-weixin-'))
+  const sessionsRoot = join(root, 'sessions')
+  const legacyRoot = join(root, 'legacy')
+  const reportRoot = join(root, 'formal')
+  const provenanceRoot = join(root, 'provenance')
+  const attributionRoot = join(root, 'attribution')
+  for (const directory of [sessionsRoot, legacyRoot, reportRoot, provenanceRoot, attributionRoot]) mkdirSync(directory, { recursive: true })
+
+  const peer = 'o9cq809tqf_xx4jktqcs8859ks5e@im.wechat'
+  const accountKey = `agent:main:openclaw-weixin:f513e99d1851-im-bot:direct:${peer}`
+  const peerKey = `agent:main:openclaw-weixin:direct:${peer}`
+  const accountFile = join(legacyRoot, 'wx-account.docx')
+  const accountAudit = join(legacyRoot, 'wx-account.json')
+  const peerFile = join(legacyRoot, 'wx-peer.docx')
+  const peerAudit = join(legacyRoot, 'wx-peer.json')
+  writeFileSync(accountFile, 'wx account report')
+  writeFileSync(accountAudit, JSON.stringify({ reportId: 'wx-account' }))
+  writeFileSync(peerFile, 'wx peer report')
+  writeFileSync(peerAudit, JSON.stringify({ reportId: 'wx-peer' }))
+  const accountSession = join(sessionsRoot, 'wx-account.jsonl')
+  const peerSession = join(sessionsRoot, 'wx-peer.jsonl')
+  writeSession(accountSession, { ok: true, reportId: 'wx-account', filePath: accountFile, auditPath: accountAudit })
+  writeSession(peerSession, { ok: true, reportId: 'wx-peer', filePath: peerFile, auditPath: peerAudit })
+  writeFileSync(join(sessionsRoot, 'sessions.json'), JSON.stringify({
+    [accountKey]: { sessionFile: accountSession },
+    [peerKey]: { sessionFile: peerSession },
+  }))
+
+  const result = scanReportAttributions({ sessionsRoot, legacyRoot, reportRoot, provenanceRoot, attributionRoot })
+  assert.equal(result.entries, 2)
+  const index = JSON.parse(readFileSync(result.indexPath, 'utf8'))
+  for (const reportId of ['wx-account', 'wx-peer']) {
+    const entry = index.entries.find((item) => item.reportId === reportId)
+    assert.equal(entry.sourceChannel, 'openclaw-weixin')
+    assert.equal(entry.sourceUserId, `channel:openclaw-weixin:${peer}`)
+    assert.equal(entry.sourceChannelUserId, peer)
+    assert.ok(entry.storedName.startsWith('_sidecar/'))
+    assert.ok(existsSync(join(reportRoot, entry.storedName)))
+  }
+})
+
 test('sidecar ignores exec fallbacks and failed report exports', () => {
   const root = mkdtempSync(join(tmpdir(), 'gaiop-report-attribution-ignore-'))
   const sessionsRoot = join(root, 'sessions')

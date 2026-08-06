@@ -1,0 +1,16 @@
+[Unit]
+Description=GAIOP Personal WeChat Adapter (loopback only)
+After=openclaw-gateway.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/node /home/netinside/gaiop-personal-wechat/adapter.mjs
+EnvironmentFile=/home/netinside/gaiop-personal-wechat/adapter.env
+Restart=on-failure
+RestartSec=5
+Environment="HOME=/home/netinside"
+Environment="PATH=/home/netinside/.npm-global/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+
+[Install]
+WantedBy=default.target

@@ -98,7 +98,14 @@ test('read-only RPC classification is explicit and rejects unsafe lookalikes', (
 
 test('unknown read-like RPC names are denied for every role including administrator', () => {
   for (const role of ['basic', 'standard', 'auditor', 'admin']) {
-    for (const method of ['unknown.list', 'unknown.get', 'unknown.status']) {
+    for (const method of [
+      'unknown.list',
+      'unknown.get',
+      'unknown.status',
+      'gaiop.weixin.status',
+      'gaiop.weixin.qr.start',
+      'gaiop.weixin.account.delete',
+    ]) {
       const decision = getRpcPermissionDecision({ role }, method)
       assert.equal(decision.allowed, false, `${role} ${method}`)
       assert.equal(decision.code, 'RPC_METHOD_NOT_SUPPORTED')
