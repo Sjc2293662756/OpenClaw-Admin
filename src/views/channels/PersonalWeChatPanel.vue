@@ -306,7 +306,7 @@ function formatExpiry(value?: number): string {
           <NSpace align="center" :size="8" class="channel-header-row">
             <span class="channel-brand channel-brand--weixin"><FontAwesomeIcon :icon="faWeixin" /></span>
             <NText strong>{{ t('pages.channels.personalWechat.title') }}</NText>
-            <NText depth="3" class="channel-key-text">openclaw-weixin</NText>
+            <NText depth="3" class="channel-key-text">weixin</NText>
             <NTag :type="componentStatusType" size="small" :bordered="false">
               {{ componentStatusLabel }}
             </NTag>
@@ -330,6 +330,9 @@ function formatExpiry(value?: number): string {
           <NAlert v-else-if="!store.plugin.available" type="warning" :bordered="false">
             {{ t('pages.channels.personalWechat.plugin.unavailableHint') }}
             <template v-if="store.plugin.reasonCode">（{{ store.plugin.reasonCode }}）</template>
+          </NAlert>
+          <NAlert v-else type="info" :bordered="false">
+            {{ t('pages.channels.personalWechat.securityHint') }}
           </NAlert>
 
           <NCard size="small" :title="t('pages.channels.basicConfigTitle')" embedded>
@@ -582,10 +585,10 @@ function formatExpiry(value?: number): string {
   --channel-link: #2563eb;
   --channel-link-hover: #1d4ed8;
   --channel-desc-bg:
-    linear-gradient(135deg, rgba(16, 185, 129, 0.11), rgba(16, 185, 129, 0.05)),
+    linear-gradient(135deg, rgba(32, 128, 240, 0.11), rgba(32, 128, 240, 0.05)),
     var(--channel-soft-bg);
-  --channel-desc-border: rgba(16, 185, 129, 0.24);
-  --channel-collapse-hover: rgba(16, 185, 129, 0.06);
+  --channel-desc-border: rgba(32, 128, 240, 0.24);
+  --channel-collapse-hover: rgba(32, 128, 240, 0.06);
   border-radius: 18px;
   border: 1px solid var(--channel-card-border);
   background: var(--channel-card-bg);
@@ -593,10 +596,10 @@ function formatExpiry(value?: number): string {
 }
 
 :global([data-theme='dark'] .personal-wechat-card.channel-root-card) {
-  --channel-link: #6ee7b7;
-  --channel-link-hover: #a7f3d0;
-  --channel-desc-border: rgba(52, 211, 153, 0.32);
-  --channel-collapse-hover: rgba(16, 185, 129, 0.12);
+  --channel-link: #93c5fd;
+  --channel-link-hover: #bfdbfe;
+  --channel-desc-border: rgba(147, 197, 253, 0.35);
+  --channel-collapse-hover: rgba(59, 130, 246, 0.12);
 }
 
 :deep(.personal-wechat-card > .n-card-header) {
@@ -696,7 +699,7 @@ function formatExpiry(value?: number): string {
 }
 
 .channel-brand--weixin {
-  background: linear-gradient(135deg, #10b981 0%, #0ea5a4 100%);
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
 }
 
 .channel-key-text {
