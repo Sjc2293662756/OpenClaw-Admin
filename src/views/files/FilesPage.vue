@@ -80,6 +80,8 @@ const channelLabelMap = computed<Record<string, string>>(() => ({
   'dingtalk-connector': text('钉钉', 'DingTalk'),
   wecom: text('企业微信', 'WeCom'),
   'wecom-openclaw-plugin': text('企业微信', 'WeCom'),
+  'openclaw-weixin': text('个人微信', 'Personal WeChat'),
+  weixin: text('个人微信', 'Personal WeChat'),
 }))
 const supportedReportTypes = computed(() => [
   { label: reportTypeMap.value.quick_report, value: 'quick_report' },

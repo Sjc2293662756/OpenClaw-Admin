@@ -51,10 +51,30 @@ function createTestDb() {
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
+    CREATE TABLE personal_wechat_accounts (
+      account_id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      wechat_user_id TEXT
+    );
   `)
   db.prepare('INSERT INTO users (id, username) VALUES (?, ?), (?, ?)').run('user-alice', 'alice', 'user-bob', 'bob')
   return db
 }
+
+describe('personal WeChat session presentation', () => {
+  it('enriches openclaw-weixin sessions with the GAIOP-entered account name', () => {
+    const db = createTestDb()
+    db.prepare('INSERT INTO personal_wechat_accounts (account_id, display_name, wechat_user_id) VALUES (?, ?, ?)')
+      .run('9150aa2b4764-im-bot', '杨硕微信', 'o9cq809TQf_XX4Jktqcs8859KS5E@im.wechat')
+    const enriched = enrichSessionPayload(db, {
+      key: 'agent:main:openclaw-weixin:9150aa2b4764-im-bot:direct:o9cq809tqf_xx4jktqcs8859ks5e@im.wechat',
+      channel: 'openclaw-weixin',
+      peer: 'o9cq809tqf_xx4jktqcs8859ks5e@im.wechat',
+    })
+    expect(enriched.channelUserName).toBe('杨硕微信')
+    expect(enriched.sourceChannel).toBe('openclaw-weixin')
+  })
+})
 
 const alice = { id: 'user-alice', username: 'alice', role: 'standard' }
 const bob = { id: 'user-bob', username: 'bob', role: 'standard' }

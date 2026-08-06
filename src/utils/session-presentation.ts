@@ -12,6 +12,8 @@ const CHANNEL_LABELS: Record<string, string> = {
   wecom: '企业微信',
   'wecom-app': '企业微信',
   'wecom-openclaw-plugin': '企业微信',
+  'openclaw-weixin': '个人微信',
+  weixin: '个人微信',
 }
 
 function normalized(value: unknown): string {
@@ -72,6 +74,8 @@ function channelUserDisplay(session: Partial<Session> & Pick<Session, 'key'>): s
     channel === 'wecom' ? 'wecom' : '',
     channel === 'feishu' ? 'feishu' : '',
     channel === 'dingtalk' ? 'dingtalk' : '',
+    channel === 'openclaw-weixin' ? 'openclaw-weixin' : '',
+    channel === 'weixin' ? 'weixin' : '',
   ].filter(Boolean))
   const separator = raw.indexOf(':')
   if (separator > 0 && prefixes.has(raw.slice(0, separator).toLowerCase())) {

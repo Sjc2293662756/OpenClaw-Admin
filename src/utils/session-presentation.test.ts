@@ -27,6 +27,17 @@ describe('session presentation boundaries', () => {
     expect(formatSessionConversationTitle({ key: 'agent:main:main', channel: 'main' })).toBe('历史默认会话')
   })
 
+  it('labels personal WeChat sessions as 个人微信 with the GAIOP account name', () => {
+    const key = 'agent:main:openclaw-weixin:9150aa2b4764-im-bot:direct:o9cq809tqf_xx4jktqcs8859ks5e@im.wechat'
+    expect(formatSessionChannelLabel({ key, channel: 'openclaw-weixin', sourceChannel: 'openclaw-weixin' })).toBe('个人微信')
+    expect(formatSessionConversationTitle({
+      key,
+      channel: 'openclaw-weixin',
+      sourceChannel: 'openclaw-weixin',
+      channelUserName: '杨硕微信',
+    })).toBe('个人微信对话 · 杨硕微信')
+  })
+
   it('keeps WebChat first-message titles', () => {
     const session = {
       key: 'agent:main:main:dm:webchat-123456789012',

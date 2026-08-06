@@ -434,6 +434,31 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
         ${where}
         ORDER BY report_files.created_at DESC
       `).all(...values)
+      // Personal WeChat reports carry the peer WeChat id as the channel user.
+      // Surface the GAIOP-entered account name (display_name) as the source
+      // channel user so the report manager shows "个人微信 · 账户名称".
+      const personalWechatNames = new Map()
+      try {
+        if (rows.some((row) => String(row.source_channel || '').toLowerCase() === 'openclaw-weixin')) {
+          const accounts = db.prepare(
+            'SELECT display_name, wechat_user_id FROM personal_wechat_accounts WHERE wechat_user_id IS NOT NULL',
+          ).all()
+          for (const account of accounts) {
+            const normalized = String(account.wechat_user_id || '').toLowerCase()
+            if (normalized && typeof account.display_name === 'string' && account.display_name.trim()) {
+              personalWechatNames.set(normalized, account.display_name.trim())
+            }
+          }
+        }
+      } catch {
+        // The personal WeChat metadata table may be absent on older databases.
+      }
+      for (const row of rows) {
+        if (String(row.source_channel || '').toLowerCase() === 'openclaw-weixin' && !row.source_channel_user_name) {
+          const name = personalWechatNames.get(String(row.source_channel_user_id || '').toLowerCase())
+          if (name) row.source_channel_user_name = name
+        }
+      }
       const deliveries = db.prepare(`
         SELECT *
         FROM report_deliveries

@@ -3,6 +3,35 @@ import { randomUUID } from 'crypto'
 const WEB_SESSION_PREFIX = 'agent:main:main:dm:webchat-'
 const SESSION_LIST_KEYS = ['sessions', 'items', 'list', 'data']
 const WEB_CHANNELS = new Set(['web', 'webchat', 'workspace'])
+const PERSONAL_WECHAT_CHANNELS = new Set(['openclaw-weixin', 'weixin'])
+
+/**
+ * Resolve the GAIOP-entered display name for a personal WeChat session.
+ * Session keys are agent:main:openclaw-weixin:<accountId>:direct:<peer> for
+ * per-account scoped sessions, or agent:main:openclaw-weixin:direct:<peer>
+ * for legacy per-channel sessions. The account is matched by accountId when
+ * present, otherwise by the lowercased WeChat user id.
+ */
+function resolvePersonalWechatDisplayName(db, sessionKey, peer) {
+  if (!db) return ''
+  try {
+    const parts = String(sessionKey || '').split(':')
+    const directIndex = parts.indexOf('direct')
+    const accountId = directIndex > 3 && parts[3] ? parts[3] : null
+    let row = null
+    if (accountId) {
+      row = db.prepare('SELECT display_name FROM personal_wechat_accounts WHERE account_id = ?').get(accountId)
+    }
+    if (!row && peer) {
+      row = db.prepare(
+        'SELECT display_name FROM personal_wechat_accounts WHERE lower(wechat_user_id) = lower(?) ORDER BY updated_at DESC LIMIT 1',
+      ).get(peer)
+    }
+    return normalizeSessionKey(row?.display_name)
+  } catch {
+    return ''
+  }
+}
 
 export const SESSION_SCOPED_READ_METHODS = new Set([
   'sessions.history', 'session.history', 'chat.history',
@@ -622,7 +651,12 @@ export function enrichSessionPayload(db, payload) {
     // It is a user display fallback for external channels, never a WebChat title.
     const gatewayChannelUserName = normalizeSessionKey(row.channelUserName || row.senderName || row.userName || row.displayName || row.label || gatewayChannelUserId)
     const channelUserId = isWeb ? ownerUserId : gatewayChannelUserId
-    const channelUserName = isWeb ? (ownerUsername || ownerUserId) : gatewayChannelUserName
+    const personalWechatName = PERSONAL_WECHAT_CHANNELS.has(channel)
+      ? resolvePersonalWechatDisplayName(db, key, peer)
+      : ''
+    const channelUserName = isWeb
+      ? (ownerUsername || ownerUserId)
+      : (personalWechatName || gatewayChannelUserName)
     return {
       ...row,
       channel,
