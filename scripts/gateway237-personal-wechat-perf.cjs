@@ -43,6 +43,20 @@ echo '=== WARM enable ==='
 curl -sS -o /dev/null -w 'warm_enable_seconds=%{time_total}\n' --max-time 60 -X PUT -H "x-gaiop-weixin-token: $token" -H 'Content-Type: application/json' -d '{"enabled":true}' "http://127.0.0.1:19091/accounts/$fake2/enabled"
 echo '=== real account intact ==='
 ls -1 "$home/.openclaw/openclaw-weixin/accounts/" 2>/dev/null | head
+echo '=== QR session cold (first after restart) ==='
+curl -sS --max-time 60 -H "x-gaiop-weixin-token: $token" -H 'Content-Type: application/json' -d '{}' -o /tmp/qr-session.json -w 'qr_start_seconds=%{time_total}\n' http://127.0.0.1:19091/qr/start
+sk=$(node -e "const j=require('/tmp/qr-session.json'); process.stdout.write(j.sessionKey||'')")
+curl -sS --max-time 25 -H "x-gaiop-weixin-token: $token" -H 'Content-Type: application/json' -d "{\"sessionKey\":\"$sk\",\"timeoutMs\":22000}" -o /tmp/qr-wait.json -w 'qr_ready_seconds=%{time_total}\n' http://127.0.0.1:19091/qr/wait
+node -e "const j=require('/tmp/qr-wait.json'); console.log('qr_wait_status='+j.status+' hasQrcode='+(typeof j.qrcodeUrl==='string'&&j.qrcodeUrl.length>20))"
+curl -sS --max-time 10 -H "x-gaiop-weixin-token: $token" -H 'Content-Type: application/json' -d "{\"sessionKey\":\"$sk\"}" http://127.0.0.1:19091/qr/cancel >/dev/null
+sleep 4
+echo '=== QR session warm (pool reuse) ==='
+curl -sS --max-time 60 -H "x-gaiop-weixin-token: $token" -H 'Content-Type: application/json' -d '{}' -o /tmp/qr-session2.json -w 'qr_start_seconds=%{time_total}\n' http://127.0.0.1:19091/qr/start
+sk2=$(node -e "const j=require('/tmp/qr-session2.json'); process.stdout.write(j.sessionKey||'')")
+curl -sS --max-time 25 -H "x-gaiop-weixin-token: $token" -H 'Content-Type: application/json' -d "{\"sessionKey\":\"$sk2\",\"timeoutMs\":22000}" -o /tmp/qr-wait2.json -w 'qr_ready_seconds=%{time_total}\n' http://127.0.0.1:19091/qr/wait
+node -e "const j=require('/tmp/qr-wait2.json'); console.log('qr_wait_status='+j.status+' hasQrcode='+(typeof j.qrcodeUrl==='string'&&j.qrcodeUrl.length>20))"
+curl -sS --max-time 10 -H "x-gaiop-weixin-token: $token" -H 'Content-Type: application/json' -d "{\"sessionKey\":\"$sk2\"}" http://127.0.0.1:19091/qr/cancel >/dev/null
+rm -f /tmp/qr-session.json /tmp/qr-wait.json /tmp/qr-session2.json /tmp/qr-wait2.json
 `
 
 const client = new Client()

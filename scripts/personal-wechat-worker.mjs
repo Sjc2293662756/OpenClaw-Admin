@@ -1,12 +1,21 @@
-// Personal WeChat login worker (runs on 237 as the OpenClaw user).
+// Personal WeChat login worker (persistent, runs on 237 as the OpenClaw user).
 //
-// Drives the installed @tencent-weixin/openclaw-weixin plugin's own QR login
-// and per-account credential persistence. The worker is spawned per scan
-// session by the loopback adapter and communicates with JSON lines on stdout.
-// WeChat tokens and QR authorization payloads never leave this process.
+// Loads the installed @tencent-weixin/openclaw-weixin plugin modules once at
+// startup and serves scan sessions over pipes:
+//   - fd 0 (stdin):  raw verify-code lines (the plugin reads process.stdin)
+//   - fd 1 (stdout): JSON events (ready / qr_ready / result)
+//   - fd 2 (stderr): diagnostics
+//   - fd 3:          JSON commands ({ cmd: "start", sessionKey })
+//
+// Keeping the worker alive removes the per-session cold module import that
+// used to delay QR generation by several seconds. Credentials stay inside the
+// plugin's own store; the only config mutation is the per-account enabled
+// entry written atomically with a .bak snapshot.
 
 import { randomUUID } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import readline from 'node:readline'
 
 const PLUGIN_BASE = String(process.env.GAIOP_WEIXIN_PLUGIN_BASE || '')
   || '/home/netinside/.openclaw/npm/node_modules/@tencent-weixin/openclaw-weixin'
@@ -15,33 +24,7 @@ const HOST_CORE = String(process.env.GAIOP_WEIXIN_HOST_CORE || '')
 const API_BASE = String(process.env.GAIOP_WEIXIN_API_BASE || '')
   || 'https://ilinkai.weixin.qq.com'
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000
-
-// OpenClaw 2026.5.x only treats a channel as "configured" for gateway startup
-// when it has a meaningful config entry (e.g. per-account enabled flags). Write
-// the account config entry so the gateway loads and starts this channel.
-function ensureAccountConfigEnabled(accountId) {
-  const result = spawnSync(
-    String(process.env.GAIOP_WEIXIN_OPENCLAW_BIN || 'openclaw'),
-    [
-      'config', 'set',
-      `channels.openclaw-weixin.accounts.${accountId}.enabled`,
-      'true',
-    ],
-    {
-      encoding: 'utf8',
-      timeout: 60_000,
-      env: {
-        ...process.env,
-        HOME: process.env.HOME || '/home/netinside',
-      },
-    },
-  )
-  if (result.status !== 0) {
-    throw new Error(
-      `账号配置写入失败：${String(result.stderr || result.stdout || result.error || '').slice(0, 300)}`,
-    )
-  }
-}
+const CONFIG_PATH = path.join(process.env.HOME || '/home/netinside', '.openclaw/openclaw.json')
 
 const { startWeixinLoginWithQr, waitForWeixinLogin, DEFAULT_ILINK_BOT_TYPE } = await import(
   `${PLUGIN_BASE}/dist/src/auth/login-qr.js`
@@ -63,75 +46,123 @@ function emit(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`)
 }
 
-const sessionKey = String(process.env.GAIOP_WEIXIN_SESSION_KEY || '').trim() || randomUUID()
-
-const started = await startWeixinLoginWithQr({
-  accountId: sessionKey,
-  apiBaseUrl: API_BASE,
-  botType: DEFAULT_ILINK_BOT_TYPE,
-})
-
-if (!started.qrcodeUrl) {
-  emit({ event: 'result', connected: false, status: 'failed', message: started.message })
-  process.exit(0)
+function ensureAccountConfigEnabled(accountId) {
+  const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
+  const cfg = JSON.parse(raw)
+  if (!cfg.channels || typeof cfg.channels !== 'object' || Array.isArray(cfg.channels)) cfg.channels = {}
+  if (!cfg.channels['openclaw-weixin'] || typeof cfg.channels['openclaw-weixin'] !== 'object') {
+    cfg.channels['openclaw-weixin'] = {}
+  }
+  const section = cfg.channels['openclaw-weixin']
+  if (!section.accounts || typeof section.accounts !== 'object' || Array.isArray(section.accounts)) {
+    section.accounts = {}
+  }
+  section.accounts[accountId] = { enabled: true }
+  section.channelConfigUpdatedAt = new Date().toISOString()
+  fs.copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.bak`)
+  const temporary = `${CONFIG_PATH}.tmp-${process.pid}`
+  fs.writeFileSync(temporary, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  fs.renameSync(temporary, CONFIG_PATH)
 }
 
-emit({
-  event: 'qr_ready',
-  sessionKey: started.sessionKey,
-  qrcodeUrl: started.qrcodeUrl,
-})
+async function runSession(sessionKey) {
+  const started = await startWeixinLoginWithQr({
+    accountId: sessionKey,
+    apiBaseUrl: API_BASE,
+    botType: DEFAULT_ILINK_BOT_TYPE,
+  })
+  if (!started.qrcodeUrl) {
+    emit({ event: 'result', connected: false, status: 'failed', message: started.message })
+    return
+  }
+  emit({
+    event: 'qr_ready',
+    sessionKey: started.sessionKey,
+    qrcodeUrl: started.qrcodeUrl,
+  })
 
-const result = await waitForWeixinLogin({
-  sessionKey: started.sessionKey,
-  apiBaseUrl: API_BASE,
-  botType: DEFAULT_ILINK_BOT_TYPE,
-  timeoutMs: LOGIN_TIMEOUT_MS,
-})
+  const result = await waitForWeixinLogin({
+    sessionKey: started.sessionKey,
+    apiBaseUrl: API_BASE,
+    botType: DEFAULT_ILINK_BOT_TYPE,
+    timeoutMs: LOGIN_TIMEOUT_MS,
+  })
 
-if (result.connected && result.botToken && result.accountId) {
-  try {
-    const normalizedId = normalizeAccountId(result.accountId)
-    saveWeixinAccount(normalizedId, {
-      token: result.botToken,
-      baseUrl: result.baseUrl,
-      userId: result.userId,
-    })
-    registerWeixinAccountId(normalizedId)
-    if (result.userId) {
-      clearStaleAccountsForUserId(normalizedId, result.userId, clearContextTokensForAccount)
+  if (result.connected && result.botToken && result.accountId) {
+    try {
+      const normalizedId = normalizeAccountId(result.accountId)
+      saveWeixinAccount(normalizedId, {
+        token: result.botToken,
+        baseUrl: result.baseUrl,
+        userId: result.userId,
+      })
+      registerWeixinAccountId(normalizedId)
+      if (result.userId) {
+        clearStaleAccountsForUserId(normalizedId, result.userId, clearContextTokensForAccount)
+      }
+      ensureAccountConfigEnabled(normalizedId)
+      void triggerWeixinChannelReload()
+      emit({
+        event: 'result',
+        connected: true,
+        status: 'connected',
+        accountId: normalizedId,
+        userId: typeof result.userId === 'string' && result.userId.trim() ? result.userId : undefined,
+      })
+    } catch (error) {
+      emit({
+        event: 'result',
+        connected: false,
+        status: 'failed',
+        message: `账号凭据保存失败：${String(error?.message || error)}`,
+      })
     }
-    ensureAccountConfigEnabled(normalizedId)
-    void triggerWeixinChannelReload()
+  } else if (result.alreadyConnected) {
     emit({
       event: 'result',
-      connected: true,
-      status: 'connected',
-      accountId: normalizedId,
-      userId: typeof result.userId === 'string' && result.userId.trim() ? result.userId : undefined,
+      connected: false,
+      status: 'already_connected',
+      message: result.message,
     })
-  } catch (error) {
+  } else {
     emit({
       event: 'result',
       connected: false,
       status: 'failed',
-      message: `账号凭据保存失败：${String(error?.message || error)}`,
+      message: result.message,
     })
   }
-} else if (result.alreadyConnected) {
-  emit({
-    event: 'result',
-    connected: false,
-    status: 'already_connected',
-    message: result.message,
-  })
-} else {
-  emit({
-    event: 'result',
-    connected: false,
-    status: 'failed',
-    message: result.message,
-  })
 }
 
-process.exit(0)
+const commands = readline.createInterface({
+  input: fs.createReadStream('', { fd: 3 }),
+  crlfDelay: Infinity,
+})
+
+// Keep fd 0 open for the plugin's verify-code reads.
+process.stdin.resume()
+
+emit({ event: 'ready' })
+
+commands.on('line', (line) => {
+  let cmd
+  try {
+    cmd = JSON.parse(line)
+  } catch {
+    return
+  }
+  if (cmd?.cmd !== 'start') return
+  const sessionKey = String(cmd.sessionKey || randomUUID())
+  void runSession(sessionKey)
+    .catch((error) => {
+      emit({
+        event: 'result',
+        connected: false,
+        status: 'failed',
+        message: String(error?.message || error),
+      })
+    })
+    .finally(() => {
+      emit({ event: 'ready' })
+    })
+})

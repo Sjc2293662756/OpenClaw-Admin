@@ -119,11 +119,14 @@ function expireIfNeeded(session) {
 
 function killWorker(session) {
   if (session.worker && session.worker.exitCode === null && !session.worker.killed) {
+    const worker = session.worker
+    worker.activeSession = null
     try {
-      session.worker.kill('SIGTERM')
+      worker.kill('SIGTERM')
     } catch {
       // best-effort
     }
+    removeIdleWorker(worker)
   }
 }
 
@@ -135,7 +138,7 @@ function emitEvent(session, snapshot) {
   for (const resolve of waiters) resolve(publicSession(session))
 }
 
-function handleWorkerLine(session, line) {
+function handleWorkerLine(worker, line) {
   const trimmed = String(line || '').trim()
   if (!trimmed) return
   let parsed = null
@@ -145,11 +148,24 @@ function handleWorkerLine(session, line) {
     parsed = null
   }
   if (parsed && typeof parsed.event === 'string') {
+    if (parsed.event === 'ready') {
+      if (worker._readyResolve) {
+        const resolve = worker._readyResolve
+        worker._readyResolve = null
+        resolve(worker)
+      } else if (!worker.activeSession) {
+        releaseWorker(worker)
+      }
+      return
+    }
+    const session = worker.activeSession
+    if (!session) return
     if (parsed.event === 'qr_ready') {
       session.qrcodeUrl = typeof parsed.qrcodeUrl === 'string' ? parsed.qrcodeUrl : undefined
       emitEvent(session, { status: 'waiting_for_scan' })
     } else if (parsed.event === 'result') {
       session.terminal = true
+      worker.activeSession = null
       if (parsed.connected === true && typeof parsed.accountId === 'string') {
         emitEvent(session, {
           status: 'connected',
@@ -167,10 +183,11 @@ function handleWorkerLine(session, line) {
           message: typeof parsed.message === 'string' ? parsed.message : undefined,
         })
       }
-      killWorker(session)
     }
     return
   }
+  const session = worker.activeSession
+  if (!session) return
   if (PROMPT_VERIFY.test(trimmed)) {
     if (session.status !== 'verification_required') emitEvent(session, { status: 'verification_required' })
   } else if (PROMPT_SCANNED.test(trimmed)) {
@@ -180,7 +197,102 @@ function handleWorkerLine(session, line) {
   }
 }
 
-function startQrSession() {
+const idleWorkers = []
+const MAX_IDLE_WORKERS = 2
+
+function removeIdleWorker(worker) {
+  const index = idleWorkers.indexOf(worker)
+  if (index >= 0) idleWorkers.splice(index, 1)
+}
+
+function releaseWorker(worker) {
+  if (!worker || worker.killed || worker.exitCode !== null) return
+  if (worker.activeSession) return
+  if (idleWorkers.includes(worker)) return
+  if (idleWorkers.length >= MAX_IDLE_WORKERS) {
+    try { worker.kill('SIGTERM') } catch { /* best-effort */ }
+    return
+  }
+  idleWorkers.push(worker)
+}
+
+function spawnWorker() {
+  const worker = spawn(NODE_BIN, [WORKER_PATH], {
+    stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      HOME,
+      PATH: `${HOME}/.npm-global/bin:/usr/local/bin:/usr/bin:/bin`,
+      XDG_RUNTIME_DIR: '/run/user/1000',
+    },
+  })
+  worker.activeSession = null
+  worker._readyResolve = null
+
+  let stdoutBuffer = ''
+  worker.stdout.on('data', (chunk) => {
+    stdoutBuffer += chunk.toString('utf8')
+    let newlineIndex = stdoutBuffer.indexOf('\n')
+    while (newlineIndex >= 0) {
+      const line = stdoutBuffer.slice(0, newlineIndex)
+      stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1)
+      handleWorkerLine(worker, line)
+      newlineIndex = stdoutBuffer.indexOf('\n')
+    }
+  })
+  worker.stderr.on('data', (chunk) => {
+    if (worker.activeSession) {
+      worker.activeSession.stderrTail = `${worker.activeSession.stderrTail}${chunk.toString('utf8')}`.slice(-4000)
+    }
+  })
+  worker.on('error', () => {
+    const session = worker.activeSession
+    removeIdleWorker(worker)
+    if (worker._readyResolve) {
+      const reject = worker._readyReject
+      worker._readyResolve = null
+      if (reject) reject(new Error('扫码进程无法启动'))
+    }
+    if (session && !session.terminal) {
+      session.terminal = true
+      emitEvent(session, { status: 'failed', message: '扫码进程无法启动' })
+    }
+  })
+  worker.on('close', () => {
+    const session = worker.activeSession
+    worker.activeSession = null
+    removeIdleWorker(worker)
+    if (session && !session.terminal && session.status !== 'canceled') {
+      session.terminal = true
+      expireIfNeeded(session)
+      if (!session.terminal) emitEvent(session, { status: 'failed', message: '扫码进程提前退出' })
+    }
+  })
+  return worker
+}
+
+function getWorker() {
+  const idle = idleWorkers.pop()
+  if (idle) return Promise.resolve(idle)
+  const worker = spawnWorker()
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      worker._readyResolve = null
+      reject(new Error('扫码进程启动超时'))
+      try { worker.kill('SIGTERM') } catch { /* best-effort */ }
+    }, 20_000)
+    worker._readyResolve = (readyWorker) => {
+      clearTimeout(timer)
+      resolve(readyWorker)
+    }
+    worker._readyReject = (error) => {
+      clearTimeout(timer)
+      reject(error)
+    }
+  })
+}
+
+async function startQrSession() {
   const sessionKey = randomUUID()
   const session = {
     sessionKey,
@@ -197,45 +309,15 @@ function startQrSession() {
   }
   sessions.set(sessionKey, session)
 
-  const worker = spawn(NODE_BIN, [WORKER_PATH], {
-    stdio: ['pipe', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      HOME,
-      PATH: `${HOME}/.npm-global/bin:/usr/local/bin:/usr/bin:/bin`,
-      XDG_RUNTIME_DIR: '/run/user/1000',
-      GAIOP_WEIXIN_SESSION_KEY: sessionKey,
-    },
-  })
+  const worker = await getWorker()
+  worker.activeSession = session
   session.worker = worker
-
-  let stdoutBuffer = ''
-  worker.stdout.on('data', (chunk) => {
-    stdoutBuffer += chunk.toString('utf8')
-    let newlineIndex = stdoutBuffer.indexOf('\n')
-    while (newlineIndex >= 0) {
-      const line = stdoutBuffer.slice(0, newlineIndex)
-      stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1)
-      handleWorkerLine(session, line)
-      newlineIndex = stdoutBuffer.indexOf('\n')
-    }
-  })
-  worker.stderr.on('data', (chunk) => {
-    session.stderrTail = `${session.stderrTail}${chunk.toString('utf8')}`.slice(-4000)
-  })
-  worker.on('error', () => {
-    if (!session.terminal) {
-      session.terminal = true
-      emitEvent(session, { status: 'failed', message: '扫码进程无法启动' })
-    }
-  })
-  worker.on('close', () => {
-    if (!session.terminal && session.status !== 'canceled') {
-      session.terminal = true
-      expireIfNeeded(session)
-      if (!session.terminal) emitEvent(session, { status: 'failed', message: '扫码进程提前退出' })
-    }
-  })
+  try {
+    worker.stdio[3].write(`${JSON.stringify({ cmd: 'start', sessionKey })}\n`)
+  } catch {
+    session.terminal = true
+    emitEvent(session, { status: 'failed', message: '扫码进程无法写入指令' })
+  }
   return session
 }
 
@@ -330,7 +412,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && pathname === '/qr/start') {
-      const session = startQrSession()
+      const session = await startQrSession()
       return json(res, 200, { ok: true, ...publicSession(session) })
     }
 
@@ -380,6 +462,8 @@ const server = http.createServer(async (req, res) => {
       session.status = 'canceled'
       killWorker(session)
       emitEvent(session, {})
+      // Prewarm a replacement worker so the next scan is not cold.
+      void getWorker().then(releaseWorker).catch(() => {})
       return json(res, 200, { ok: true, ...publicSession(session) })
     }
 
@@ -447,6 +531,9 @@ server.listen(PORT, HOST, () => {
 
 process.on('SIGTERM', () => {
   for (const session of sessions.values()) killWorker(session)
+  for (const worker of idleWorkers.splice(0)) {
+    try { worker.kill('SIGTERM') } catch { /* best-effort */ }
+  }
   server.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 2000).unref()
 })

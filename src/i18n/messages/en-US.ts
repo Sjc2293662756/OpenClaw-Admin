@@ -364,14 +364,14 @@ export default {
         },
         form: {
           displayName: 'Account name',
-          displayNamePlaceholder: 'For example: Yangshuo WeChat, Support WeChat, Test WeChat',
+          displayNamePlaceholder: 'Enter an account name',
           nameRequired: 'Enter an account name',
           note: 'Note',
           notePlaceholder: 'Optional purpose, owner, or operational note',
         },
         onboarding: {
           title: 'Add Personal WeChat',
-          intro: 'Enter management information, then generate a one-time QR code. Scan it with the Personal WeChat account to connect. QR authorization and credentials are never written to normal logs.',
+          intro: 'Enter management information, then generate a one-time QR code. Scan it with the Personal WeChat account to connect.',
           generateQr: 'Generate WeChat QR code',
           qrAlt: 'Personal WeChat login QR code',
           expiresAt: 'The QR code expires at {time}',

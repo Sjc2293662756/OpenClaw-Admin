@@ -364,14 +364,14 @@ export default {
         },
         form: {
           displayName: '账户名称',
-          displayNamePlaceholder: '例如：杨硕微信、售后微信、测试微信',
+          displayNamePlaceholder: '输入账户名称',
           nameRequired: '请填写账户名称',
           note: '备注',
           notePlaceholder: '可选，用于说明该微信账号的用途或负责人',
         },
         onboarding: {
           title: '添加个人微信',
-          intro: '填写管理信息后生成一次性二维码。请使用要接入的个人微信扫码；二维码和登录凭据不会写入普通日志。',
+          intro: '填写管理信息后生成一次性二维码。请使用要接入的个人微信扫码。',
           generateQr: '生成微信二维码',
           qrAlt: '个人微信登录二维码',
           expiresAt: '二维码将于 {time} 失效',
