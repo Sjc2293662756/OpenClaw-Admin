@@ -7,6 +7,9 @@ import { migratePersonalWechatMetadata } from '../lib/personal-wechat-metadata.j
 import { createPersonalWechatOnboarding } from '../lib/personal-wechat-onboarding.js'
 import { createPersonalWechatMetadataStore } from '../lib/personal-wechat-metadata.js'
 import { createPersonalWechatRouter } from './personal-wechat.js'
+import { __test__ as personalWechatRouteTest } from './personal-wechat.js'
+
+const { runtimeAccountStatus } = personalWechatRouteTest
 
 function deferred() {
   let resolve
@@ -278,4 +281,21 @@ test('personal WeChat shows unknown (not offline) when Gateway runtime state is 
     context.server.close()
     context.db.close()
   }
+})
+
+test('runtime account status relies on an explicit Gateway running flag', () => {
+  assert.equal(
+    runtimeAccountStatus({ accountId: 'a', enabled: true, configured: true, running: true }, null, true).status,
+    'online',
+  )
+  assert.equal(
+    runtimeAccountStatus({ accountId: 'a', enabled: true, configured: true, running: false }, null, true).status,
+    'offline',
+  )
+  // A snapshot without a running field (e.g. adapter-only or a different RPC
+  // shape) must never be coerced into "offline".
+  assert.equal(
+    runtimeAccountStatus({ accountId: 'a', enabled: true, configured: true }, null, true).status,
+    'unknown',
+  )
 })

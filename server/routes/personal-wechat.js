@@ -102,19 +102,22 @@ export function createPersonalWechatRouter({
     const gateway = typeof getGateway === 'function' ? getGateway() : undefined
     if (gateway?.isConnected) {
       try {
-        const gatewayStatus = await gateway.call('status', {}, 8_000)
+        const gatewayStatus = await gateway.call('channels.status', {}, 8_000)
         const liveAccounts = gatewayStatus?.channelAccounts?.['openclaw-weixin']
         if (Array.isArray(liveAccounts)) {
           for (const item of liveAccounts) {
             const accountId = String(item?.accountId || '').trim()
             if (!accountId) continue
+            const existing = runtimeMap.get(accountId)
             runtimeMap.set(accountId, {
-              ...runtimeMap.get(accountId),
+              ...existing,
               accountId,
-              wechatId: runtimeMap.get(accountId)?.wechatId || String(item?.userId || '').trim() || undefined,
+              wechatId: existing?.wechatId || String(item?.userId || '').trim() || undefined,
               enabled: item?.enabled !== false,
               configured: item?.configured === true,
-              running: item?.running === true,
+              // Only adopt the Gateway's boolean running flag. Absence of the
+              // field (different RPC shapes) must not be coerced to "offline".
+              running: typeof item?.running === 'boolean' ? item.running : existing?.running,
               lastErrorCode: safeErrorCode(item?.lastError) || undefined,
               lastInboundAt: item?.lastInboundAt,
               lastOutboundAt: item?.lastOutboundAt,
