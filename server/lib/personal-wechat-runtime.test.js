@@ -57,6 +57,10 @@ test('personal WeChat runtime calls only the local loopback adapter surface', as
         userId: 'wx-user-one',
       })
     }
+    if (url.endsWith('/channel/enabled')) {
+      const body = JSON.parse(options?.body || '{}')
+      return jsonResponse(200, { ok: true, enabled: body.enabled })
+    }
     if (url.includes('/accounts/wx-account-one/enabled')) {
       return jsonResponse(200, { accountId: 'wx-account-one', enabled: false, configured: true })
     }
@@ -82,6 +86,7 @@ test('personal WeChat runtime calls only the local loopback adapter surface', as
   assert.equal(started.qrText, 'qr-private-text')
   assert.equal((await runtime.waitQr(started.loginId)).accountId, 'wx-account-one')
   assert.equal((await runtime.setAccountEnabled('wx-account-one', false)).enabled, false)
+  assert.deepEqual(await runtime.setChannelEnabled(false), { enabled: false })
   assert.deepEqual(await runtime.deleteAccount('wx-account-one'), { accountId: 'wx-account-one', deleted: true })
 
   assert.deepEqual(calls.map((item) => `${item.method} ${item.url}`), [
@@ -89,6 +94,7 @@ test('personal WeChat runtime calls only the local loopback adapter surface', as
     'POST http://127.0.0.1:19091/qr/start',
     'POST http://127.0.0.1:19091/qr/wait',
     'PUT http://127.0.0.1:19091/accounts/wx-account-one/enabled',
+    'PUT http://127.0.0.1:19091/channel/enabled',
     'DELETE http://127.0.0.1:19091/accounts/wx-account-one',
   ])
   for (const call of calls) {

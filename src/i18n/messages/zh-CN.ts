@@ -332,7 +332,7 @@ export default {
         title: '个人微信',
         subtitle: '个人微信账号与其他频道独立管理；插件安装和日常扫码添加账号是两个不同生命周期。',
         add: '添加个人微信',
-        launchChannel: '启动渠道',
+        launchChannel: '启用渠道',
         manageTitle: '个人微信管理',
         privateChatScopeHint: '个人微信 私聊访问账户由GAIOP个人微信模块管理。',
         securityHint: '扫码只调用已安装插件的账号登录能力，不会安装、升级或卸载插件。微信登录凭据由插件原生保存，GAIOP 不回显或复制。',

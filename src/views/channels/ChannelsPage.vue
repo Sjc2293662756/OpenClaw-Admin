@@ -91,7 +91,7 @@ const { canManageSecurity, readOnlyHint } = usePermissions()
 const message = useMessage()
 const { t } = useI18n()
 
-const expandedChannelKeys = ref<string[]>([])
+const expandedChannelKeys = ref<string[]>(['personal-wechat'])
 const feishuAppName = ref('GAIOP 智能助手')
 let feishuOnboardingTimer: ReturnType<typeof setInterval> | null = null
 const dmPolicyOptions = computed(() => [

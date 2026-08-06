@@ -332,7 +332,7 @@ export default {
         title: 'Personal WeChat',
         subtitle: 'Personal WeChat accounts are managed separately from other channels. Plugin installation and daily account onboarding have separate lifecycles.',
         add: 'Add Personal WeChat',
-        launchChannel: 'Launch channel',
+        launchChannel: 'Enable channel',
         manageTitle: 'Personal WeChat Management',
         privateChatScopeHint: 'Personal WeChat: private chat access accounts are managed by the GAIOP Personal WeChat module.',
         securityHint: 'QR onboarding only calls account-login capabilities from the installed plugin. It never installs, upgrades, or removes the plugin. Login credentials stay in the plugin and are never copied or revealed by GAIOP.',

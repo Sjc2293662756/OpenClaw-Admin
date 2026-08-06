@@ -59,6 +59,7 @@ const verificationCode = ref('')
 const polling = ref(false)
 const notifiedTerminalSessionId = ref<string | null>(null)
 const launchEnabled = ref(true)
+const launchDraft = ref(true)
 const launchSaving = ref(false)
 let onboardingTimer: ReturnType<typeof setInterval> | null = null
 let statusTimer: ReturnType<typeof setInterval> | null = null
@@ -140,33 +141,38 @@ async function loadLaunchState(): Promise<void> {
     const result = await response.json().catch(() => ({}))
     const config = (result as Record<string, unknown>).config as Record<string, unknown> | undefined
     const weixin = (config?.channels as Record<string, unknown> | undefined)?.['openclaw-weixin'] as Record<string, unknown> | undefined
-    if (weixin) launchEnabled.value = weixin.enabled !== false
+    if (weixin) {
+      launchEnabled.value = weixin.enabled !== false
+      launchDraft.value = weixin.enabled !== false
+    }
   } catch {
     // Keep the current value when the config endpoint is temporarily unavailable.
   }
 }
 
-async function handleLaunchChange(value: boolean): Promise<void> {
+async function handleSaveLaunch(): Promise<void> {
   if (launchSaving.value) return
   const previous = launchEnabled.value
-  launchEnabled.value = value
+  const target = launchDraft.value
   launchSaving.value = true
   try {
-    const response = await fetch('/api/channels/config', {
+    const response = await fetch('/api/channels/personal-wechat/channel-enabled', {
       method: 'PUT',
       headers: {
         Authorization: `Bearer ${authStore.getToken() || ''}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ patches: [{ path: 'channels.openclaw-weixin.enabled', value }] }),
+      body: JSON.stringify({ enabled: target }),
     })
     const result = await response.json().catch(() => ({}))
     if (!response.ok || (result as Record<string, unknown>).ok !== true) throw new Error('failed')
-    message.success(value
+    launchEnabled.value = target
+    await store.refresh()
+    message.success(target
       ? t('pages.channels.personalWechat.messages.launchEnabled')
       : t('pages.channels.personalWechat.messages.launchDisabled'))
   } catch {
-    launchEnabled.value = previous
+    launchDraft.value = previous
     message.error(t('pages.channels.personalWechat.messages.launchFailed'))
   } finally {
     launchSaving.value = false
@@ -302,19 +308,24 @@ function formatExpiry(value?: number): string {
 
           <NCard size="small" :title="t('pages.channels.basicConfigTitle')" embedded>
             <template #header-extra>
-              <NButton size="small" :loading="store.loading" @click="handleRefresh">
-                <template #icon><NIcon :component="RefreshOutline" /></template>
-                {{ t('common.refresh') }}
+              <NButton
+                size="small"
+                type="primary"
+                :loading="launchSaving"
+                :disabled="!canManage"
+                :title="!canManage ? readOnlyHint : undefined"
+                @click="handleSaveLaunch"
+              >
+                {{ t('common.save') }}
               </NButton>
             </template>
             <NForm label-placement="left" label-width="140" class="channel-config-form">
               <NFormItem :label="t('pages.channels.personalWechat.launchChannel')">
                 <NSwitch
-                  :value="launchEnabled"
-                  :loading="launchSaving"
+                  :value="launchDraft"
                   :disabled="!canManage"
                   :title="!canManage ? readOnlyHint : undefined"
-                  @update:value="handleLaunchChange"
+                  @update:value="(value) => { launchDraft = value }"
                 />
               </NFormItem>
             </NForm>
@@ -325,6 +336,10 @@ function formatExpiry(value?: number): string {
 
           <NCard size="small" :title="t('pages.channels.personalWechat.manageTitle')" embedded>
             <template #header-extra>
+              <NButton size="small" :loading="store.loading" @click="handleRefresh">
+                <template #icon><NIcon :component="RefreshOutline" /></template>
+                {{ t('common.refresh') }}
+              </NButton>
               <NButton
                 v-if="canManage"
                 size="small"

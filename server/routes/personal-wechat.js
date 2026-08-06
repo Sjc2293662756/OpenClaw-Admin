@@ -306,6 +306,33 @@ export function createPersonalWechatRouter({
     }
   })
 
+  router.put('/channel-enabled', adminMiddleware, async (req, res) => {
+    if (typeof req.body?.enabled !== 'boolean') {
+      return sendError(res, {
+        status: 400,
+        code: 'PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID',
+        message: '个人微信渠道状态参数无效',
+      })
+    }
+    try {
+      const result = await runtime.setChannelEnabled(req.body.enabled)
+      recordAudit?.(
+        req.user,
+        req.body.enabled ? '启用个人微信渠道' : '停用个人微信渠道',
+        '频道管理',
+        '渠道级启停同时作用于全部个人微信账号',
+      )
+      return sendOk(res, { enabled: result.enabled })
+    } catch (error) {
+      return sendSafeRuntimeError(
+        res,
+        error,
+        'PERSONAL_WECHAT_CHANNEL_STATE_FAILED',
+        '个人微信渠道状态修改失败',
+      )
+    }
+  })
+
   router.delete('/accounts/:accountId', adminMiddleware, async (req, res) => {
     const existing = metadataStore.get(req.params.accountId)
     if (!existing) {

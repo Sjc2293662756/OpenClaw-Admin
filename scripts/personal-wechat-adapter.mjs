@@ -493,6 +493,37 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, accountId, enabled: body.enabled })
     }
 
+    if (req.method === 'PUT' && pathname === '/channel/enabled') {
+      const body = await readBody(req)
+      if (typeof body.enabled !== 'boolean') {
+        return json(res, 400, errorPayload('PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID', '个人微信渠道状态参数无效'))
+      }
+      try {
+        updateOpenClawWeixinConfig((section) => {
+          section.enabled = body.enabled
+          // The channel-level flag alone is overridden by per-account
+          // enabled entries in this plugin. Apply the same state to every
+          // configured account so the switch really starts/stops the channel.
+          const accountIds = new Set([
+            ...(Array.isArray(section.accounts) ? [] : Object.keys(section.accounts || {})),
+            ...listAccounts().map((account) => account.accountId),
+          ])
+          if (!section.accounts || typeof section.accounts !== 'object' || Array.isArray(section.accounts)) {
+            section.accounts = {}
+          }
+          for (const accountId of accountIds) {
+            if (accountId) section.accounts[accountId] = { enabled: body.enabled }
+          }
+        })
+      } catch {
+        return json(res, 502, errorPayload(
+          'PERSONAL_WECHAT_CHANNEL_STATE_FAILED',
+          '个人微信渠道状态写入失败',
+        ))
+      }
+      return json(res, 200, { ok: true, enabled: body.enabled })
+    }
+
     const deleteMatch = pathname.match(/^\/accounts\/([^/]+)$/)
     if (req.method === 'DELETE' && deleteMatch) {
       const accountId = normalizeAccountIdInput(decodeURIComponent(deleteMatch[1]))

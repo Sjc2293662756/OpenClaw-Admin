@@ -237,6 +237,21 @@ export function createPersonalWechatRuntime({
     return { accountId: normalizedId, deleted: true }
   }
 
+  async function setChannelEnabled(enabled) {
+    if (typeof enabled !== 'boolean') {
+      const error = new Error('个人微信渠道状态参数无效')
+      error.code = 'PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID'
+      throw error
+    }
+    const row = await request('PUT', '/channel/enabled', { enabled })
+    if (row.enabled !== enabled) {
+      const error = new Error('个人微信渠道状态未得到确认')
+      error.code = 'PERSONAL_WECHAT_CHANNEL_STATE_UNCONFIRMED'
+      throw error
+    }
+    return { enabled }
+  }
+
   return {
     getStatus,
     startQr,
@@ -246,6 +261,7 @@ export function createPersonalWechatRuntime({
     cancelQr,
     setAccountEnabled,
     deleteAccount,
+    setChannelEnabled,
   }
 }
 
