@@ -332,6 +332,8 @@ export default {
         title: 'Personal WeChat',
         subtitle: 'Personal WeChat accounts are managed separately from other channels. Plugin installation and daily account onboarding have separate lifecycles.',
         add: 'Add Personal WeChat',
+        launchChannel: 'Launch channel',
+        manageTitle: 'Personal WeChat Management',
         securityHint: 'QR onboarding only calls account-login capabilities from the installed plugin. It never installs, upgrades, or removes the plugin. Login credentials stay in the plugin and are never copied or revealed by GAIOP.',
         deleteConfirm: 'Delete “{name}”? Only this account’s authorization and management metadata are removed. The plugin and all other accounts remain intact.',
         plugin: {
@@ -408,6 +410,9 @@ export default {
           enabled: 'Enabled “{name}”',
           disabled: 'Disabled “{name}”',
           deleted: 'Deleted “{name}”',
+          launchEnabled: 'Personal WeChat channel launched',
+          launchDisabled: 'Personal WeChat channel stopped',
+          launchFailed: 'Failed to update the Personal WeChat channel state',
           updateFailed: 'Failed to update the Personal WeChat account',
           deleteFailed: 'Failed to delete the Personal WeChat account',
         },

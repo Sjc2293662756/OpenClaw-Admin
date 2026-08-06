@@ -4,6 +4,8 @@ import {
   NAlert,
   NButton,
   NCard,
+  NCollapse,
+  NCollapseItem,
   NEmpty,
   NForm,
   NFormItem,
@@ -13,6 +15,7 @@ import {
   NPopconfirm,
   NSpace,
   NSpin,
+  NSwitch,
   NTag,
   NText,
   useMessage,
@@ -27,6 +30,7 @@ import {
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import { faWeixin } from '@fortawesome/free-brands-svg-icons'
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 import {
   usePersonalWechatStore,
   type PersonalWechatAccount,
@@ -44,15 +48,19 @@ const props = defineProps<{
 }>()
 
 const store = usePersonalWechatStore()
+const authStore = useAuthStore()
 const message = useMessage()
 const { t } = useI18n()
 
+const expandedNames = ref<string[]>(['personal-wechat'])
 const modalVisible = ref(false)
 const displayName = ref('')
 const note = ref('')
 const verificationCode = ref('')
 const polling = ref(false)
 const notifiedTerminalSessionId = ref<string | null>(null)
+const launchEnabled = ref(true)
+const launchSaving = ref(false)
 let onboardingTimer: ReturnType<typeof setInterval> | null = null
 let statusTimer: ReturnType<typeof setInterval> | null = null
 
@@ -62,16 +70,19 @@ const onboardingActive = computed(() => {
   return !!status && !isPersonalWechatOnboardingTerminal(status)
 })
 
-const pluginTagType = computed<'success' | 'warning' | 'error'>(() => {
-  if (store.pluginReady) return 'success'
-  return store.plugin.installed ? 'warning' : 'error'
+const componentStatusType = computed<'success' | 'warning' | 'error'>(() => {
+  if (!store.plugin.installed) return 'error'
+  return store.plugin.available ? 'success' : 'warning'
 })
 
-const pluginStatusLabel = computed(() => {
-  if (store.pluginReady) return t('pages.channels.personalWechat.plugin.ready')
-  if (store.plugin.installed) return t('pages.channels.personalWechat.plugin.unavailable')
-  return t('pages.channels.personalWechat.plugin.notInstalled')
+const componentStatusLabel = computed(() => {
+  if (!store.plugin.installed) return t('pages.channels.pluginStatus.notInstalled')
+  return t('pages.channels.pluginStatus.installed')
 })
+
+const configuredLabel = computed(() => (
+  store.pluginReady ? t('pages.channels.configured') : t('pages.channels.notConfigured')
+))
 
 function stopPolling(): void {
   if (onboardingTimer) clearInterval(onboardingTimer)
@@ -130,9 +141,50 @@ function startPolling(): void {
 
 async function handleRefresh(): Promise<void> {
   try {
-    await store.refresh()
+    await Promise.all([store.refresh(), loadLaunchState()])
   } catch {
     message.error(t('pages.channels.personalWechat.messages.loadFailed'))
+  }
+}
+
+async function loadLaunchState(): Promise<void> {
+  try {
+    const response = await fetch('/api/channels/config', {
+      headers: { Authorization: `Bearer ${authStore.getToken() || ''}` },
+    })
+    const result = await response.json().catch(() => ({}))
+    const config = (result as Record<string, unknown>).config as Record<string, unknown> | undefined
+    const weixin = (config?.channels as Record<string, unknown> | undefined)?.['openclaw-weixin'] as Record<string, unknown> | undefined
+    if (weixin) launchEnabled.value = weixin.enabled !== false
+  } catch {
+    // Keep the current value when the config endpoint is temporarily unavailable.
+  }
+}
+
+async function handleLaunchChange(value: boolean): Promise<void> {
+  if (launchSaving.value) return
+  const previous = launchEnabled.value
+  launchEnabled.value = value
+  launchSaving.value = true
+  try {
+    const response = await fetch('/api/channels/config', {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${authStore.getToken() || ''}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ patches: [{ path: 'channels.openclaw-weixin.enabled', value }] }),
+    })
+    const result = await response.json().catch(() => ({}))
+    if (!response.ok || (result as Record<string, unknown>).ok !== true) throw new Error('failed')
+    message.success(value
+      ? t('pages.channels.personalWechat.messages.launchEnabled')
+      : t('pages.channels.personalWechat.messages.launchDisabled'))
+  } catch {
+    launchEnabled.value = previous
+    message.error(t('pages.channels.personalWechat.messages.launchFailed'))
+  } finally {
+    launchSaving.value = false
   }
 }
 
@@ -247,134 +299,157 @@ function formatExpiry(value?: number): string {
 </script>
 
 <template>
-  <NCard class="personal-wechat-card">
-    <template #header>
-      <div class="personal-wechat-header">
-        <span class="personal-wechat-brand"><FontAwesomeIcon :icon="faWeixin" /></span>
-        <div>
-          <div class="personal-wechat-title">{{ t('pages.channels.personalWechat.title') }}</div>
-          <NText depth="3" class="personal-wechat-subtitle">
-            {{ t('pages.channels.personalWechat.subtitle') }}
-          </NText>
-        </div>
-      </div>
-    </template>
-    <template #header-extra>
-      <NSpace :size="8">
-        <NTag :type="pluginTagType" :bordered="false">{{ pluginStatusLabel }}</NTag>
-        <NButton size="small" :loading="store.loading" @click="handleRefresh">
-          <template #icon><NIcon :component="RefreshOutline" /></template>
-          {{ t('common.refresh') }}
-        </NButton>
-        <NButton
-          v-if="canManage"
-          type="primary"
-          size="small"
-          :disabled="!store.pluginReady || onboardingActive"
-          :title="!canManage ? readOnlyHint : undefined"
-          @click="openOnboarding"
-        >
-          <template #icon><NIcon :component="AddOutline" /></template>
-          {{ t('pages.channels.personalWechat.add') }}
-        </NButton>
-      </NSpace>
-    </template>
+  <NCard class="channel-root-card personal-wechat-card">
+    <NCollapse v-model:expanded-names="expandedNames">
+      <NCollapseItem name="personal-wechat">
+        <template #header>
+          <NSpace align="center" :size="8" class="channel-header-row">
+            <span class="channel-brand channel-brand--weixin"><FontAwesomeIcon :icon="faWeixin" /></span>
+            <NText strong>{{ t('pages.channels.personalWechat.title') }}</NText>
+            <NText depth="3" class="channel-key-text">openclaw-weixin</NText>
+            <NTag :type="componentStatusType" size="small" :bordered="false">
+              {{ componentStatusLabel }}
+            </NTag>
+            <NTag :type="store.pluginReady ? 'success' : 'default'" size="small" :bordered="false">
+              {{ configuredLabel }}
+            </NTag>
+          </NSpace>
+        </template>
 
-    <NSpace vertical :size="12">
-      <NAlert v-if="store.lastError" type="error" :bordered="false">
-        {{ store.lastError }}
-      </NAlert>
-      <NAlert v-if="!store.plugin.installed" type="warning" :bordered="false">
-        {{ t('pages.channels.personalWechat.plugin.notInstalledHint') }}
-      </NAlert>
-      <NAlert v-else-if="!store.plugin.available" type="warning" :bordered="false">
-        {{ t('pages.channels.personalWechat.plugin.unavailableHint') }}
-        <template v-if="store.plugin.reasonCode">（{{ store.plugin.reasonCode }}）</template>
-      </NAlert>
-      <NAlert v-else type="info" :bordered="false">
-        {{ t('pages.channels.personalWechat.securityHint') }}
-      </NAlert>
+        <NSpace vertical :size="10" class="channel-section-stack">
+          <div class="channel-desc-panel">
+            <span>{{ t('pages.channels.personalWechat.subtitle') }}</span>
+          </div>
 
-      <NSpin :show="store.loading">
-        <NEmpty
-          v-if="store.accounts.length === 0"
-          :description="store.pluginReady
-            ? t('pages.channels.personalWechat.empty.ready')
-            : t('pages.channels.personalWechat.empty.unavailable')"
-          class="personal-wechat-empty"
-        />
-        <div v-else class="personal-wechat-account-list">
-          <NCard
-            v-for="account in store.accounts"
-            :key="account.accountId"
-            size="small"
-            embedded
-            class="personal-wechat-account"
-          >
-            <div class="personal-wechat-account-main">
-              <div class="personal-wechat-account-info">
-                <NSpace align="center" :size="8" class="personal-wechat-account-heading">
-                  <NText strong>{{ account.displayName }}</NText>
-                  <NTag :type="accountStatusType(account.status)" size="small" :bordered="false">
-                    {{ t(`pages.channels.personalWechat.accountStatus.${account.status}`) }}
-                  </NTag>
-                </NSpace>
-                <div class="personal-wechat-account-meta">
-                  <span v-if="account.nickname">
-                    {{ t('pages.channels.personalWechat.labels.nickname') }}：{{ account.nickname }}
-                  </span>
-                  <span>
-                    {{ t('pages.channels.personalWechat.labels.identifier') }}：<code>{{ account.wechatIdentifier }}</code>
-                  </span>
-                  <span v-if="account.note">
-                    {{ t('pages.channels.personalWechat.labels.note') }}：{{ account.note }}
-                  </span>
-                  <span v-if="account.errorCode" class="personal-wechat-error-code">
-                    {{ t('pages.channels.personalWechat.labels.errorCode') }}：{{ account.errorCode }}
-                  </span>
-                </div>
-              </div>
+          <NAlert v-if="store.lastError" type="error" :bordered="false">
+            {{ store.lastError }}
+          </NAlert>
+          <NAlert v-if="!store.plugin.installed" type="warning" :bordered="false">
+            {{ t('pages.channels.personalWechat.plugin.notInstalledHint') }}
+          </NAlert>
+          <NAlert v-else-if="!store.plugin.available" type="warning" :bordered="false">
+            {{ t('pages.channels.personalWechat.plugin.unavailableHint') }}
+            <template v-if="store.plugin.reasonCode">（{{ store.plugin.reasonCode }}）</template>
+          </NAlert>
 
-              <NSpace v-if="canManage" :size="8" class="personal-wechat-account-actions">
-                <NButton
-                  v-if="account.enabled"
-                  size="small"
-                  :loading="store.operationAccountId === account.accountId"
-                  @click="handleSetEnabled(account, false)"
-                >
-                  <template #icon><NIcon :component="PauseOutline" /></template>
-                  {{ t('pages.channels.personalWechat.actions.disable') }}
-                </NButton>
-                <NButton
-                  v-else
-                  size="small"
-                  type="primary"
-                  :loading="store.operationAccountId === account.accountId"
-                  @click="handleSetEnabled(account, true)"
-                >
-                  <template #icon><NIcon :component="PlayOutline" /></template>
-                  {{ t('pages.channels.personalWechat.actions.enable') }}
-                </NButton>
-                <NPopconfirm @positive-click="handleDelete(account)">
-                  <template #trigger>
-                    <NButton
-                      size="small"
-                      type="error"
-                      ghost
-                      :loading="store.operationAccountId === account.accountId"
-                    >
-                      <template #icon><NIcon :component="TrashOutline" /></template>
-                      {{ t('common.delete') }}
-                    </NButton>
-                  </template>
-                  {{ t('pages.channels.personalWechat.deleteConfirm', { name: account.displayName }) }}
-                </NPopconfirm>
-              </NSpace>
-            </div>
+          <NCard size="small" :title="t('pages.channels.basicConfigTitle')" embedded>
+            <template #header-extra>
+              <NButton size="small" :loading="store.loading" @click="handleRefresh">
+                <template #icon><NIcon :component="RefreshOutline" /></template>
+                {{ t('common.refresh') }}
+              </NButton>
+            </template>
+            <NForm label-placement="left" label-width="140" class="channel-config-form">
+              <NFormItem :label="t('pages.channels.personalWechat.launchChannel')">
+                <NSwitch
+                  :value="launchEnabled"
+                  :loading="launchSaving"
+                  :disabled="!canManage"
+                  :title="!canManage ? readOnlyHint : undefined"
+                  @update:value="handleLaunchChange"
+                />
+              </NFormItem>
+            </NForm>
           </NCard>
-        </div>
-      </NSpin>
-    </NSpace>
+
+          <NCard size="small" :title="t('pages.channels.personalWechat.manageTitle')" embedded>
+            <template #header-extra>
+              <NButton
+                v-if="canManage"
+                size="small"
+                type="primary"
+                :disabled="!store.pluginReady || onboardingActive"
+                :title="!canManage ? readOnlyHint : undefined"
+                @click="openOnboarding"
+              >
+                <template #icon><NIcon :component="AddOutline" /></template>
+                {{ t('pages.channels.personalWechat.add') }}
+              </NButton>
+            </template>
+
+            <NSpin :show="store.loading">
+              <NEmpty
+                v-if="store.accounts.length === 0"
+                :description="store.pluginReady
+                  ? t('pages.channels.personalWechat.empty.ready')
+                  : t('pages.channels.personalWechat.empty.unavailable')"
+                class="personal-wechat-empty"
+              />
+              <div v-else class="personal-wechat-account-list">
+                <NCard
+                  v-for="account in store.accounts"
+                  :key="account.accountId"
+                  size="small"
+                  embedded
+                  class="personal-wechat-account"
+                >
+                  <div class="personal-wechat-account-main">
+                    <div class="personal-wechat-account-info">
+                      <NSpace align="center" :size="8" class="personal-wechat-account-heading">
+                        <NText strong>{{ account.displayName }}</NText>
+                        <NTag :type="accountStatusType(account.status)" size="small" :bordered="false">
+                          {{ t(`pages.channels.personalWechat.accountStatus.${account.status}`) }}
+                        </NTag>
+                      </NSpace>
+                      <div class="personal-wechat-account-meta">
+                        <span v-if="account.nickname">
+                          {{ t('pages.channels.personalWechat.labels.nickname') }}：{{ account.nickname }}
+                        </span>
+                        <span>
+                          {{ t('pages.channels.personalWechat.labels.identifier') }}：<code>{{ account.wechatIdentifier }}</code>
+                        </span>
+                        <span v-if="account.note">
+                          {{ t('pages.channels.personalWechat.labels.note') }}：{{ account.note }}
+                        </span>
+                        <span v-if="account.errorCode" class="personal-wechat-error-code">
+                          {{ t('pages.channels.personalWechat.labels.errorCode') }}：{{ account.errorCode }}
+                        </span>
+                      </div>
+                    </div>
+
+                    <NSpace v-if="canManage" :size="8" class="personal-wechat-account-actions">
+                      <NButton
+                        v-if="account.enabled"
+                        size="small"
+                        :loading="store.operationAccountId === account.accountId"
+                        @click="handleSetEnabled(account, false)"
+                      >
+                        <template #icon><NIcon :component="PauseOutline" /></template>
+                        {{ t('pages.channels.personalWechat.actions.disable') }}
+                      </NButton>
+                      <NButton
+                        v-else
+                        size="small"
+                        type="primary"
+                        :loading="store.operationAccountId === account.accountId"
+                        @click="handleSetEnabled(account, true)"
+                      >
+                        <template #icon><NIcon :component="PlayOutline" /></template>
+                        {{ t('pages.channels.personalWechat.actions.enable') }}
+                      </NButton>
+                      <NPopconfirm @positive-click="handleDelete(account)">
+                        <template #trigger>
+                          <NButton
+                            size="small"
+                            type="error"
+                            ghost
+                            :loading="store.operationAccountId === account.accountId"
+                          >
+                            <template #icon><NIcon :component="TrashOutline" /></template>
+                            {{ t('common.delete') }}
+                          </NButton>
+                        </template>
+                        {{ t('pages.channels.personalWechat.deleteConfirm', { name: account.displayName }) }}
+                      </NPopconfirm>
+                    </NSpace>
+                  </div>
+                </NCard>
+              </div>
+            </NSpin>
+          </NCard>
+        </NSpace>
+      </NCollapseItem>
+    </NCollapse>
   </NCard>
 
   <NModal v-model:show="modalVisible" :mask-closable="false" :close-on-esc="false">
@@ -478,22 +553,18 @@ function formatExpiry(value?: number): string {
 
           <NSpace justify="end">
             <NButton
-              v-if="onboardingActive"
-              :loading="store.mutating"
+              v-if="!isPersonalWechatOnboardingTerminal(store.onboarding.status)"
               @click="handleCancelOnboarding"
             >
               {{ t('pages.channels.personalWechat.onboarding.cancelSession') }}
             </NButton>
-            <template v-else>
-              <NButton @click="closeTerminalOnboarding">{{ t('common.close') }}</NButton>
-              <NButton
-                v-if="store.onboarding.status !== 'success'"
-                type="primary"
-                @click="resetOnboardingForm"
-              >
-                {{ t('pages.channels.personalWechat.onboarding.tryAgain') }}
-              </NButton>
-            </template>
+            <NButton
+              v-else
+              type="primary"
+              @click="closeTerminalOnboarding"
+            >
+              {{ t('common.close') }}
+            </NButton>
           </NSpace>
         </template>
       </NSpace>
@@ -502,72 +573,165 @@ function formatExpiry(value?: number): string {
 </template>
 
 <style scoped>
-.personal-wechat-card {
-  --wechat-card-border: var(--border-color);
-  --wechat-card-bg: var(--bg-card);
-  --wechat-soft-bg: var(--bg-secondary);
-  --wechat-text: var(--text-primary);
-  --wechat-muted: var(--text-secondary);
-  border: 1px solid var(--wechat-card-border);
+.personal-wechat-card.channel-root-card {
+  --channel-card-border: var(--border-color);
+  --channel-card-bg: var(--bg-card);
+  --channel-soft-bg: var(--bg-secondary);
+  --channel-text: var(--text-primary);
+  --channel-text-muted: var(--text-secondary);
+  --channel-link: #2563eb;
+  --channel-link-hover: #1d4ed8;
+  --channel-desc-bg:
+    linear-gradient(135deg, rgba(16, 185, 129, 0.11), rgba(16, 185, 129, 0.05)),
+    var(--channel-soft-bg);
+  --channel-desc-border: rgba(16, 185, 129, 0.24);
+  --channel-collapse-hover: rgba(16, 185, 129, 0.06);
   border-radius: 18px;
-  background: var(--wechat-card-bg);
+  border: 1px solid var(--channel-card-border);
+  background: var(--channel-card-bg);
   box-shadow: var(--shadow-sm);
 }
 
-.personal-wechat-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+:global([data-theme='dark'] .personal-wechat-card.channel-root-card) {
+  --channel-link: #6ee7b7;
+  --channel-link-hover: #a7f3d0;
+  --channel-desc-border: rgba(52, 211, 153, 0.32);
+  --channel-collapse-hover: rgba(16, 185, 129, 0.12);
 }
 
-.personal-wechat-brand {
+:deep(.personal-wechat-card > .n-card-header) {
+  padding-bottom: 10px;
+}
+
+:deep(.personal-wechat-card > .n-card__content) {
+  padding-top: 12px;
+}
+
+:deep(.n-collapse) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 0;
+}
+
+:deep(.n-collapse-item) {
+  border: 1px solid var(--channel-card-border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--channel-card-bg) !important;
+  transition: background-color 160ms ease;
+  margin: 0 !important;
+}
+
+:deep(.n-collapse-item:not(:first-child)) {
+  border-top: none !important;
+}
+
+:deep(.n-collapse-item .n-collapse-item__header) {
+  padding: 10px 12px;
+}
+
+:deep(.n-collapse-item:first-child > .n-collapse-item__header) {
+  padding-top: 10px !important;
+}
+
+:deep(.n-collapse-item .n-collapse-item__header-main) {
+  color: var(--channel-text);
+}
+
+:deep(.n-collapse-item .n-collapse-item__content-wrapper) {
+  border-top: 1px solid var(--channel-card-border);
+  background: var(--channel-card-bg);
+}
+
+:deep(.n-collapse-item .n-collapse-item__content-inner) {
+  padding: 10px 12px 12px;
+}
+
+:deep(.n-collapse-item__content-wrapper .n-collapse-item__content-inner) {
+  padding-top: 10px !important;
+}
+
+:deep(.n-collapse-item:hover) {
+  background: var(--channel-collapse-hover) !important;
+}
+
+:deep(.n-card.n-card--embedded) {
+  background: var(--channel-soft-bg);
+  color: var(--channel-text);
+  border-color: var(--channel-card-border);
+}
+
+:deep(.channel-config-form .n-form-item) {
+  margin-bottom: 10px;
+}
+
+:deep(.channel-config-form .n-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+:deep(code) {
+  border-radius: 6px;
+  border: 1px solid var(--channel-card-border);
+  background: var(--bg-primary);
+  color: var(--channel-text);
+  padding: 2px 6px;
+}
+
+.channel-header-row {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.channel-brand {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 38px;
-  border-radius: 12px;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
   color: #fff;
-  font-size: 20px;
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  box-shadow: 0 8px 16px rgba(22, 163, 74, 0.24);
+  font-size: 12px;
+  box-shadow: 0 6px 12px rgba(15, 23, 42, 0.22);
 }
 
-.personal-wechat-title {
-  color: var(--wechat-text);
-  font-size: 18px;
-  font-weight: 700;
-  line-height: 1.35;
+.channel-brand--weixin {
+  background: linear-gradient(135deg, #10b981 0%, #0ea5a4 100%);
 }
 
-.personal-wechat-subtitle {
-  display: block;
-  margin-top: 2px;
+.channel-key-text {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.personal-wechat-empty {
-  padding: 28px 12px;
-  border: 1px dashed var(--wechat-card-border);
-  border-radius: 12px;
-  background: var(--wechat-soft-bg);
+.channel-desc-panel {
+  border: 1px solid var(--channel-desc-border);
+  border-radius: 10px;
+  background: var(--channel-desc-bg);
+  color: var(--channel-text);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.channel-section-stack {
+  margin-top: 6px;
 }
 
 .personal-wechat-account-list {
-  display: grid;
-  gap: 10px;
-}
-
-.personal-wechat-account {
-  border-color: var(--wechat-card-border);
-  background: var(--wechat-soft-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .personal-wechat-account-main {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .personal-wechat-account-info {
@@ -580,21 +744,12 @@ function formatExpiry(value?: number): string {
 
 .personal-wechat-account-meta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  margin-top: 8px;
-  color: var(--wechat-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.personal-wechat-account-meta code {
-  padding: 1px 5px;
-  border: 1px solid var(--wechat-card-border);
-  border-radius: 5px;
-  background: var(--bg-primary);
-  color: var(--wechat-text);
-  overflow-wrap: anywhere;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .personal-wechat-error-code {
@@ -602,14 +757,8 @@ function formatExpiry(value?: number): string {
 }
 
 .personal-wechat-account-actions {
-  flex: 0 0 auto;
-}
-
-.personal-wechat-modal {
-  width: min(520px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
-  overflow: auto;
-  border-radius: 16px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .personal-wechat-qr-wrap {
@@ -623,22 +772,28 @@ function formatExpiry(value?: number): string {
   display: block;
   width: 280px;
   max-width: 100%;
-  aspect-ratio: 1;
-  object-fit: contain;
-  border: 1px solid var(--wechat-card-border);
-  border-radius: 10px;
-  background: #fff;
-  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: white;
+  padding: 8px;
 }
 
-@media (max-width: 720px) {
-  .personal-wechat-account-main {
+@media (max-width: 640px) {
+  .channel-desc-panel {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .personal-wechat-account-actions {
-    width: 100%;
+  :deep(.n-collapse-item .n-collapse-item__header) {
+    padding: 9px 10px;
+  }
+
+  :deep(.n-collapse-item:first-child > .n-collapse-item__header) {
+    padding-top: 9px !important;
+  }
+
+  :deep(.n-collapse-item .n-collapse-item__content-inner) {
+    padding: 9px 10px 10px;
   }
 }
 </style>

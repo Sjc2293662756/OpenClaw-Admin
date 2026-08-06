@@ -332,6 +332,8 @@ export default {
         title: '个人微信',
         subtitle: '个人微信账号与其他频道独立管理；插件安装和日常扫码添加账号是两个不同生命周期。',
         add: '添加个人微信',
+        launchChannel: '启动渠道',
+        manageTitle: '个人微信管理',
         securityHint: '扫码只调用已安装插件的账号登录能力，不会安装、升级或卸载插件。微信登录凭据由插件原生保存，GAIOP 不回显或复制。',
         deleteConfirm: '确定删除“{name}”吗？只会删除该账号的授权和管理信息，不会卸载个人微信插件或影响其他账号。',
         plugin: {
@@ -408,6 +410,9 @@ export default {
           enabled: '已启用“{name}”',
           disabled: '已停用“{name}”',
           deleted: '已删除“{name}”',
+          launchEnabled: '个人微信渠道已启动',
+          launchDisabled: '个人微信渠道已停止',
+          launchFailed: '个人微信渠道状态更新失败',
           updateFailed: '个人微信账号状态更新失败',
           deleteFailed: '个人微信账号删除失败',
         },
