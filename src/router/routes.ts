@@ -214,6 +214,12 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/settings/SettingsPage.vue'),
         meta: { titleKey: 'routes.settings', icon: 'CogOutline', gateway: 'openclaw' },
       },
+      {
+        path: 'system-upgrade',
+        name: 'SystemUpgrade',
+        component: () => import('@/views/upgrade/UpgradePage.vue'),
+        meta: { titleKey: 'routes.systemUpgrade', icon: 'ArchiveOutline', gateway: 'openclaw' },
+      },
     ],
   },
 ]
