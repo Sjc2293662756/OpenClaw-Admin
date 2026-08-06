@@ -326,6 +326,10 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
   async function deleteAccount(accountId: string): Promise<void> {
     operationAccountId.value = accountId
     lastError.value = null
+    // Optimistic removal: hide the account immediately and restore it if the
+    // server-side delete fails.
+    const previousAccounts = accounts.value
+    accounts.value = accounts.value.filter((item) => item.accountId !== accountId)
     try {
       const response = await fetch(`/api/channels/personal-wechat/accounts/${encodeURIComponent(accountId)}`, {
         method: 'DELETE',
@@ -335,7 +339,10 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
         response,
         fallbackMessage('个人微信账号删除失败', 'Failed to delete the Personal WeChat account'),
       )
-      accounts.value = accounts.value.filter((item) => item.accountId !== accountId)
+    } catch (error) {
+      accounts.value = previousAccounts
+      lastError.value = error instanceof Error ? error.message : String(error)
+      throw error
     } finally {
       operationAccountId.value = null
     }

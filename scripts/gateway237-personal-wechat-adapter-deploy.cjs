@@ -118,7 +118,8 @@ if [ -f /etc/gaiop/admin.env ]; then
 fi
 
 runuser -u netinside -- env HOME="$home" PATH="$home/.npm-global/bin:/usr/local/bin:/usr/bin:/bin" XDG_RUNTIME_DIR=/run/user/1000 systemctl --user daemon-reload
-runuser -u netinside -- env HOME="$home" PATH="$home/.npm-global/bin:/usr/local/bin:/usr/bin:/bin" XDG_RUNTIME_DIR=/run/user/1000 systemctl --user enable --now gaiop-personal-wechat.service
+runuser -u netinside -- env HOME="$home" PATH="$home/.npm-global/bin:/usr/local/bin:/usr/bin:/bin" XDG_RUNTIME_DIR=/run/user/1000 systemctl --user enable gaiop-personal-wechat.service
+runuser -u netinside -- env HOME="$home" PATH="$home/.npm-global/bin:/usr/local/bin:/usr/bin:/bin" XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart gaiop-personal-wechat.service
 printf 'ADAPTER_UNIT_ENABLED\\n'
 `
 

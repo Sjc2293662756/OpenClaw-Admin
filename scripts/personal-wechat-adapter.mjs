@@ -8,7 +8,7 @@
 // this host.
 
 import http from 'node:http'
-import { spawn, spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -21,7 +21,6 @@ const PORT = Number(process.env.GAIOP_WEIXIN_ADAPTER_PORT || 19091)
 const TOKEN = String(process.env.GAIOP_WEIXIN_ADAPTER_TOKEN || '')
 const HOME = String(process.env.GAIOP_HOME || '/home/netinside')
 const NODE_BIN = process.env.GAIOP_NODE_BIN || 'node'
-const OPENCLAW_BIN = path.join(HOME, '.npm-global/bin/openclaw')
 const PLUGIN_BASE = path.join(HOME, '.openclaw/npm/node_modules/@tencent-weixin/openclaw-weixin')
 const PLUGIN_STATE = path.join(HOME, '.openclaw/openclaw-weixin')
 const CONFIG_PATH = path.join(HOME, '.openclaw/openclaw.json')
@@ -68,18 +67,27 @@ function listAccounts() {
   })
 }
 
-function runCli(args, input) {
-  return spawnSync(OPENCLAW_BIN, args, {
-    encoding: 'utf8',
-    input: input === undefined ? undefined : JSON.stringify(input),
-    timeout: 60_000,
-    env: {
-      ...process.env,
-      HOME,
-      PATH: `${HOME}/.npm-global/bin:/usr/local/bin:/usr/bin:/bin`,
-      XDG_RUNTIME_DIR: '/run/user/1000',
-    },
-  })
+/**
+ * Apply a small mutation to the openclaw.json channels.openclaw-weixin
+ * section with an atomic write and a .bak snapshot. This deliberately avoids
+ * the OpenClaw CLI/SDK config write path, whose full schema validation takes
+ * multiple seconds per call on this host. The mutations here are structural
+ * (delete an account key / toggle a boolean) and low risk.
+ */
+function updateOpenClawWeixinConfig(mutate) {
+  const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
+  const cfg = JSON.parse(raw)
+  if (!cfg.channels || typeof cfg.channels !== 'object' || Array.isArray(cfg.channels)) cfg.channels = {}
+  if (!cfg.channels['openclaw-weixin'] || typeof cfg.channels['openclaw-weixin'] !== 'object') {
+    cfg.channels['openclaw-weixin'] = {}
+  }
+  const section = cfg.channels['openclaw-weixin']
+  mutate(section)
+  section.channelConfigUpdatedAt = new Date().toISOString()
+  fs.copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.bak`)
+  const temporary = `${CONFIG_PATH}.tmp-${process.pid}`
+  fs.writeFileSync(temporary, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  fs.renameSync(temporary, CONFIG_PATH)
 }
 
 // ---------------------------------------------------------------------------
@@ -385,12 +393,14 @@ const server = http.createServer(async (req, res) => {
       if (typeof body.enabled !== 'boolean') {
         return json(res, 400, errorPayload('PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID', '个人微信账号状态参数无效'))
       }
-      const result = runCli([
-        'config', 'set',
-        `channels.openclaw-weixin.accounts.${accountId}.enabled`,
-        body.enabled ? 'true' : 'false',
-      ])
-      if (result.status !== 0) {
+      try {
+        updateOpenClawWeixinConfig((section) => {
+          if (!section.accounts || typeof section.accounts !== 'object' || Array.isArray(section.accounts)) {
+            section.accounts = {}
+          }
+          section.accounts[accountId] = { enabled: body.enabled }
+        })
+      } catch {
         return json(res, 502, errorPayload(
           'PERSONAL_WECHAT_ACCOUNT_STATE_FAILED',
           '个人微信账号状态写入失败',
@@ -410,17 +420,18 @@ const server = http.createServer(async (req, res) => {
       )
       accountsModule.clearWeixinAccount(accountId)
       accountsModule.unregisterWeixinAccountId(accountId)
-      const patchResult = runCli(
-        ['config', 'patch', '--stdin'],
-        { channels: { 'openclaw-weixin': { accounts: { [accountId]: null } } } },
-      )
-      if (patchResult.status !== 0) {
+      try {
+        updateOpenClawWeixinConfig((section) => {
+          if (section.accounts && typeof section.accounts === 'object') {
+            delete section.accounts[accountId]
+          }
+        })
+      } catch {
         return json(res, 502, errorPayload(
           'PERSONAL_WECHAT_ACCOUNT_DELETE_FAILED',
           '个人微信账号配置清理失败',
         ))
       }
-      runCli(['config', 'set', 'channels.openclaw-weixin.channelConfigUpdatedAt', new Date().toISOString()])
       return json(res, 200, { ok: true, accountId, deleted: true })
     }
 
