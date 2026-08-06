@@ -32,7 +32,9 @@ import {
   faComments,
   faPaperPlane,
 } from '@fortawesome/free-solid-svg-icons'
+import { faWeixin } from '@fortawesome/free-brands-svg-icons'
 import { useChannelManagementStore } from '@/stores/channel-management'
+import { usePersonalWechatStore } from '@/stores/personal-wechat'
 import {
   collectSecretFieldKeys,
   resolveChannelTemplate,
@@ -84,6 +86,7 @@ const CHINA_CHANNELS: ChinaChannelMeta[] = [
 ]
 
 const channelStore = useChannelManagementStore()
+const personalWechatStore = usePersonalWechatStore()
 const { canManageSecurity, readOnlyHint } = usePermissions()
 const message = useMessage()
 const { t } = useI18n()
@@ -127,6 +130,17 @@ function pluginStatusLabel(card: { pluginStatusKnown: boolean; pluginInstalled: 
   }
   return card.pluginInstalled ? t('pages.channels.pluginStatus.assumedInstalled') : t('pages.channels.pluginStatus.unknown')
 }
+
+const personalWechatPluginType = computed<'success' | 'warning' | 'error'>(() => {
+  if (!personalWechatStore.plugin.installed) return 'error'
+  return personalWechatStore.plugin.available ? 'success' : 'warning'
+})
+
+const personalWechatPluginLabel = computed(() => (
+  personalWechatStore.plugin.installed
+    ? t('pages.channels.pluginStatus.installed')
+    : t('pages.channels.pluginStatus.notInstalled')
+))
 
 function resolveManagedChannelKey(meta: ChinaChannelMeta): string {
   const draftKey = Object.keys(channelStore.channelsDraft).find(
@@ -312,6 +326,7 @@ async function handleRefresh(): Promise<void> {
   } catch {
     message.error(t('pages.channels.refreshFailed'))
   }
+  void personalWechatStore.refresh().catch(() => {})
 }
 
 async function handleSave(applyAfterSave = false): Promise<void> {
@@ -635,11 +650,26 @@ onUnmounted(() => {
                 </template>
               </NSpace>
             </NCollapseItem>
+            <NCollapseItem name="personal-wechat">
+              <template #header>
+                <NSpace align="center" :size="8" class="channel-header-row">
+                  <span class="channel-brand channel-brand--weixin"><FontAwesomeIcon :icon="faWeixin" /></span>
+                  <NText strong>{{ t('pages.channels.personalWechat.title') }}</NText>
+                  <NText depth="3" class="channel-key-text">weixin</NText>
+                  <NTag :type="personalWechatPluginType" size="small" :bordered="false">
+                    {{ personalWechatPluginLabel }}
+                  </NTag>
+                  <NTag :type="personalWechatStore.pluginReady ? 'success' : 'default'" size="small" :bordered="false">
+                    {{ personalWechatStore.pluginReady ? t('pages.channels.configured') : t('pages.channels.notConfigured') }}
+                  </NTag>
+                </NSpace>
+              </template>
+              <PersonalWeChatPanel :can-manage="canManageSecurity" :read-only-hint="readOnlyHint" />
+            </NCollapseItem>
           </NCollapse>
         </NSpin>
       </NSpace>
     </NCard>
-    <PersonalWeChatPanel :can-manage="canManageSecurity" :read-only-hint="readOnlyHint" />
   </NSpace>
 </template>
 
@@ -873,6 +903,10 @@ onUnmounted(() => {
 
 .channel-brand--wecom {
   background: linear-gradient(135deg, #16a34a 0%, #0ea5a4 100%);
+}
+
+.channel-brand--weixin {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
 }
 
 .channel-key-text {

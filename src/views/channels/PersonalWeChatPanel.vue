@@ -52,7 +52,6 @@ const authStore = useAuthStore()
 const message = useMessage()
 const { t } = useI18n()
 
-const expandedNames = ref<string[]>(['personal-wechat'])
 const modalVisible = ref(false)
 const displayName = ref('')
 const note = ref('')
@@ -69,20 +68,6 @@ const onboardingActive = computed(() => {
   const status = store.onboarding?.status
   return !!status && !isPersonalWechatOnboardingTerminal(status)
 })
-
-const componentStatusType = computed<'success' | 'warning' | 'error'>(() => {
-  if (!store.plugin.installed) return 'error'
-  return store.plugin.available ? 'success' : 'warning'
-})
-
-const componentStatusLabel = computed(() => {
-  if (!store.plugin.installed) return t('pages.channels.pluginStatus.notInstalled')
-  return t('pages.channels.pluginStatus.installed')
-})
-
-const configuredLabel = computed(() => (
-  store.pluginReady ? t('pages.channels.configured') : t('pages.channels.notConfigured')
-))
 
 function stopPolling(): void {
   if (onboardingTimer) clearInterval(onboardingTimer)
@@ -299,24 +284,7 @@ function formatExpiry(value?: number): string {
 </script>
 
 <template>
-  <NCard class="channel-root-card personal-wechat-card">
-    <NCollapse v-model:expanded-names="expandedNames">
-      <NCollapseItem name="personal-wechat">
-        <template #header>
-          <NSpace align="center" :size="8" class="channel-header-row">
-            <span class="channel-brand channel-brand--weixin"><FontAwesomeIcon :icon="faWeixin" /></span>
-            <NText strong>{{ t('pages.channels.personalWechat.title') }}</NText>
-            <NText depth="3" class="channel-key-text">weixin</NText>
-            <NTag :type="componentStatusType" size="small" :bordered="false">
-              {{ componentStatusLabel }}
-            </NTag>
-            <NTag :type="store.pluginReady ? 'success' : 'default'" size="small" :bordered="false">
-              {{ configuredLabel }}
-            </NTag>
-          </NSpace>
-        </template>
-
-        <NSpace vertical :size="10" class="channel-section-stack">
+  <NSpace vertical :size="10">
           <div class="channel-desc-panel">
             <span>{{ t('pages.channels.personalWechat.subtitle') }}</span>
           </div>
@@ -330,9 +298,6 @@ function formatExpiry(value?: number): string {
           <NAlert v-else-if="!store.plugin.available" type="warning" :bordered="false">
             {{ t('pages.channels.personalWechat.plugin.unavailableHint') }}
             <template v-if="store.plugin.reasonCode">（{{ store.plugin.reasonCode }}）</template>
-          </NAlert>
-          <NAlert v-else type="info" :bordered="false">
-            {{ t('pages.channels.personalWechat.securityHint') }}
           </NAlert>
 
           <NCard size="small" :title="t('pages.channels.basicConfigTitle')" embedded>
@@ -353,6 +318,9 @@ function formatExpiry(value?: number): string {
                 />
               </NFormItem>
             </NForm>
+            <NAlert type="info" :bordered="false" style="margin-top: 12px;">
+              {{ t('pages.channels.personalWechat.privateChatScopeHint') }}
+            </NAlert>
           </NCard>
 
           <NCard size="small" :title="t('pages.channels.personalWechat.manageTitle')" embedded>
@@ -369,6 +337,10 @@ function formatExpiry(value?: number): string {
                 {{ t('pages.channels.personalWechat.add') }}
               </NButton>
             </template>
+
+            <NAlert type="info" :bordered="false" style="margin-bottom: 12px;">
+              {{ t('pages.channels.personalWechat.securityHint') }}
+            </NAlert>
 
             <NSpin :show="store.loading">
               <NEmpty
@@ -450,10 +422,7 @@ function formatExpiry(value?: number): string {
               </div>
             </NSpin>
           </NCard>
-        </NSpace>
-      </NCollapseItem>
-    </NCollapse>
-  </NCard>
+  </NSpace>
 
   <NModal v-model:show="modalVisible" :mask-closable="false" :close-on-esc="false">
     <NCard
@@ -576,93 +545,10 @@ function formatExpiry(value?: number): string {
 </template>
 
 <style scoped>
-.personal-wechat-card.channel-root-card {
-  --channel-card-border: var(--border-color);
-  --channel-card-bg: var(--bg-card);
-  --channel-soft-bg: var(--bg-secondary);
-  --channel-text: var(--text-primary);
-  --channel-text-muted: var(--text-secondary);
-  --channel-link: #2563eb;
-  --channel-link-hover: #1d4ed8;
-  --channel-desc-bg:
-    linear-gradient(135deg, rgba(32, 128, 240, 0.11), rgba(32, 128, 240, 0.05)),
-    var(--channel-soft-bg);
-  --channel-desc-border: rgba(32, 128, 240, 0.24);
-  --channel-collapse-hover: rgba(32, 128, 240, 0.06);
-  border-radius: 18px;
-  border: 1px solid var(--channel-card-border);
-  background: var(--channel-card-bg);
-  box-shadow: var(--shadow-sm);
-}
-
-:global([data-theme='dark'] .personal-wechat-card.channel-root-card) {
-  --channel-link: #93c5fd;
-  --channel-link-hover: #bfdbfe;
-  --channel-desc-border: rgba(147, 197, 253, 0.35);
-  --channel-collapse-hover: rgba(59, 130, 246, 0.12);
-}
-
-:deep(.personal-wechat-card > .n-card-header) {
-  padding-bottom: 10px;
-}
-
-:deep(.personal-wechat-card > .n-card__content) {
-  padding-top: 12px;
-}
-
-:deep(.n-collapse) {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 0;
-}
-
-:deep(.n-collapse-item) {
-  border: 1px solid var(--channel-card-border);
-  border-radius: 12px;
-  overflow: hidden;
-  background: var(--channel-card-bg) !important;
-  transition: background-color 160ms ease;
-  margin: 0 !important;
-}
-
-:deep(.n-collapse-item:not(:first-child)) {
-  border-top: none !important;
-}
-
-:deep(.n-collapse-item .n-collapse-item__header) {
-  padding: 10px 12px;
-}
-
-:deep(.n-collapse-item:first-child > .n-collapse-item__header) {
-  padding-top: 10px !important;
-}
-
-:deep(.n-collapse-item .n-collapse-item__header-main) {
-  color: var(--channel-text);
-}
-
-:deep(.n-collapse-item .n-collapse-item__content-wrapper) {
-  border-top: 1px solid var(--channel-card-border);
-  background: var(--channel-card-bg);
-}
-
-:deep(.n-collapse-item .n-collapse-item__content-inner) {
-  padding: 10px 12px 12px;
-}
-
-:deep(.n-collapse-item__content-wrapper .n-collapse-item__content-inner) {
-  padding-top: 10px !important;
-}
-
-:deep(.n-collapse-item:hover) {
-  background: var(--channel-collapse-hover) !important;
-}
-
 :deep(.n-card.n-card--embedded) {
-  background: var(--channel-soft-bg);
-  color: var(--channel-text);
-  border-color: var(--channel-card-border);
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
 }
 
 :deep(.channel-config-form .n-form-item) {
@@ -675,52 +561,25 @@ function formatExpiry(value?: number): string {
 
 :deep(code) {
   border-radius: 6px;
-  border: 1px solid var(--channel-card-border);
+  border: 1px solid var(--border-color);
   background: var(--bg-primary);
-  color: var(--channel-text);
+  color: var(--text-primary);
   padding: 2px 6px;
 }
 
-.channel-header-row {
-  flex-wrap: wrap;
-  row-gap: 6px;
-}
-
-.channel-brand {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 9px;
-  color: #fff;
-  font-size: 12px;
-  box-shadow: 0 6px 12px rgba(15, 23, 42, 0.22);
-}
-
-.channel-brand--weixin {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-}
-
-.channel-key-text {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
 .channel-desc-panel {
-  border: 1px solid var(--channel-desc-border);
+  border: 1px solid rgba(32, 128, 240, 0.24);
   border-radius: 10px;
-  background: var(--channel-desc-bg);
-  color: var(--channel-text);
+  background:
+    linear-gradient(135deg, rgba(32, 128, 240, 0.11), rgba(32, 128, 240, 0.05)),
+    var(--bg-secondary);
+  color: var(--text-primary);
   padding: 10px 12px;
   display: flex;
   align-items: center;
   gap: 12px;
   justify-content: space-between;
   flex-wrap: wrap;
-}
-
-.channel-section-stack {
-  margin-top: 6px;
 }
 
 .personal-wechat-account-list {
