@@ -1,9 +1,12 @@
 import type { Session } from '@/api/types'
+import { platformBranding } from '@/branding/platform'
+
+const WEB_CHAT_LABEL = `${platformBranding.productCode} Web Chat`
 
 const CHANNEL_LABELS: Record<string, string> = {
-  web: 'GAIOP Web Chat',
-  webchat: 'GAIOP Web Chat',
-  workspace: 'GAIOP Web Chat',
+  web: WEB_CHAT_LABEL,
+  webchat: WEB_CHAT_LABEL,
+  workspace: WEB_CHAT_LABEL,
   feishu: '飞书',
   lark: '飞书',
   'openclaw-lark': '飞书',
@@ -55,7 +58,7 @@ export function sessionSourceChannel(session: Partial<Session> & Pick<Session, '
 
 export function formatSessionChannelLabel(session: Partial<Session> & Pick<Session, 'key'>): string {
   if (isLegacyDefaultSession(session)) return '历史默认'
-  if (isWebConversation(session)) return 'GAIOP Web Chat'
+  if (isWebConversation(session)) return WEB_CHAT_LABEL
   const channel = sessionSourceChannel(session)
   return CHANNEL_LABELS[channel] || channel || '未知渠道'
 }
@@ -87,7 +90,7 @@ function channelUserDisplay(session: Partial<Session> & Pick<Session, 'key'>): s
 export function formatSessionConversationTitle(session: Partial<Session> & Pick<Session, 'key'>): string {
   if (isLegacyDefaultSession(session)) return '历史默认会话'
   const savedTitle = normalized(session.sessionTitle)
-  if (isWebConversation(session)) return savedTitle || 'GAIOP Web Chat'
+  if (isWebConversation(session)) return savedTitle || WEB_CHAT_LABEL
   const channel = formatSessionChannelLabel(session)
   const user = channelUserDisplay(session)
   return `${channel}对话${user ? ` · ${user}` : ''}`

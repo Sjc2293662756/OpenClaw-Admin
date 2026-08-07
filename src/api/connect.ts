@@ -1,4 +1,5 @@
 import { getPreferredLocale } from '@/i18n/locale'
+import { platformBranding } from '@/branding/platform'
 import { buildDeviceAuthPayload } from './device-auth-payload'
 import { loadOrCreateDeviceIdentity, signDevicePayload } from './device-identity'
 
@@ -64,7 +65,7 @@ export function buildConnectParamsLegacy(token: string): ConnectParams {
     maxProtocol: DEFAULT_MAX_PROTOCOL,
     client: {
       id: DEFAULT_CLIENT_ID,
-      displayName: '观枢 GAIOP',
+      displayName: platformBranding.productShortZh,
       version: getClientVersion(),
       platform: getClientPlatform(),
       mode: DEFAULT_CLIENT_MODE,

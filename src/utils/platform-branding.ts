@@ -5,7 +5,8 @@
  */
 export function formatGAIOPDisplayText(value: string | null | undefined): string {
   return String(value || '')
-    .replace(/openclaw-(?:napm)/gi, 'GAIOP-NAPM')
-    .replace(/openclaw\s+(?:napm)/gi, 'GAIOP NAPM')
-    .replace(/openclaw/gi, 'GAIOP')
+    .replace(/openclaw-(?:napm)/gi, `${platformBranding.productCode}-NAPM`)
+    .replace(/openclaw\s+(?:napm)/gi, `${platformBranding.productCode} NAPM`)
+    .replace(/openclaw/gi, platformBranding.productCode)
 }
+import { platformBranding } from '@/branding/platform'

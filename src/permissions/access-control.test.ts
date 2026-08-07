@@ -3,6 +3,7 @@ import {
   PAGE_ACCESS_MATRIX,
   MANAGEMENT_ACCESS_DENIED_NOTICE,
   canAccessPage,
+  canAccessInitialAdminRoute,
   canAccessRoute,
   canUseConversation,
   getPageAccess,
@@ -34,6 +35,7 @@ const expected: Record<PageAccessKey, UserRole[]> = {
   settings: ['auditor', 'standard', 'admin'],
   systemConfiguration: ['admin'],
   systemUpgrade: ['admin'],
+  platformBranding: ['admin'],
 }
 
 describe('four-role page access matrix', () => {
@@ -58,6 +60,7 @@ describe('four-role page access matrix', () => {
     expect(canAccessRoute('basic', 'Sessions')).toBe(false)
     expect(canAccessRoute('basic', 'Files')).toBe(false)
     expect(getPageAccess('SystemUpgrade')?.moduleName).toBe('系统升级')
+    expect(getPageAccess('PlatformBranding')?.moduleName).toBe('平台品牌配置')
   })
 
   it('allows basic users to converse while auditors remain read-only', () => {
@@ -65,6 +68,13 @@ describe('four-role page access matrix', () => {
     expect(canUseConversation('standard')).toBe(true)
     expect(canUseConversation('admin')).toBe(true)
     expect(canUseConversation('auditor')).toBe(false)
+  })
+
+  it('reserves hidden branding configuration for the initial administrator', () => {
+    expect(canAccessInitialAdminRoute('admin', true)).toBe(true)
+    expect(canAccessInitialAdminRoute('admin', false)).toBe(false)
+    expect(canAccessInitialAdminRoute('standard', true)).toBe(false)
+    expect(canAccessInitialAdminRoute(undefined, undefined)).toBe(false)
   })
 
   it('returns a basic user from the configuration-management login to the workspace', () => {

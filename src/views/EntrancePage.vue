@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
+import { platformBranding, usesDefaultPlatformBranding } from '@/branding/platform'
 
 type EntryType = 'chat' | 'config'
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const useDefaultWordmark = computed(() => usesDefaultPlatformBranding())
 
 function enterPlatform(entry: EntryType) {
   // 入口卡片代表用户主动选择工作空间，不能被退出登录时遗留的 redirect 覆盖。
@@ -21,9 +24,12 @@ function enterPlatform(entry: EntryType) {
     <div class="ambient ambient-bottom"></div>
 
     <header class="entrance-header">
-      <div class="brand-lockup" :aria-label="`${t('pages.gaiop.entrance.company')} NetInside`">
-        <span class="brand-logo" aria-label="NetInside">
-          <span class="brand-logo-net">Net</span><span>Inside</span>
+      <div class="brand-lockup" :aria-label="`${t('pages.gaiop.entrance.company')} ${platformBranding.companyBrandEn}`">
+        <span class="brand-logo" :aria-label="platformBranding.companyBrandEn">
+          <template v-if="useDefaultWordmark">
+            <span class="brand-logo-net">Net</span><span>Inside</span>
+          </template>
+          <template v-else>{{ platformBranding.companyBrandEn }}</template>
         </span>
         <span class="brand-divider"></span>
         <span class="brand-product">{{ t('pages.gaiop.entrance.product') }}</span>
@@ -32,13 +38,13 @@ function enterPlatform(entry: EntryType) {
       <div class="company-name">
         <span>{{ t('pages.gaiop.entrance.company') }}</span>
         <span class="company-dot">·</span>
-        <span>NetInside</span>
+        <span>{{ platformBranding.companyBrandEn }}</span>
       </div>
     </header>
 
     <section class="entrance-content" aria-labelledby="platform-title">
       <div class="platform-intro">
-        <p class="eyebrow">NETINSIDE INTELLIGENT OPERATIONS</p>
+        <p class="eyebrow">{{ platformBranding.companyBrandEn.toUpperCase() }} INTELLIGENT OPERATIONS</p>
         <h1 id="platform-title">{{ t('pages.gaiop.entrance.product') }}</h1>
         <p class="platform-full-name">{{ t('pages.gaiop.entrance.fullName') }}</p>
         <p class="platform-description">{{ t('pages.gaiop.entrance.description') }}</p>
@@ -81,7 +87,7 @@ function enterPlatform(entry: EntryType) {
         <div class="node node-one"></div>
         <div class="node node-two"></div>
         <div class="company-card-content">
-          <p class="company-card-label">BEIJING WANGSHEN TECHNOLOGY</p>
+          <p class="company-card-label">{{ platformBranding.companyEnglish.toUpperCase() }}</p>
           <h2>{{ t('pages.gaiop.entrance.companyTitle') }}</h2>
           <p>{{ t('pages.gaiop.entrance.companyDescription') }}</p>
           <span class="company-card-link">{{ t('pages.gaiop.entrance.companyLink') }} <b>→</b></span>

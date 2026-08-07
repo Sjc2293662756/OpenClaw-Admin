@@ -5,6 +5,7 @@ import { RefreshOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { localizeApiError } from '@/utils/api-error'
+import { platformBranding } from '@/branding/platform'
 
 type RuntimeState = 'not-configured' | 'reachable' | 'unavailable'
 interface ComponentInfo { version: string; status: string }
@@ -239,7 +240,7 @@ onBeforeUnmount(stopTaskPolling)
 <template>
   <div class="system-upgrade-page">
     <div class="page-header">
-      <div><h1>{{ text('系统升级', 'System Upgrade') }}</h1><p>{{ text('统一查看 GAIOP 核心、管理端与 Skill 的升级服务状态。', 'View the upgrade-service status for the GAIOP core, administration UI, and Skills.') }}</p></div>
+      <div><h1>{{ text('系统升级', 'System Upgrade') }}</h1><p>{{ text(`统一查看 ${platformBranding.productCode} 核心、管理端与 Skill 的升级服务状态。`, `View the upgrade-service status for the ${platformBranding.productCode} core, administration UI, and Skills.`) }}</p></div>
       <NButton :loading="loading" @click="loadOverview"><template #icon><NIcon><RefreshOutline /></NIcon></template>{{ text('刷新', 'Refresh') }}</NButton>
     </div>
     <NSpin :show="loading">
@@ -296,8 +297,8 @@ onBeforeUnmount(stopTaskPolling)
         <NGridItem span="1 m:1 l:2">
           <NCard :title="text('组件状态', 'Component status')">
             <NDescriptions v-if="overview?.status" :column="1" bordered label-placement="left">
-              <NDescriptionsItem label="GAIOP Core">{{ componentLabel(overview.status.openclaw) }}</NDescriptionsItem>
-              <NDescriptionsItem label="GAIOP-Admin">{{ componentLabel(overview.status.frontend) }}</NDescriptionsItem>
+              <NDescriptionsItem :label="`${platformBranding.productCode} Core`">{{ componentLabel(overview.status.openclaw) }}</NDescriptionsItem>
+              <NDescriptionsItem :label="`${platformBranding.productCode}-Admin`">{{ componentLabel(overview.status.frontend) }}</NDescriptionsItem>
               <NDescriptionsItem :label="text('维护模式', 'Maintenance mode')">{{ overview.status.maintenance_mode ? text('已启用', 'Enabled') : text('未启用', 'Disabled') }}</NDescriptionsItem>
             </NDescriptions>
             <NEmpty v-else :description="text('升级服务未返回组件状态', 'The upgrade service returned no component status')" />

@@ -1,7 +1,9 @@
+import { platformBranding } from '@/branding/platform'
+
 export default {
   app: {
-    title: '观枢GAIOP智能运维分析平台',
-    brand: '观枢 GAIOP',
+    title: platformBranding.productFullZh,
+    brand: platformBranding.productShortZh,
   },
   routes: {
     login: '登录',
@@ -34,6 +36,7 @@ export default {
     reportStorage: '报告存储位置',
     accessControl: '访问控制',
     systemUpgrade: '系统升级',
+    platformBranding: '平台品牌配置',
     hermesDashboard: '仪表盘',
     hermesChat: '在线对话',
     hermesSessions: '会话管理',
@@ -105,8 +108,8 @@ export default {
       upgradeToVersion: '指定版本升级',
       selectVersion: '选择版本号',
       upgrade: '升级',
-      updatingMessage: '正在更新 OpenClaw，请稍候...',
-      updateSuccessManual: '更新成功！{message}请手动重启 OpenClaw 以应用更新。',
+      updatingMessage: `正在更新 ${platformBranding.productCode} 核心，请稍候...`,
+      updateSuccessManual: `更新成功！{message}请手动重启 ${platformBranding.productCode} 核心以应用更新。`,
       updateFailed: '更新失败：{error}',
       unknownError: '未知错误',
       fetchVersionsFailed: '获取版本列表失败，使用默认版本',
@@ -115,7 +118,7 @@ export default {
   },
   pages: {
     login: {
-      subtitle: '连接 OpenClaw Gateway 或 Hermes Agent 管理你的 AI 助手',
+      subtitle: `连接 ${platformBranding.productCode} 智能引擎或 Hermes Agent 管理你的 AI 助手`,
       gatewayUrlLabel: 'Gateway 地址',
       gatewayUrlPlaceholder: 'ws://127.0.0.1:18789',
       tokenLabel: 'Gateway Token',
@@ -162,7 +165,7 @@ export default {
         },
         bundled: {
           title: '系统内置插件',
-          description: '随 GAIOP 平台提供（可控制是否在对话工作台中可用）',
+          description: `随 ${platformBranding.productCode} 平台提供（可控制是否在对话工作台中可用）`,
           empty: '当前没有内置插件',
         },
       },
@@ -180,7 +183,7 @@ export default {
       noMatches: '没有匹配的技能插件',
     },
     config: {
-      title: 'openclaw.json 管理',
+      title: `${platformBranding.productCode} 核心配置`,
       noChanges: '没有需要保存的更改',
       saved: '配置已保存',
       toolsSaved: '工具配置已保存',
@@ -194,7 +197,7 @@ export default {
         general: '基本设置',
         tools: '工具策略',
         sessions: '会话设置',
-        raw: '原始 openclaw.json',
+        raw: '原始核心配置',
       },
       labels: {
         primaryModel: '默认模型',
@@ -210,7 +213,7 @@ export default {
       },
       placeholders: {
         model: '选择或输入模型',
-        workspacePath: '~/.openclaw/workspace',
+        workspacePath: '~/workspace',
       },
       toolProfiles: {
         minimal: '最小 (minimal)',
@@ -227,7 +230,7 @@ export default {
         concurrent: '并发执行',
         collect: '批量收集',
       },
-      rawReadonlyHint: '以下为当前 openclaw.json 的完整配置内容（只读查看）',
+      rawReadonlyHint: `以下为当前 ${platformBranding.productCode} 核心配置内容（只读查看）`,
     },
     channels: {
       title: '频道管理',
@@ -301,11 +304,11 @@ export default {
       },
       pairingHint: '新私聊用户会收到配对码；管理员需在服务端批准该配对后才能继续对话。',
       openAccessHint: '按飞书应用的可见范围允许私聊。若需更严格控制，请选择“需配对批准”或“仅白名单用户”。',
-      platformScopeHint: '{channel} 私聊访问范围由该平台应用后台的成员/可见范围控制；GAIOP 不重复维护人员名单或配对规则。',
+      platformScopeHint: `{channel} 私聊访问范围由该平台应用后台的成员/可见范围控制；${platformBranding.productCode} 不重复维护人员名单或配对规则。`,
       platformPolicyMigrationHint: '当前为历史私聊策略。点击“保存并应用”后将迁移为由 {channel} 平台范围控制。',
       feishuOnboarding: {
         title: '扫码开通飞书',
-        intro: '用于首次创建专属 GAIOP 飞书智能体应用。管理员扫码后，平台会完成应用、机器人、所需权限和事件的基础开通；本页不会显示或保存明文凭据。已有飞书应用仍可使用下方的手工配置入口。',
+        intro: `用于首次创建专属 ${platformBranding.productCode} 飞书智能体应用。管理员扫码后，平台会完成应用、机器人、所需权限和事件的基础开通；本页不会显示或保存明文凭据。已有飞书应用仍可使用下方的手工配置入口。`,
         appName: '飞书应用名称',
         start: '生成飞书扫码二维码',
         qrAlt: '飞书管理员扫码二维码',
@@ -334,8 +337,8 @@ export default {
         add: '添加个人微信',
         launchChannel: '启用渠道',
         manageTitle: '个人微信管理',
-        privateChatScopeHint: '个人微信 私聊访问账户由GAIOP个人微信模块管理。',
-        securityHint: '扫码只调用已安装插件的账号登录能力，不会安装、升级或卸载插件。微信登录凭据由插件原生保存，GAIOP 不回显或复制。',
+        privateChatScopeHint: `个人微信 私聊访问账户由 ${platformBranding.productCode} 个人微信模块管理。`,
+        securityHint: `扫码只调用已安装插件的账号登录能力，不会安装、升级或卸载插件。微信登录凭据由插件原生保存，${platformBranding.productCode} 不回显或复制。`,
         deleteConfirm: '确定删除“{name}”吗？只会删除该账号的授权和管理信息，不会卸载个人微信插件或影响其他账号。',
         plugin: {
           ready: '插件可用',
@@ -431,7 +434,7 @@ export default {
     },
     memory: {
       title: '记忆与文档管理',
-      coveredDocsPrefix: '覆盖 GAIOP 可管理文档：',
+      coveredDocsPrefix: `覆盖 ${platformBranding.productCode} 可管理文档：`,
       coveredDocsSuffix: '。',
       gatewayLimited: '当前网关可能不支持 agents.files.* 或权限受限：{error}',
       agentPlaceholder: '选择多智能体',
@@ -1043,15 +1046,15 @@ export default {
     },
     dashboard: {
       hero: {
-        title: '观枢 GAIOP 运行总览',
+        title: `${platformBranding.productShortZh} 运行总览`,
         subtitle: '查看 Token、模型、Skills、任务与会话等关键运行数据，快速进入对应管理功能。',
       },
       connection: {
-        connected: 'GAIOP 服务已连接',
-        connecting: 'GAIOP 服务连接中',
-        reconnecting: 'GAIOP 服务重连中',
-        failed: 'GAIOP 服务连接失败',
-        disconnected: 'GAIOP 服务未连接',
+        connected: `${platformBranding.productCode} 服务已连接`,
+        connecting: `${platformBranding.productCode} 服务连接中`,
+        reconnecting: `${platformBranding.productCode} 服务重连中`,
+        failed: `${platformBranding.productCode} 服务连接失败`,
+        disconnected: `${platformBranding.productCode} 服务未连接`,
       },
       lastUpdated: {
         none: '尚未同步',
@@ -1246,7 +1249,7 @@ export default {
         error: '语音合成失败',
       },
       input: {
-        placeholder: '输入运维分析需求（输入 / 可查看 GAIOP 命令，Enter 发送，Shift+Enter 换行）',
+        placeholder: `输入运维分析需求（输入 / 可查看 ${platformBranding.productCode} 命令，Enter 发送，Shift+Enter 换行）`,
         sendHint: '当前发送到：{key} ｜ Enter 发送，Shift+Enter 换行，Ctrl/Cmd+Enter 发送',
       },
       quickReplies: {
@@ -1280,7 +1283,7 @@ export default {
         },
       },
       slash: {
-        title: 'GAIOP 斜杠命令',
+        title: `${platformBranding.productCode} 斜杠命令`,
         hint: '↑/↓ 选择，Tab 应用，Enter 应用或发送，Esc 退出',
         categories: {
           common: '常用',
@@ -1670,7 +1673,7 @@ export default {
     themeLight: '浅色模式',
     themeDark: '深色模式',
     about: '关于',
-    aboutLine1: '观枢 GAIOP 智能运维分析平台',
+    aboutLine1: platformBranding.productFullZh,
     aboutLine2: '基于 Vue 3 + Naive UI 构建',
     connectionManagedByBackend: 'Gateway 连接由后端服务器管理，请在系统设置中配置',
     envSettings: '环境变量设置',
@@ -1678,17 +1681,17 @@ export default {
     authUsernamePlaceholder: '请输入用户名',
     authPassword: '密码',
     authPasswordPlaceholder: '请输入密码',
-    openclawUrl: 'OpenClaw URL',
+    openclawUrl: `${platformBranding.productCode} Gateway 地址`,
     openclawUrlPlaceholder: 'ws://localhost:18789',
-    openclawToken: 'OpenClaw Token',
+    openclawToken: `${platformBranding.productCode} Gateway 访问令牌`,
     openclawTokenPlaceholder: '请输入 Token',
-    openclawPassword: 'OpenClaw 密码',
+    openclawPassword: `${platformBranding.productCode} Gateway 密码`,
     openclawPasswordPlaceholder: '请输入 Gateway 密码（与 Token 二选一）',
     loadFailed: '加载配置失败',
     save: '保存',
     saveSuccess: '配置已保存并生效',
     saveFailed: '保存配置失败',
-    envSettingsHint: '修改 OpenClaw URL 或 Token 后会自动重连 Gateway。',
+    envSettingsHint: `修改 ${platformBranding.productCode} Gateway 地址或访问令牌后会自动重连。`,
     tts: {
       title: '语音合成设置',
       hint: '配置文本转语音 (TTS) 参数。使用浏览器内置 Web Speech API，无需网络连接。设置保存在浏览器本地存储中。',
@@ -1999,15 +2002,15 @@ export default {
         idRequired: '请输入多智能体 ID',
         idPattern: '多智能体 ID 只能包含字母、数字、下划线和连字符',
         workspace: '工作区',
-        workspacePlaceholder: '例如：~/.openclaw/workspace-work',
+        workspacePlaceholder: '例如：~/workspace-work',
         name: '名称',
-        namePlaceholder: '例如：OpenClaw',
+        namePlaceholder: `例如：${platformBranding.productCode}`,
         theme: '主题',
         themePlaceholder: '例如：space lobster',
         emoji: 'Emoji',
         emojiPlaceholder: '例如：🦞',
         avatar: '头像',
-        avatarPlaceholder: '例如：avatars/openclaw.png',
+        avatarPlaceholder: '例如：avatars/agent.png',
         model: '模型',
         modelPlaceholder: '选择模型',
         toolsAllow: '允许的工具 (Allow)',
@@ -2495,7 +2498,7 @@ export default {
       info: {
         title: '备份说明',
         whatIsBackup: '什么是备份？',
-        backupContent: '备份包含：数据库（SQLite）、OpenClaw 配置文件、Web Admin 配置、会话数据、工作区元数据、Wizard 数据库等。',
+        backupContent: `备份包含：数据库（SQLite）、${platformBranding.productCode} 核心配置、Web Admin 配置、会话数据、工作区元数据、Wizard 数据库等。`,
         restoreNote: '恢复提示',
         restoreContent: '恢复备份时会先创建当前数据库的备份副本。恢复后部分配置可能需要重启服务才能生效。',
       },
@@ -2504,10 +2507,10 @@ export default {
         creatingBackup: '正在创建备份...',
         wizardDb: '正在备份项目数据库...',
         envConfig: '正在备份环境配置...',
-        openclawBackup: '正在备份 OpenClaw 数据...',
+        openclawBackup: `正在备份 ${platformBranding.productCode} 核心数据...`,
         creatingZip: '正在创建压缩包...',
         extractingZip: '正在解压备份文件...',
-        restoringOpenclaw: '正在恢复 OpenClaw 数据...',
+        restoringOpenclaw: `正在恢复 ${platformBranding.productCode} 核心数据...`,
         restoringDb: '正在恢复项目数据库...',
         restoringEnv: '正在恢复环境配置...',
         cleaningUp: '正在清理临时文件...',
@@ -3452,17 +3455,17 @@ export default {
         currentModule: '当前模块', unknownRole: '未知角色',
       },
       entrance: {
-        product: '观枢GAIOP', company: '北京网深科技有限公司', fullName: '观枢GAIOP智能运维分析平台',
+        product: platformBranding.productShortZh, company: platformBranding.companyLegalZh, fullName: platformBranding.productFullZh,
         description: '让真实流量成为智能运维的核心观测入口，以 AI 驱动全流量性能分析与运维决策。',
-        chatTitle: '开始对话', chatDescription: '使用 GAIOP 进行智能运维分析', configTitle: '配置管理', configDescription: '管理模型、Skills 和平台配置',
-        companyTitle: '北京网深科技', companyDescription: '以网络与应用性能数据为基础，构建面向智能运维的分析与管理能力。', companyLink: '探索观枢 GAIOP',
+        chatTitle: '开始对话', chatDescription: `使用 ${platformBranding.productCode} 进行智能运维分析`, configTitle: '配置管理', configDescription: '管理模型、Skills 和平台配置',
+        companyTitle: platformBranding.companyShortZh, companyDescription: '以网络与应用性能数据为基础，构建面向智能运维的分析与管理能力。', companyLink: `探索${platformBranding.productShortZh}`,
       },
       login: {
-        brand: '观枢 GAIOP', platform: '智能运维分析平台', title: 'NetInside 观枢 GAIOP 智能运维分析平台', connecting: '正在连接平台服务...', username: '账户名', usernamePlaceholder: '请输入账户名', password: '密码', passwordPlaceholder: '请输入密码', login: '登录', retry: '重新连接', showPassword: '显示密码', hidePassword: '隐藏密码',
+        brand: platformBranding.productShortZh, platform: '智能运维分析平台', title: platformBranding.productFullZh, connecting: '正在连接平台服务...', username: '账户名', usernamePlaceholder: '请输入账户名', password: '密码', passwordPlaceholder: '请输入密码', login: '登录', retry: '重新连接', showPassword: '显示密码', hidePassword: '隐藏密码',
         credentialsRequired: '请输入账户名和密码。', connectionTimeout: '服务连接超时，请稍后重试。', failed: '登录失败，请稍后重试。',
       },
       workspace: {
-        brand: '观枢 GAIOP', newChat: '开始新对话', history: '历史会话', refreshHistory: '刷新历史会话', noHistory: '暂无历史会话', delete: '删除', cancel: '取消', deleteSession: '删除会话', deleteConfirm: '删除后无法恢复该会话，是否继续？', sessionDeleted: '会话已删除', deleteFailed: '删除会话失败，请稍后重试', userFallback: 'GAIOP 用户', changePassword: '修改密码', adminConsole: '管理控制台', logout: '退出登录', caption: '观枢GAIOP智能运维分析平台', connecting: '正在连接服务…', backToAlerts: '返回告警通知', adminConsoleHint: '查看平台配置、运行概览和管理功能', managementAccessDenied: '当前账户没有管理权限，已为你保留在对话工作台。', managementAccessDeniedConfirm: '我知道了', serviceUnavailable: 'GAIOP 智能运维服务暂不可用', reconnecting: '正在重新连接 GAIOP 智能运维服务', connectingService: '正在连接 GAIOP 智能运维服务', reconnect: '重新连接',
+        brand: platformBranding.productShortZh, newChat: '开始新对话', history: '历史会话', refreshHistory: '刷新历史会话', noHistory: '暂无历史会话', delete: '删除', cancel: '取消', deleteSession: '删除会话', deleteConfirm: '删除后无法恢复该会话，是否继续？', sessionDeleted: '会话已删除', deleteFailed: '删除会话失败，请稍后重试', userFallback: `${platformBranding.productCode} 用户`, changePassword: '修改密码', adminConsole: '管理控制台', logout: '退出登录', caption: platformBranding.productFullZh, connecting: '正在连接服务…', backToAlerts: '返回告警通知', adminConsoleHint: '查看平台配置、运行概览和管理功能', managementAccessDenied: '当前账户没有管理权限，已为你保留在对话工作台。', managementAccessDeniedConfirm: '我知道了', serviceUnavailable: `${platformBranding.productCode} 智能运维服务暂不可用`, reconnecting: `正在重新连接 ${platformBranding.productCode} 智能运维服务`, connectingService: `正在连接 ${platformBranding.productCode} 智能运维服务`, reconnect: '重新连接',
       },
       users: {
         title: '账户管理', list: '用户列表', create: '添加用户', edit: '编辑用户', password: '修改我的密码', refresh: '刷新', search: '搜索用户名或描述', allRoles: '全部角色', allStatuses: '全部状态', empty: '暂无用户',
@@ -3474,9 +3477,9 @@ export default {
         optionalDescription: '可选，用于说明该账户用途', userType: '用户类型', formName: '名称', definition: '定义内容', user: '用户', usernamePlaceholder: '请输入用户名', activate: '激活', deactivate: '非激活',
       },
       systemConfig: {
-        introTag: '部署与数据接入', title: 'GAIOP 高级配置', intro: '按实际部署顺序完成连接、告警接入和运行数据源配置；每一步独立保存与生效。', noGlobalSave: '无需全页保存',
-        serviceTitle: 'GAIOP 服务连接', serviceDescription: '先建立 Admin BFF 与 GAIOP Gateway 的受控连接。', alertTitle: 'Syslog 告警接入', alertDescription: '维护 GAIOP 接收 NAPM Syslog 告警的运行目标。', dataSourceTitle: '运行数据源', dataSourceDescription: '维护并启用当前 GAIOP 运行时使用的 NAPM 数据源。',
-        back: '返回高级配置', serviceConfig: 'GAIOP 服务配置', connection: 'GAIOP 服务连接', connectionDescription: '维护服务接入地址、访问令牌和当前连接状态。', connectionConfig: '服务接入配置', endpoint: '服务接入地址', token: '服务访问令牌', tokenConfigured: '已配置；留空保持不变', tokenRequired: '请输入服务访问令牌', saveReconnect: '保存并重新连接', currentStatus: '当前连接状态', refreshStatus: '刷新状态', connected: '已连接', disconnected: '未连接', configured: '已配置', notConfigured: '未配置', loadFailed: '读取 GAIOP 服务配置失败', saveFailed: '保存 GAIOP 服务配置失败', saveSuccess: '已保存，并已发起服务重新连接',
+        introTag: '部署与数据接入', title: `${platformBranding.productCode} 高级配置`, intro: '按实际部署顺序完成连接、告警接入和运行数据源配置；每一步独立保存与生效。', noGlobalSave: '无需全页保存',
+        serviceTitle: `${platformBranding.productCode} 服务连接`, serviceDescription: `先建立 Admin BFF 与 ${platformBranding.productCode} Gateway 的受控连接。`, alertTitle: 'Syslog 告警接入', alertDescription: `维护 ${platformBranding.productCode} 接收 NAPM Syslog 告警的运行目标。`, dataSourceTitle: '运行数据源', dataSourceDescription: `维护并启用当前 ${platformBranding.productCode} 运行时使用的 NAPM 数据源。`,
+        back: '返回高级配置', serviceConfig: `${platformBranding.productCode} 服务配置`, connection: `${platformBranding.productCode} 服务连接`, connectionDescription: '维护服务接入地址、访问令牌和当前连接状态。', connectionConfig: '服务接入配置', endpoint: '服务接入地址', token: '服务访问令牌', tokenConfigured: '已配置；留空保持不变', tokenRequired: '请输入服务访问令牌', saveReconnect: '保存并重新连接', currentStatus: '当前连接状态', refreshStatus: '刷新状态', connected: '已连接', disconnected: '未连接', configured: '已配置', notConfigured: '未配置', loadFailed: `读取 ${platformBranding.productCode} 服务配置失败`, saveFailed: `保存 ${platformBranding.productCode} 服务配置失败`, saveSuccess: '已保存，并已发起服务重新连接',
       },
       alerts: {
         title: '告警通知', refresh: '刷新', export: '导出 Excel', details: '详情', empty: '当前条件暂无告警记录',

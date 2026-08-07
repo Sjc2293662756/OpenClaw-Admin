@@ -20,6 +20,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { DataTableColumns, SelectOption } from 'naive-ui'
+import { platformBranding } from '@/branding/platform'
 import {
   AddOutline,
   ChatbubblesOutline,
@@ -169,7 +170,7 @@ const deliveryChannelLabelMap = computed<Record<string, string>>(() => ({
   lark: locale.value === 'zh-CN' ? '飞书' : 'Feishu',
   'dingtalk-connector': locale.value === 'zh-CN' ? '钉钉' : 'DingTalk',
   'wecom-openclaw-plugin': locale.value === 'zh-CN' ? '企业微信' : 'WeCom',
-  main: 'GAIOP Web Chat',
+  main: `${platformBranding.productCode} Web Chat`,
 }))
 
 function formatChannelLabel(channelKey: string): string {
@@ -243,7 +244,7 @@ const configuredChannelConfigMap = computed<Record<string, unknown>>(() => {
 
 const channelOptionsForCreate = computed<SelectOption[]>(() => {
   const options: SelectOption[] = [
-    { label: 'GAIOP Web Chat', value: 'webchat' },
+    { label: `${platformBranding.productCode} Web Chat`, value: 'webchat' },
   ]
   const seen = new Set<string>(['main', 'webchat'])
   const channels = configuredChannelConfigMap.value
@@ -287,7 +288,7 @@ const channelOptions = computed<SelectOption[]>(() => {
     ...Array.from(set)
       .sort((a, b) => a.localeCompare(b))
       .map((channel) => ({
-        label: channel === 'main' ? 'GAIOP Web Chat' : formatChannelLabel(channel),
+        label: channel === 'main' ? `${platformBranding.productCode} Web Chat` : formatChannelLabel(channel),
         value: channel,
       })),
   ]
@@ -378,7 +379,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
       return h(NSpace, { vertical: true, size: 2 }, () => [
         h(NText, { style: 'font-size: 13px;' }, { default: () => sessionChannelUser(row) }),
         row.originKind === 'web' && row.ownerUsername
-          ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => text('GAIOP 登录用户', 'GAIOP signed-in user') })
+          ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => text(`${platformBranding.productCode} 登录用户`, `${platformBranding.productCode} signed-in user`) })
           : row.originKind === 'channel'
             ? h(NText, { depth: 3, style: 'font-size: 11px;' }, { default: () => text('外部频道用户', 'External channel user') })
             : null,

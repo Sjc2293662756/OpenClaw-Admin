@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { NSelect, NSpace } from 'naive-ui'
 import { useHermesConnectionStore } from '@/stores/hermes/connection'
+import { platformBranding } from '@/branding/platform'
 
 const connStore = useHermesConnectionStore()
 
 const options = [
-  { label: 'GAIOP 智能引擎', value: 'openclaw' },
-  { label: 'GAIOP 扩展引擎', value: 'hermes' },
+  { label: `${platformBranding.productCode} 智能引擎`, value: 'openclaw' },
+  { label: `${platformBranding.productCode} 扩展引擎`, value: 'hermes' },
 ]
 
 async function handleChange(val: string) {

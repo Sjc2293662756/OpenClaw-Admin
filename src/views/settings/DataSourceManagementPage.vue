@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { dataSourceStatusText, dataSourceTypeText, type DataSourceDraft, type DataSourceStatus } from './dataSources'
 import { useI18n } from 'vue-i18n'
 import { localizeApiError } from '@/utils/api-error'
+import { platformBranding } from '@/branding/platform'
 
 type RuntimeBridgeStatus = {
   ready: boolean
@@ -29,10 +30,10 @@ const activeDataSource = computed(() => dataSources.value.find(item => item.isAc
 const runtimeNotice = computed(() => {
   const runtime = runtimeBridge.value
   if (!runtime) return { type: 'info' as const, message: text('正在读取运行数据源桥接状态。', 'Loading runtime data-source bridge status.') }
-  if (!runtime.ready) return { type: 'error' as const, message: text('运行数据源桥接未配置。启用数据源前，需要由部署人员配置管理服务与 GAIOP 核心共用的运行时目标。', 'The runtime data-source bridge is not configured. Before enabling a source, deployment personnel must configure the runtime target shared by the management service and GAIOP core.') }
+  if (!runtime.ready) return { type: 'error' as const, message: text(`运行数据源桥接未配置。启用数据源前，需要由部署人员配置管理服务与 ${platformBranding.productCode} 核心共用的运行时目标。`, `The runtime data-source bridge is not configured. Before enabling a source, deployment personnel must configure the runtime target shared by the management service and ${platformBranding.productCode} core.`) }
   if (!activeDataSource.value) return { type: 'warning' as const, message: text('运行时桥接目标已准备，但尚未选择运行数据源。请选择并启用一条已维护的数据源。', 'The runtime bridge target is ready, but no runtime data source is selected. Select and enable a maintained data source.') }
   if (!runtime.generated) return { type: 'warning' as const, message: locale.value === 'zh-CN' ? `当前运行数据源为 ${activeDataSource.value.ip}，但运行时桥接文件尚未生成。请重新启用该数据源或检查服务端配置。` : `The runtime data source is ${activeDataSource.value.ip}, but the runtime bridge file has not been generated. Enable it again or check server configuration.` }
-  return { type: 'success' as const, message: locale.value === 'zh-CN' ? `当前运行数据源为 ${activeDataSource.value.ip}。运行时桥接已生成，后续 GAIOP Skills 将读取该数据源。` : `The runtime data source is ${activeDataSource.value.ip}. The runtime bridge has been generated and subsequent GAIOP Skills will use it.` }
+  return { type: 'success' as const, message: locale.value === 'zh-CN' ? `当前运行数据源为 ${activeDataSource.value.ip}。运行时桥接已生成，后续 ${platformBranding.productCode} Skills 将读取该数据源。` : `The runtime data source is ${activeDataSource.value.ip}. The runtime bridge has been generated and subsequent ${platformBranding.productCode} Skills will use it.` }
 })
 
 const runtimeSummary = computed(() => {
@@ -103,7 +104,7 @@ function activate(item: DataSourceDraft) {
     : text('该数据源尚未通过最近一次连接测试，启用后后续智能运维分析将优先使用它。', 'This data source has not passed its most recent connection test. When enabled, later intelligent-operations analyses will use it first.')
   dialog.warning({
     title: text('设为运行数据源', 'Set as runtime data source'),
-    content: locale.value === 'zh-CN' ? `${testHint} 确认将“${item.ip}”设为当前 GAIOP 运行数据源吗？` : `${testHint} Set “${item.ip}” as the current GAIOP runtime data source?`,
+    content: locale.value === 'zh-CN' ? `${testHint} 确认将“${item.ip}”设为当前 ${platformBranding.productCode} 运行数据源吗？` : `${testHint} Set “${item.ip}” as the current ${platformBranding.productCode} runtime data source?`,
     positiveText: text('确认启用', 'Enable'),
     negativeText: text('取消', 'Cancel'),
     onPositiveClick: async () => {

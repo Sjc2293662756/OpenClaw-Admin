@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { routes } from './routes'
 import { useAuthStore } from '@/stores/auth'
 import { installChunkLoadRecovery } from './chunk-recovery'
-import { canAccessRoute, getPageAccess, resolveConfigManagementRedirect } from '@/permissions/access-control'
+import { canAccessInitialAdminRoute, canAccessRoute, getPageAccess, resolveConfigManagementRedirect } from '@/permissions/access-control'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -24,6 +24,10 @@ router.beforeEach(async (to, from, next) => {
   }
 
   if (!authEnabled) {
+    if (to.meta.initialAdminOnly === true) {
+      next({ name: 'Welcome' })
+      return
+    }
     if (to.name === 'Login') {
       next({ name: 'ChatWorkspace' })
       return
@@ -75,6 +79,18 @@ router.beforeEach(async (to, from, next) => {
 
   if (authStore.currentUser?.mustChangePassword && to.name !== 'PasswordChange') {
     next({ name: 'PasswordChange' })
+    return
+  }
+
+  if (to.meta.initialAdminOnly === true && !canAccessInitialAdminRoute(
+    authStore.currentUser?.role,
+    authStore.currentUser?.isInitialAdmin,
+  )) {
+    next({
+      name: 'AccessDenied',
+      query: { module: '平台品牌配置', returnTo: '/dashboard' },
+      replace: true,
+    })
     return
   }
 

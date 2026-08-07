@@ -9,6 +9,7 @@ import { usePermissions } from '@/composables/usePermissions'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
 import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
+import { platformBranding } from '@/branding/platform'
 
 type Metric = { name: string; value: string; unit: string }
 type Alert = {
@@ -205,7 +206,7 @@ async function exportCurrentPage() {
     const downloadUrl = URL.createObjectURL(await response.blob())
     const link = document.createElement('a')
     link.href = downloadUrl
-    link.download = `${locale.value === 'zh-CN' ? 'GAIOP-告警通知-当前页' : 'GAIOP-alerts-current-page'}-${formatRangeTime(Date.now()).replace(/[ :]/g, '-')}.xlsx`
+    link.download = `${locale.value === 'zh-CN' ? `${platformBranding.productCode}-告警通知-当前页` : `${platformBranding.productCode}-alerts-current-page`}-${formatRangeTime(Date.now()).replace(/[ :]/g, '-')}.xlsx`
     document.body.appendChild(link)
     link.click()
     link.remove()

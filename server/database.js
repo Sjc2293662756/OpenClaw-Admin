@@ -136,6 +136,20 @@ db.exec(`
     updated_at INTEGER NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS branding_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    company_short_zh TEXT NOT NULL,
+    company_legal_zh TEXT NOT NULL,
+    company_english TEXT NOT NULL,
+    company_brand_en TEXT NOT NULL,
+    product_code TEXT NOT NULL,
+    product_short_zh TEXT NOT NULL,
+    product_full_zh TEXT NOT NULL,
+    product_full_en TEXT NOT NULL,
+    updated_by_user_id TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS workspace_sessions (
     session_key TEXT PRIMARY KEY,
     owner_user_id TEXT NOT NULL,

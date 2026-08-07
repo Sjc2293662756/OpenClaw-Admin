@@ -14,7 +14,6 @@ declare module 'vue-pdf-embed' {
 
 interface ImportMetaEnv {
   readonly VITE_WS_URL: string
-  readonly VITE_APP_TITLE: string
   readonly VITE_APP_VERSION?: string
   readonly VITE_OPENCLAW_CLIENT_ID?: string
   readonly VITE_OPENCLAW_CLIENT_MODE?: string

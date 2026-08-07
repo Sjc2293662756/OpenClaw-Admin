@@ -222,6 +222,12 @@ export const routes: RouteRecordRaw[] = [
         redirect: { name: 'Settings' },
         meta: { titleKey: 'routes.reportStorage', hidden: true, gateway: 'openclaw' },
       },
+      {
+        path: 'platform-branding',
+        name: 'PlatformBranding',
+        component: () => import('@/views/settings/PlatformBrandingPage.vue'),
+        meta: { titleKey: 'routes.platformBranding', hidden: true, initialAdminOnly: true },
+      },
     ],
   },
   {

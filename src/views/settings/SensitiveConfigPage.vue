@@ -25,6 +25,7 @@ import {
   type FormInst,
   type FormRules,
 } from 'naive-ui'
+import { platformBranding } from '@/branding/platform'
 import { AddOutline, CreateOutline, LockClosedOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
@@ -211,7 +212,7 @@ onMounted(() => { refresh(false) })
 
     <template v-else>
       <NAlert type="warning" :bordered="false" class="stage-note">
-        {{ text('配置项保存于 GAIOP 管理配置库，不会直接修改服务器 `.env`、操作系统或正在运行的服务。敏感值采用加密存储，列表和编辑时均不会回显原值。', 'Configuration items are stored in the GAIOP management configuration store and do not directly change the server `.env`, operating system, or running services. Sensitive values are encrypted and are never shown again in the list or editor.') }}
+        {{ text(`配置项保存于 ${platformBranding.productCode} 管理配置库，不会直接修改服务器 \`.env\`、操作系统或正在运行的服务。敏感值采用加密存储，列表和编辑时均不会回显原值。`, `Configuration items are stored in the ${platformBranding.productCode} management configuration store and do not directly change the server \`.env\`, operating system, or running services. Sensitive values are encrypted and are never shown again in the list or editor.`) }}
       </NAlert>
       <NCard :title="text('环境与敏感配置', 'Environment and sensitive configuration')" :bordered="false" class="sensitive-config-card">
         <template #header-extra>

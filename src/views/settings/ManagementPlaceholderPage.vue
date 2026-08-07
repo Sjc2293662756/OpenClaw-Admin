@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NCard, NTag, NText } from 'naive-ui'
+import { platformBranding } from '@/branding/platform'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,7 +40,7 @@ const modules: Record<string, typeof defaultModule> = {
   },
   environment: {
     title: '环境配置',
-    description: 'GAIOP、NAPM 与 AI 服务相关的环境参数将在此配置。',
+    description: `${platformBranding.productCode}、NAPM 与 AI 服务相关的环境参数将在此配置。`,
   },
   upgrade: {
     title: '系统升级',

@@ -23,6 +23,7 @@ import {
   type DataTableColumns,
   useMessage,
 } from 'naive-ui'
+import { platformBranding } from '@/branding/platform'
 import { CopyOutline, DownloadOutline, InformationCircleOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -205,7 +206,7 @@ function buildExportPayload() {
 function exportFileName(timestamp = Date.now()) {
   const date = new Date(timestamp)
   const two = (value: number) => String(value).padStart(2, '0')
-  const prefix = locale.value === 'zh-CN' ? 'GAIOP-审计信息' : 'GAIOP-audit-logs'
+  const prefix = locale.value === 'zh-CN' ? `${platformBranding.productCode}-审计信息` : `${platformBranding.productCode}-audit-logs`
   return `${prefix}-${date.getFullYear()}${two(date.getMonth() + 1)}${two(date.getDate())}-${two(date.getHours())}${two(date.getMinutes())}${two(date.getSeconds())}.xlsx`
 }
 

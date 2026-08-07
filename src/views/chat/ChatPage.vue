@@ -23,6 +23,7 @@ import {
   useMessage,
 } from 'naive-ui'
 import type { SelectOption } from 'naive-ui'
+import { platformBranding } from '@/branding/platform'
 import { CopyOutline, RefreshOutline, SendOutline, StopCircleOutline, ChevronBackOutline, ChevronForwardOutline, VolumeHighOutline, StopOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -3149,7 +3150,7 @@ async function handleSend() {
                     <div v-else-if="workspaceMode" class="workspace-welcome">
                       <div class="workspace-welcome__mark">G</div>
                       <h1>{{ locale === 'zh-CN' ? '开始智能运维分析' : 'Start intelligent operations analysis' }}</h1>
-                      <p>{{ locale === 'zh-CN' ? '输入告警、性能或流量分析需求，GAIOP 将结合已接入的数据源协助研判与处置。' : 'Enter an alert, performance, or traffic-analysis request. GAIOP will use connected data sources to assist investigation and response.' }}</p>
+                      <p>{{ locale === 'zh-CN' ? `输入告警、性能或流量分析需求，${platformBranding.productCode} 将结合已接入的数据源协助研判与处置。` : `Enter an alert, performance, or traffic-analysis request. ${platformBranding.productCode} will use connected data sources to assist investigation and response.` }}</p>
                       <div class="workspace-prompt-list">
                         <button
                           v-for="prompt in workspacePrompts"

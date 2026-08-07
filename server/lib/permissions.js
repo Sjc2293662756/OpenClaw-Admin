@@ -13,6 +13,21 @@ export function createRoleMiddleware(authMiddleware, roles, message) {
   }
 }
 
+export function createInitialAdminMiddleware(authMiddleware) {
+  return (req, res, next) => {
+    authMiddleware(req, res, () => {
+      if (req.user?.role !== 'admin' || req.user?.isInitialAdmin !== true) {
+        return res.status(403).json({
+          ok: false,
+          error: '仅初始管理员可以修改平台品牌名称',
+          code: 'INITIAL_ADMIN_REQUIRED',
+        })
+      }
+      next()
+    })
+  }
+}
+
 const SESSION_READ_RPC_METHODS = new Set([
   'sessions.list', 'session.list', 'sessions.get', 'session.get',
   'sessions.history', 'session.history', 'chat.history',

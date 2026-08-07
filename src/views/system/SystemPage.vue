@@ -25,6 +25,7 @@ import {
 } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
+import { platformBranding } from '@/branding/platform'
 import { formatRelativeTime } from '@/utils/format'
 import type { SystemMetrics, SystemPresenceEntry } from '@/api/types'
 
@@ -45,7 +46,9 @@ const memoryUsage = computed(() => metrics.value?.memory?.usagePercent ?? 0)
 const diskUsage = computed(() => metrics.value?.disk?.usagePercent ?? 0)
 const displayHostname = computed(() => {
   const hostname = metrics.value?.hostname?.trim() || ''
-  return hostname.toLowerCase() === 'netinsideopenclaw' ? 'NetInside GAIOP' : hostname
+  return hostname.toLowerCase() === 'netinsideopenclaw'
+    ? `${platformBranding.companyBrandEn} ${platformBranding.productCode}`
+    : hostname
 })
 
 const cpuColor = computed(() => {

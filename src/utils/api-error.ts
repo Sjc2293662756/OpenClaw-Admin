@@ -31,7 +31,7 @@ const translations: Record<string, { zhCN: string, enUS: string }> = {
   ACTIVE_DATA_SOURCE_CANNOT_DELETE: { zhCN: '不能删除当前运行数据源', enUS: 'The active runtime data source cannot be deleted' },
   ACTIVE_DATA_SOURCE_CANNOT_DISABLE: { zhCN: '不能停用当前运行数据源', enUS: 'The active runtime data source cannot be disabled' },
   DATA_SOURCE_RUNTIME_TARGET_MISSING: { zhCN: '运行数据源桥接未配置', enUS: 'Runtime data-source bridge is not configured' },
-  GATEWAY_UNAVAILABLE: { zhCN: 'GAIOP 服务暂不可用', enUS: 'GAIOP service is unavailable' },
+  GATEWAY_UNAVAILABLE: { zhCN: `${platformBranding.productCode} 服务暂不可用`, enUS: `${platformBranding.productCode} service is unavailable` },
   DASHBOARD_SUMMARY_FAILED: { zhCN: '仪表盘摘要请求失败', enUS: 'Failed to load dashboard summary' },
   DASHBOARD_USAGE_RANGE_INVALID: { zhCN: '仪表盘时间范围无效', enUS: 'Dashboard time range is invalid' },
   REPORT_NOT_FOUND: { zhCN: '报告不存在', enUS: 'Report not found' },
@@ -43,8 +43,8 @@ const translations: Record<string, { zhCN: string, enUS: string }> = {
   ALERT_INGESTION_CONFIG_SAVE_FAILED: { zhCN: '保存告警接入配置失败', enUS: 'Failed to save alert ingestion configuration' },
   SESSION_SETTINGS_INVALID: { zhCN: '会话设置无效', enUS: 'Session settings are invalid' },
   SESSION_SETTINGS_PERSIST_FAILED: { zhCN: '保存会话设置失败', enUS: 'Failed to save session settings' },
-  GAIOP_SERVICE_CONFIG_INVALID: { zhCN: 'GAIOP 服务配置无效', enUS: 'GAIOP service configuration is invalid' },
-  GAIOP_SERVICE_CONFIG_SAVE_FAILED: { zhCN: '保存 GAIOP 服务配置失败', enUS: 'Failed to save GAIOP service configuration' },
+  GAIOP_SERVICE_CONFIG_INVALID: { zhCN: `${platformBranding.productCode} 服务配置无效`, enUS: `${platformBranding.productCode} service configuration is invalid` },
+  GAIOP_SERVICE_CONFIG_SAVE_FAILED: { zhCN: `保存 ${platformBranding.productCode} 服务配置失败`, enUS: `Failed to save ${platformBranding.productCode} service configuration` },
   INVALID_SENSITIVE_CONFIG_INPUT: { zhCN: '环境与敏感配置无效', enUS: 'Environment or sensitive configuration is invalid' },
   SENSITIVE_CONFIG_NOT_FOUND: { zhCN: '环境与敏感配置不存在', enUS: 'Environment or sensitive configuration not found' },
   SENSITIVE_CONFIG_SAVE_FAILED: { zhCN: '保存环境与敏感配置失败', enUS: 'Failed to save environment or sensitive configuration' },
@@ -82,3 +82,4 @@ export function localizeApiError(payload: unknown, fallback: string, locale = cu
   if (!message) return fallback
   return locale === 'en-US' && /[\u3400-\u9fff]/u.test(message) ? fallback : message
 }
+import { platformBranding } from '@/branding/platform'

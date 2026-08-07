@@ -13,7 +13,7 @@ import checkDiskSpace from 'check-disk-space'
 import { execSync } from 'child_process'
 import pty from 'node-pty'
 import db, { createBackupRecord, updateBackupRecord, getBackupRecord, getBackupRecords, getBackupRecordsCount, deleteBackupRecord } from './database.js'
-import { USER_ROLES, USER_STATUSES, isReadOnlyRpcMethod, createBasicWorkspaceOnlyMiddleware, createRoleMiddleware, rpcPermissionMiddleware } from './lib/permissions.js'
+import { USER_ROLES, USER_STATUSES, isReadOnlyRpcMethod, createBasicWorkspaceOnlyMiddleware, createRoleMiddleware, createInitialAdminMiddleware, rpcPermissionMiddleware } from './lib/permissions.js'
 import { createLoginFailureTracker, isPasswordChangeRequest } from './lib/account-security.js'
 import { sendError } from './lib/api-response.js'
 import {
@@ -32,6 +32,7 @@ import { createReportsRouter } from './routes/reports.js'
 import { createAlertsRouter } from './routes/alerts.js'
 import { createReportStorageRouter } from './routes/report-storage.js'
 import { createSessionSettingsRouter } from './routes/session-settings.js'
+import { createBrandingSettingsRouter } from './routes/branding-settings.js'
 import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
 import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
 import { createAlertIngestionRouter } from './routes/alert-ingestion.js'
@@ -464,6 +465,7 @@ function authMiddleware(req, res, next) {
 }
 
 const adminMiddleware = createRoleMiddleware(authMiddleware, ['admin'], '仅管理员可以执行此操作')
+const initialAdminMiddleware = createInitialAdminMiddleware(authMiddleware)
 const operatorMiddleware = createRoleMiddleware(authMiddleware, ['basic', 'standard', 'admin'], '当前用户仅有查看权限，不能执行此操作')
 const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
 const accountViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '账户信息仅审计用户和管理员可查看')
@@ -481,6 +483,11 @@ app.use('/api/auth', createAuthRouter({
   createId: randomUUID,
   getSessionSettings: () => readSessionSettings(db),
   loginFailures,
+}))
+app.use('/api/system-settings/branding', createBrandingSettingsRouter({
+  db,
+  initialAdminMiddleware,
+  recordAudit,
 }))
 app.use('/api', createBasicWorkspaceOnlyMiddleware(authMiddleware, recordAudit))
 app.use('/api/system-settings/report-storage', createReportStorageRouter({ adminMiddleware, recordAudit }))

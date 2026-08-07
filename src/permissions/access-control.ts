@@ -20,6 +20,7 @@ export type PageAccessKey =
   | 'settings'
   | 'systemConfiguration'
   | 'systemUpgrade'
+  | 'platformBranding'
 
 type PageAccessDefinition = {
   moduleName: string
@@ -61,6 +62,7 @@ export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   settings: { moduleName: '系统设置', roles: NON_BASIC_ROLES },
   systemConfiguration: { moduleName: '高级配置', roles: ADMIN_ONLY },
   systemUpgrade: { moduleName: '系统升级', roles: ADMIN_ONLY },
+  platformBranding: { moduleName: '平台品牌配置', roles: ADMIN_ONLY },
 }
 
 export const ROUTE_ACCESS_KEYS: Record<string, PageAccessKey> = {
@@ -95,6 +97,7 @@ export const ROUTE_ACCESS_KEYS: Record<string, PageAccessKey> = {
   EnvironmentManagement: 'systemConfiguration',
   AlertForwardingConfiguration: 'systemConfiguration',
   SystemUpgrade: 'systemUpgrade',
+  PlatformBranding: 'platformBranding',
 }
 
 export function getPageAccess(routeName: string | symbol | null | undefined) {
@@ -142,4 +145,11 @@ export function resolvePasswordChangeReturn(
 export function canAccessRoute(role: UserRole | null | undefined, routeName: string | symbol | null | undefined): boolean {
   const access = getPageAccess(routeName)
   return !access || canAccessPage(role, access.key)
+}
+
+export function canAccessInitialAdminRoute(
+  role: UserRole | null | undefined,
+  isInitialAdmin: boolean | null | undefined,
+): boolean {
+  return role === 'admin' && isInitialAdmin === true
 }

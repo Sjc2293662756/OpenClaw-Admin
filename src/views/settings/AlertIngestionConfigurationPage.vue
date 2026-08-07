@@ -17,6 +17,7 @@ import { RefreshOutline, SaveOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { localizeApiError } from '@/utils/api-error'
+import { platformBranding } from '@/branding/platform'
 
 type RuntimeState = 'pending' | 'applied' | 'failed' | 'unknown'
 
@@ -120,7 +121,7 @@ onMounted(() => { void loadConfiguration() })
           <div>
             <NTag type="error" round :bordered="false">{{ text('告警接入配置', 'Alert ingestion configuration') }}</NTag>
             <h1>{{ text('Syslog 告警接收', 'Syslog alert reception') }}</h1>
-            <p>{{ text('管理 GAIOP 对 NAPM Syslog 告警的接收状态。安装、端口开放和发送端配置由 ISO 部署流程处理。', 'Manage how GAIOP receives NAPM Syslog alerts. Installation, port access, and sender configuration are handled by the ISO deployment process.') }}</p>
+            <p>{{ text(`管理 ${platformBranding.productCode} 对 NAPM Syslog 告警的接收状态。安装、端口开放和发送端配置由 ISO 部署流程处理。`, `Manage how ${platformBranding.productCode} receives NAPM Syslog alerts. Installation, port access, and sender configuration are handled by the ISO deployment process.`) }}</p>
           </div>
           <NTag :type="runtimeType" round size="large">{{ runtimeLabel }}</NTag>
         </div>
@@ -142,7 +143,7 @@ onMounted(() => { void loadConfiguration() })
           <div class="enabled-row">
             <div>
               <strong>{{ text('启用 Syslog 告警接收', 'Enable Syslog alert reception') }}</strong>
-              <p>{{ text('保存的是 GAIOP 的目标运行策略；接收器未部署时会保持“待部署联调”。', 'This saves GAIOP\'s target operating policy. It remains pending deployment when the receiver is not deployed.') }}</p>
+              <p>{{ text(`保存的是 ${platformBranding.productCode} 的目标运行策略；接收器未部署时会保持“待部署联调”。`, `This saves ${platformBranding.productCode}'s target operating policy. It remains pending deployment when the receiver is not deployed.`) }}</p>
             </div>
             <NSwitch v-model:value="enabled" />
           </div>

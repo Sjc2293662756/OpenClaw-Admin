@@ -6,6 +6,9 @@ import { defineConfig, loadEnv } from 'vite'
 const packageJson = JSON.parse(
   readFileSync(new URL('./package.json', import.meta.url), 'utf-8'),
 ) as { version?: string }
+const defaultBranding = JSON.parse(
+  readFileSync(new URL('./server/platform-branding.json', import.meta.url), 'utf-8'),
+) as { productFullZh: string }
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -15,7 +18,15 @@ export default defineConfig(({ mode }) => {
   const frontendPort = env.DEV_PORT || '3001'
   
   return {
-    plugins: [vue()],
+    plugins: [
+      vue(),
+      {
+        name: 'platform-branding-title',
+        transformIndexHtml(html) {
+          return html.replace('__PLATFORM_BRANDING_TITLE__', defaultBranding.productFullZh)
+        },
+      },
+    ],
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),
@@ -54,7 +65,6 @@ export default defineConfig(({ mode }) => {
       },
     },
     define: {
-      'import.meta.env.VITE_APP_TITLE': JSON.stringify(env.VITE_APP_TITLE || 'OpenClaw Web'),
       'import.meta.env.VITE_APP_VERSION': JSON.stringify(appVersion),
     },
   }

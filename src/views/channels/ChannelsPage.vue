@@ -19,6 +19,7 @@ import {
   NText,
   useMessage,
 } from 'naive-ui'
+import { platformBranding } from '@/branding/platform'
 import {
   PlayOutline,
   RefreshOutline,
@@ -92,7 +93,7 @@ const message = useMessage()
 const { t } = useI18n()
 
 const expandedChannelKeys = ref<string[]>(['personal-wechat'])
-const feishuAppName = ref('GAIOP 智能助手')
+const feishuAppName = ref(`${platformBranding.productShortZh} 智能助手`)
 let feishuOnboardingTimer: ReturnType<typeof setInterval> | null = null
 const dmPolicyOptions = computed(() => [
   { label: t('pages.channels.dmPolicies.pairing'), value: 'pairing' },

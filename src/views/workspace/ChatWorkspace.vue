@@ -28,6 +28,7 @@ import {
 import type { Session } from '@/api/types'
 import { canAccessPage, MANAGEMENT_ACCESS_DENIED_NOTICE } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
+import { platformBranding, usesDefaultPlatformBranding } from '@/branding/platform'
 
 const router = useRouter()
 const route = useRoute()
@@ -43,6 +44,7 @@ const {
 } = usePermissions()
 const message = useMessage()
 const canAccessAdminConsole = computed(() => canAccessPage(authStore.currentUser?.role, 'dashboard'))
+const useDefaultWordmark = computed(() => usesDefaultPlatformBranding())
 
 const ready = ref(wsStore.state === ConnectionState.CONNECTED)
 const creatingSession = ref(false)
@@ -209,7 +211,12 @@ onUnmounted(() => {
   <main class="workspace-page">
     <aside class="workspace-sidebar">
       <div class="workspace-brand">
-        <span class="brand-logo"><span>Net</span>Inside</span>
+        <span class="brand-logo" :aria-label="platformBranding.companyBrandEn">
+          <template v-if="useDefaultWordmark">
+            <span class="brand-logo-net">Net</span><span>Inside</span>
+          </template>
+          <template v-else>{{ platformBranding.companyBrandEn }}</template>
+        </span>
         <span class="brand-divider"></span>
         <strong>{{ t('pages.gaiop.workspace.brand') }}</strong>
       </div>
@@ -392,7 +399,7 @@ onUnmounted(() => {
 }
 
 .brand-logo { color: #1a211d; font-size: 16px; font-weight: 600; letter-spacing: -0.045em; }
-.brand-logo span { color: #50ae65; }
+.brand-logo-net { color: #50ae65; }
 .brand-divider { width: 1px; height: 18px; background: #c6d9cd; }
 .workspace-brand strong { color: #174d38; font-size: 15px; }
 

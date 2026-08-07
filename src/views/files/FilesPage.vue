@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
 import { localizeApiError } from '@/utils/api-error'
+import { platformBranding } from '@/branding/platform'
 
 type ReportStatus = 'ready' | 'missing' | 'failed'
 
@@ -285,7 +286,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="report-page">
     <NAlert type="info" :bordered="false" class="report-note">
-      {{ text('报告仅由会话中的 GAIOP AI 自动生成，不支持手动上传或编辑。当前已导入的 OpenClaw 历史报告为本地过渡副本；管理员删除时只删除本地副本，不影响原始报告。历史审计未记录来源用户、会话或数据源时统一显示“未记录”。', 'Reports are generated automatically by GAIOP AI in sessions and cannot be uploaded or edited manually. Imported OpenClaw historical reports are local transitional copies; administrator deletion removes only the local copy, not the original report. Historical records without a source user, session, or data source show Not recorded.') }}
+      {{ text(`报告仅由会话中的 ${platformBranding.productCode} AI 自动生成，不支持手动上传或编辑。当前已导入的早期版本历史报告为本地过渡副本；管理员删除时只删除本地副本，不影响原始报告。历史审计未记录来源用户、会话或数据源时统一显示“未记录”。`, `Reports are generated automatically by ${platformBranding.productCode} AI in sessions and cannot be uploaded or edited manually. Imported legacy historical reports are local transitional copies; administrator deletion removes only the local copy, not the original report. Historical records without a source user, session, or data source show Not recorded.`) }}
     </NAlert>
     <NCard :title="text('报告文件管理', 'Report Management')" :bordered="false" class="report-card">
       <template #header-extra>

@@ -20,11 +20,13 @@ test('system metrics uses the dedicated monitor role boundary', () => {
   )
 })
 
-test('basic workspace REST boundary is registered before every business router', () => {
+test('public branding read is explicit and protected business routers stay behind the basic boundary', () => {
   const authRouter = source.indexOf("app.use('/api/auth'")
+  const brandingRouter = source.indexOf("app.use('/api/system-settings/branding'")
   const basicBoundary = source.indexOf("app.use('/api', createBasicWorkspaceOnlyMiddleware")
   const firstBusinessRouter = source.indexOf("app.use('/api/system-settings/report-storage'")
   assert.ok(authRouter >= 0)
-  assert.ok(basicBoundary > authRouter)
+  assert.ok(brandingRouter > authRouter)
+  assert.ok(basicBoundary > brandingRouter)
   assert.ok(firstBusinessRouter > basicBoundary)
 })

@@ -1,7 +1,9 @@
+import { platformBranding } from '@/branding/platform'
+
 export default {
   app: {
-    title: 'Guanshu AI-driven Operations Platform',
-    brand: 'NetInside GAIOP',
+    title: platformBranding.productFullEn,
+    brand: `${platformBranding.companyBrandEn} ${platformBranding.productCode}`,
   },
   routes: {
     login: 'Login',
@@ -34,6 +36,7 @@ export default {
     reportStorage: 'Report Storage',
     accessControl: 'Access Control',
     systemUpgrade: 'System Upgrade',
+    platformBranding: 'Platform Branding',
     hermesDashboard: 'Dashboard',
     hermesChat: 'Live Chat',
     hermesSessions: 'Sessions',
@@ -105,8 +108,8 @@ export default {
       upgradeToVersion: 'Upgrade to specific version',
       selectVersion: 'Select version',
       upgrade: 'Upgrade',
-      updatingMessage: 'Updating OpenClaw, please wait...',
-      updateSuccessManual: 'Update successful! {message}Please restart OpenClaw manually to apply the update.',
+      updatingMessage: `Updating ${platformBranding.productCode} Core, please wait...`,
+      updateSuccessManual: `Update successful! {message}Please restart ${platformBranding.productCode} Core manually to apply the update.`,
       updateFailed: 'Update failed: {error}',
       unknownError: 'Unknown error',
       fetchVersionsFailed: 'Failed to fetch version list, using default version',
@@ -115,7 +118,7 @@ export default {
   },
   pages: {
     login: {
-      subtitle: 'Connect to OpenClaw Gateway or Hermes Agent to manage your AI assistant',
+      subtitle: `Connect to the ${platformBranding.productCode} intelligent engine or Hermes Agent to manage your AI assistant`,
       gatewayUrlLabel: 'Gateway URL',
       gatewayUrlPlaceholder: 'ws://127.0.0.1:18789',
       tokenLabel: 'Gateway Token',
@@ -162,7 +165,7 @@ export default {
         },
         bundled: {
           title: 'Bundled skills',
-          description: 'Provided with the GAIOP platform (can control availability in the workspace)',
+          description: `Provided with the ${platformBranding.productCode} platform (can control availability in the workspace)`,
           empty: 'No bundled skills available',
         },
       },
@@ -180,7 +183,7 @@ export default {
       noMatches: 'No matching skills',
     },
     config: {
-      title: 'openclaw.json',
+      title: `${platformBranding.productCode} Core Configuration`,
       noChanges: 'No changes to save',
       saved: 'Config saved',
       toolsSaved: 'Tools config saved',
@@ -194,7 +197,7 @@ export default {
         general: 'General',
         tools: 'Tools policy',
         sessions: 'Sessions',
-        raw: 'Raw openclaw.json',
+        raw: 'Raw Core Configuration',
       },
       labels: {
         primaryModel: 'Primary model',
@@ -210,7 +213,7 @@ export default {
       },
       placeholders: {
         model: 'Select or enter a model',
-        workspacePath: '~/.openclaw/workspace',
+        workspacePath: '~/workspace',
       },
       toolProfiles: {
         minimal: 'Minimal',
@@ -227,7 +230,7 @@ export default {
         concurrent: 'Concurrent',
         collect: 'Collect',
       },
-      rawReadonlyHint: 'Full openclaw.json config (read-only)',
+      rawReadonlyHint: `Full ${platformBranding.productCode} core configuration (read-only)`,
     },
     channels: {
       title: 'Channels',
@@ -301,11 +304,11 @@ export default {
       },
       pairingHint: 'New DM users receive a pairing code. An administrator must approve it on the service before the conversation can continue.',
       openAccessHint: 'This allows DMs within the Feishu app visibility scope. For tighter control, use pairing approval or an allowlist.',
-      platformScopeHint: '{channel} DM access is controlled by the platform app’s member or visibility scope. GAIOP does not maintain a duplicate roster or pairing rule.',
+      platformScopeHint: `{channel} DM access is controlled by the platform app’s member or visibility scope. ${platformBranding.productCode} does not maintain a duplicate roster or pairing rule.`,
       platformPolicyMigrationHint: 'This is a legacy DM policy. Save & apply to migrate it to the {channel} platform scope.',
       feishuOnboarding: {
         title: 'Feishu QR onboarding',
-        intro: 'For first-time creation of a dedicated GAIOP Feishu smart-app. After an administrator scans, Feishu provisions the app, bot, baseline permissions and events. This page never displays or stores plaintext credentials. Existing Feishu apps can still use the manual configuration below.',
+        intro: `For first-time creation of a dedicated ${platformBranding.productCode} Feishu smart-app. After an administrator scans, Feishu provisions the app, bot, baseline permissions and events. This page never displays or stores plaintext credentials. Existing Feishu apps can still use the manual configuration below.`,
         appName: 'Feishu app name',
         start: 'Generate Feishu QR code',
         qrAlt: 'Feishu administrator QR code',
@@ -334,8 +337,8 @@ export default {
         add: 'Add Personal WeChat',
         launchChannel: 'Enable channel',
         manageTitle: 'Personal WeChat Management',
-        privateChatScopeHint: 'Personal WeChat: private chat access accounts are managed by the GAIOP Personal WeChat module.',
-        securityHint: 'QR onboarding only calls account-login capabilities from the installed plugin. It never installs, upgrades, or removes the plugin. Login credentials stay in the plugin and are never copied or revealed by GAIOP.',
+        privateChatScopeHint: `Personal WeChat: private chat access accounts are managed by the ${platformBranding.productCode} Personal WeChat module.`,
+        securityHint: `QR onboarding only calls account-login capabilities from the installed plugin. It never installs, upgrades, or removes the plugin. Login credentials stay in the plugin and are never copied or revealed by ${platformBranding.productCode}.`,
         deleteConfirm: 'Delete “{name}”? Only this account’s authorization and management metadata are removed. The plugin and all other accounts remain intact.',
         plugin: {
           ready: 'Plugin ready',
@@ -431,7 +434,7 @@ export default {
     },
     memory: {
       title: 'Memory & Docs',
-      coveredDocsPrefix: 'Covers GAIOP managed docs: ',
+      coveredDocsPrefix: `Covers ${platformBranding.productCode} managed docs: `,
       coveredDocsSuffix: '.',
       gatewayLimited: 'This Gateway may not support agents.files.* or permission is restricted: {error}',
       agentPlaceholder: 'Select agent',
@@ -1033,22 +1036,22 @@ export default {
       },
       index: {
         title: 'Model index',
-        hint: 'Configured models from openclaw.json. Quickly set any model as primary in the list.',
+        hint: `Configured models for ${platformBranding.productCode} Core. Quickly set any model as primary in the list.`,
         empty: 'No models configured',
         emptyHint: 'Add models in the workbench above, then save.',
       },
     },
     dashboard: {
       hero: {
-        title: 'GAIOP Operations Overview',
+        title: `${platformBranding.productCode} Operations Overview`,
         subtitle: 'Review key Token, model, skill, task, and session activity, then open the relevant management function.',
       },
       connection: {
-        connected: 'GAIOP service connected',
-        connecting: 'GAIOP service connecting',
-        reconnecting: 'GAIOP service reconnecting',
-        failed: 'GAIOP service connection failed',
-        disconnected: 'GAIOP service disconnected',
+        connected: `${platformBranding.productCode} service connected`,
+        connecting: `${platformBranding.productCode} service connecting`,
+        reconnecting: `${platformBranding.productCode} service reconnecting`,
+        failed: `${platformBranding.productCode} service connection failed`,
+        disconnected: `${platformBranding.productCode} service disconnected`,
       },
       lastUpdated: {
         none: 'Not synced yet',
@@ -1241,7 +1244,7 @@ export default {
         error: 'TTS synthesis failed',
       },
       input: {
-        placeholder: 'Describe an operations analysis task (type / for GAIOP commands, Enter to send, Shift+Enter for new line)',
+        placeholder: `Describe an operations analysis task (type / for ${platformBranding.productCode} commands, Enter to send, Shift+Enter for new line)`,
         sendHint: 'Sending to: {key} | Enter send, Shift+Enter newline, Ctrl/Cmd+Enter send',
       },
       quickReplies: {
@@ -1275,7 +1278,7 @@ export default {
         },
       },
       slash: {
-        title: 'GAIOP slash commands',
+        title: `${platformBranding.productCode} slash commands`,
         hint: 'Up/Down select, Tab apply, Enter apply or send, Esc exit',
         categories: {
           common: 'Common',
@@ -1665,7 +1668,7 @@ export default {
       themeLight: 'Light',
       themeDark: 'Dark',
       about: 'About',
-      aboutLine1: 'OpenClaw Gateway admin console',
+    aboutLine1: platformBranding.productFullEn,
       aboutLine2: 'Built with Vue 3 + Naive UI',
       connectionManagedByBackend: 'Gateway connection is managed by backend server. Please configure in System Settings',
       envSettings: 'Environment Variables',
@@ -1673,17 +1676,17 @@ export default {
       authUsernamePlaceholder: 'Enter username',
       authPassword: 'Password',
       authPasswordPlaceholder: 'Enter password',
-      openclawUrl: 'OpenClaw URL',
+    openclawUrl: `${platformBranding.productCode} Gateway URL`,
       openclawUrlPlaceholder: 'ws://localhost:18789',
-      openclawToken: 'OpenClaw Token',
+    openclawToken: `${platformBranding.productCode} Gateway Token`,
       openclawTokenPlaceholder: 'Enter Token',
-      openclawPassword: 'OpenClaw Password',
+    openclawPassword: `${platformBranding.productCode} Gateway Password`,
       openclawPasswordPlaceholder: 'Enter Gateway password (alternative to Token)',
       loadFailed: 'Failed to load configuration',
       save: 'Save',
       saveSuccess: 'Configuration saved and applied',
       saveFailed: 'Failed to save configuration',
-      envSettingsHint: 'Gateway will reconnect automatically after changing OpenClaw URL or Token.',
+    envSettingsHint: `Gateway reconnects automatically after changing the ${platformBranding.productCode} Gateway URL or Token.`,
       tts: {
         title: 'Text-to-Speech Settings',
         hint: 'Configure Text-to-Speech (TTS) parameters. Uses browser built-in Web Speech API, no network required. Settings are saved in browser local storage.',
@@ -1993,15 +1996,15 @@ export default {
         idRequired: 'Please enter Agent ID',
         idPattern: 'Agent ID can only contain letters, numbers, underscores and hyphens',
         workspace: 'Workspace',
-        workspacePlaceholder: 'e.g. ~/.openclaw/workspace-work',
+        workspacePlaceholder: 'e.g. ~/workspace-work',
         name: 'Name',
-        namePlaceholder: 'e.g. OpenClaw',
+        namePlaceholder: `e.g. ${platformBranding.productCode}`,
         theme: 'Theme',
         themePlaceholder: 'e.g. space lobster',
         emoji: 'Emoji',
         emojiPlaceholder: 'e.g. 🦞',
         avatar: 'Avatar',
-        avatarPlaceholder: 'e.g. avatars/openclaw.png',
+        avatarPlaceholder: 'e.g. avatars/agent.png',
         model: 'Model',
         modelPlaceholder: 'Select model',
         toolsAllow: 'Allowed Tools (Allow)',
@@ -2489,7 +2492,7 @@ export default {
       info: {
         title: 'Backup Information',
         whatIsBackup: 'What is a backup?',
-        backupContent: 'Backup includes: database (SQLite), OpenClaw configuration, Web Admin config, sessions data, workspace metadata, Wizard database, etc.',
+        backupContent: `Backup includes: database (SQLite), ${platformBranding.productCode} core configuration, Web Admin config, sessions data, workspace metadata, Wizard database, etc.`,
         restoreNote: 'Restore Note',
         restoreContent: 'A backup of the current database will be created before restoration. Some configurations may require a service restart to take effect.',
       },
@@ -2498,10 +2501,10 @@ export default {
         creatingBackup: 'Creating backup...',
         wizardDb: 'Backing up project database...',
         envConfig: 'Backing up environment config...',
-        openclawBackup: 'Backing up OpenClaw data...',
+        openclawBackup: `Backing up ${platformBranding.productCode} Core data...`,
         creatingZip: 'Creating archive...',
         extractingZip: 'Extracting backup file...',
-        restoringOpenclaw: 'Restoring OpenClaw data...',
+        restoringOpenclaw: `Restoring ${platformBranding.productCode} Core data...`,
         restoringDb: 'Restoring project database...',
         restoringEnv: 'Restoring environment config...',
         cleaningUp: 'Cleaning up temporary files...',
@@ -3446,17 +3449,17 @@ export default {
         currentModule: 'Current module', unknownRole: 'Unknown role',
       },
       entrance: {
-        product: 'GAIOP', company: 'Beijing Wangshen Technology Co., Ltd.', fullName: 'Guanshu AI-driven Operations Platform',
+        product: platformBranding.productCode, company: platformBranding.companyEnglish, fullName: platformBranding.productFullEn,
         description: 'Make real traffic the core observability entry for intelligent operations, with AI-driven full-traffic performance analysis and operational decisions.',
-        chatTitle: 'Start a conversation', chatDescription: 'Use GAIOP for intelligent operations analysis', configTitle: 'Configuration', configDescription: 'Manage models, Skills, and platform configuration',
-        companyTitle: 'Beijing Wangshen Technology Co., Ltd.', companyDescription: 'Build analysis and management capabilities for intelligent operations on network and application performance data.', companyLink: 'Explore GAIOP',
+        chatTitle: 'Start a conversation', chatDescription: `Use ${platformBranding.productCode} for intelligent operations analysis`, configTitle: 'Configuration', configDescription: 'Manage models, Skills, and platform configuration',
+        companyTitle: platformBranding.companyEnglish, companyDescription: 'Build analysis and management capabilities for intelligent operations on network and application performance data.', companyLink: `Explore ${platformBranding.productCode}`,
       },
       login: {
-        brand: 'GAIOP', platform: 'Intelligent Operations Analytics Platform', title: 'NetInside Guanshu AI-driven Operations Platform', connecting: 'Connecting to platform services...', username: 'Username', usernamePlaceholder: 'Enter username', password: 'Password', passwordPlaceholder: 'Enter password', login: 'Log in', retry: 'Reconnect', showPassword: 'Show password', hidePassword: 'Hide password',
+        brand: platformBranding.productCode, platform: 'Intelligent Operations Analytics Platform', title: platformBranding.productFullEn, connecting: 'Connecting to platform services...', username: 'Username', usernamePlaceholder: 'Enter username', password: 'Password', passwordPlaceholder: 'Enter password', login: 'Log in', retry: 'Reconnect', showPassword: 'Show password', hidePassword: 'Hide password',
         credentialsRequired: 'Enter your username and password.', connectionTimeout: 'Connection to platform services timed out. Please try again.', failed: 'Login failed. Please try again.',
       },
       workspace: {
-        brand: 'GAIOP', newChat: 'New Chat', history: 'History', refreshHistory: 'Refresh history', noHistory: 'No history', delete: 'Delete', cancel: 'Cancel', deleteSession: 'Delete session', deleteConfirm: 'This session cannot be recovered after deletion. Continue?', sessionDeleted: 'Session deleted', deleteFailed: 'Failed to delete session. Please try again.', userFallback: 'GAIOP user', changePassword: 'Change password', adminConsole: 'Admin Console', logout: 'Log out', caption: 'Guanshu AI-driven Operations Platform', connecting: 'Connecting to service…', backToAlerts: 'Back to Alert Notifications', adminConsoleHint: 'View platform configuration, operational overview, and management features', managementAccessDenied: 'This account does not have management access. You can continue using the Chat Workspace.', managementAccessDeniedConfirm: 'Got it', serviceUnavailable: 'The GAIOP intelligent operations service is unavailable', reconnecting: 'Reconnecting to the GAIOP intelligent operations service', connectingService: 'Connecting to the GAIOP intelligent operations service', reconnect: 'Reconnect',
+        brand: platformBranding.productCode, newChat: 'New Chat', history: 'History', refreshHistory: 'Refresh history', noHistory: 'No history', delete: 'Delete', cancel: 'Cancel', deleteSession: 'Delete session', deleteConfirm: 'This session cannot be recovered after deletion. Continue?', sessionDeleted: 'Session deleted', deleteFailed: 'Failed to delete session. Please try again.', userFallback: `${platformBranding.productCode} user`, changePassword: 'Change password', adminConsole: 'Admin Console', logout: 'Log out', caption: platformBranding.productFullEn, connecting: 'Connecting to service…', backToAlerts: 'Back to Alert Notifications', adminConsoleHint: 'View platform configuration, operational overview, and management features', managementAccessDenied: 'This account does not have management access. You can continue using the Chat Workspace.', managementAccessDeniedConfirm: 'Got it', serviceUnavailable: `The ${platformBranding.productCode} intelligent operations service is unavailable`, reconnecting: `Reconnecting to the ${platformBranding.productCode} intelligent operations service`, connectingService: `Connecting to the ${platformBranding.productCode} intelligent operations service`, reconnect: 'Reconnect',
       },
       users: {
         title: 'Account Management', list: 'Users', create: 'Add user', edit: 'Edit user', password: 'Change my password', refresh: 'Refresh', search: 'Search username or description', allRoles: 'All roles', allStatuses: 'All statuses', empty: 'No users',
@@ -3468,9 +3471,9 @@ export default {
         optionalDescription: 'Optional; describe the purpose of this account', userType: 'User type', formName: 'Name', definition: 'Definition', user: 'User', usernamePlaceholder: 'Enter username', activate: 'Active', deactivate: 'Inactive',
       },
       systemConfig: {
-        introTag: 'Deployment & Data Integration', title: 'GAIOP Advanced Configuration', intro: 'Configure the connection, alert ingestion, and runtime data sources in deployment order. Each section saves and takes effect independently.', noGlobalSave: 'No page-wide save required',
-        serviceTitle: 'GAIOP Service Connection', serviceDescription: 'Establish the controlled connection between Admin BFF and GAIOP Gateway first.', alertTitle: 'Syslog Alert Ingestion', alertDescription: 'Maintain the runtime target that receives NAPM Syslog alerts for GAIOP.', dataSourceTitle: 'Runtime Data Sources', dataSourceDescription: 'Maintain and enable the NAPM data sources used by the current GAIOP runtime.',
-        back: 'Back to advanced configuration', serviceConfig: 'GAIOP Service Configuration', connection: 'GAIOP Service Connection', connectionDescription: 'Maintain the service endpoint, access token, and current connection state.', connectionConfig: 'Service Connection', endpoint: 'Service endpoint', token: 'Service access token', tokenConfigured: 'Configured; leave blank to keep unchanged', tokenRequired: 'Enter service access token', saveReconnect: 'Save and reconnect', currentStatus: 'Current connection status', refreshStatus: 'Refresh status', connected: 'Connected', disconnected: 'Disconnected', configured: 'Configured', notConfigured: 'Not configured', loadFailed: 'Failed to load GAIOP service configuration', saveFailed: 'Failed to save GAIOP service configuration', saveSuccess: 'Saved and reconnection started',
+        introTag: 'Deployment & Data Integration', title: `${platformBranding.productCode} Advanced Configuration`, intro: 'Configure the connection, alert ingestion, and runtime data sources in deployment order. Each section saves and takes effect independently.', noGlobalSave: 'No page-wide save required',
+        serviceTitle: `${platformBranding.productCode} Service Connection`, serviceDescription: `Establish the controlled connection between Admin BFF and ${platformBranding.productCode} Gateway first.`, alertTitle: 'Syslog Alert Ingestion', alertDescription: `Maintain the runtime target that receives NAPM Syslog alerts for ${platformBranding.productCode}.`, dataSourceTitle: 'Runtime Data Sources', dataSourceDescription: `Maintain and enable the NAPM data sources used by the current ${platformBranding.productCode} runtime.`,
+        back: 'Back to advanced configuration', serviceConfig: `${platformBranding.productCode} Service Configuration`, connection: `${platformBranding.productCode} Service Connection`, connectionDescription: 'Maintain the service endpoint, access token, and current connection state.', connectionConfig: 'Service Connection', endpoint: 'Service endpoint', token: 'Service access token', tokenConfigured: 'Configured; leave blank to keep unchanged', tokenRequired: 'Enter service access token', saveReconnect: 'Save and reconnect', currentStatus: 'Current connection status', refreshStatus: 'Refresh status', connected: 'Connected', disconnected: 'Disconnected', configured: 'Configured', notConfigured: 'Not configured', loadFailed: `Failed to load ${platformBranding.productCode} service configuration`, saveFailed: `Failed to save ${platformBranding.productCode} service configuration`, saveSuccess: 'Saved and reconnection started',
       },
       alerts: {
         title: 'Alert Notifications', refresh: 'Refresh', export: 'Export Excel', details: 'Details', empty: 'No alerts match the current filters',

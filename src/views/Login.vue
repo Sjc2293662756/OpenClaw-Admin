@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
 import { resolveConfigManagementRedirect } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
+import { platformBranding, usesDefaultPlatformBranding } from '@/branding/platform'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,6 +23,7 @@ const password = ref('')
 const showPassword = ref(false)
 
 const connectionState = computed(() => websocketStore.state)
+const useDefaultWordmark = computed(() => usesDefaultPlatformBranding())
 const isConnected = computed(() => connectionState.value === ConnectionState.CONNECTED)
 const isConnecting = computed(() =>
   connectionState.value === ConnectionState.CONNECTING ||
@@ -117,7 +119,12 @@ function handleRetry() {
     <div class="login-halo login-halo-bottom"></div>
 
     <div class="login-brand" :aria-label="t('pages.gaiop.login.title')">
-      <span class="brand-logo"><span class="brand-net">Net</span><span class="brand-inside">Inside</span></span>
+      <span class="brand-logo" :aria-label="platformBranding.companyBrandEn">
+        <template v-if="useDefaultWordmark">
+          <span class="brand-net">Net</span><span class="brand-inside">Inside</span>
+        </template>
+        <template v-else>{{ platformBranding.companyBrandEn }}</template>
+      </span>
       <span class="brand-divider"></span>
       <span class="brand-product">{{ t('pages.gaiop.login.brand') }}</span>
     </div>

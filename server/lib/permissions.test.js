@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import test from 'node:test'
 import express from 'express'
-import { FORMAL_RPC_METHODS, createBasicWorkspaceOnlyMiddleware, createRoleMiddleware, getRpcPermissionDecision, isBasicWorkspaceApiRequest, isReadOnlyRpcMethod, rpcPermissionMiddleware } from './permissions.js'
+import { FORMAL_RPC_METHODS, createBasicWorkspaceOnlyMiddleware, createInitialAdminMiddleware, createRoleMiddleware, getRpcPermissionDecision, isBasicWorkspaceApiRequest, isReadOnlyRpcMethod, rpcPermissionMiddleware } from './permissions.js'
 
 test('RPC permission matrix keeps privileged writes and sensitive reads restricted', () => {
   assert.equal(getRpcPermissionDecision({ role: 'admin' }, 'config.set').allowed, true)
@@ -224,6 +224,35 @@ test('HTTP role middleware rejects direct privileged requests', async () => {
     assert.equal((await fetch(`${baseUrl}/operator`, { method: 'POST', headers: { 'x-test-role': 'standard' } })).status, 200)
     assert.equal((await fetch(`${baseUrl}/operator`, { method: 'POST', headers: { 'x-test-role': 'auditor' } })).status, 403)
     assert.equal((await fetch(`${baseUrl}/admin-only`, { method: 'POST', headers: { 'x-test-role': 'admin' } })).status, 200)
+  } finally {
+    server.close()
+    await once(server, 'close')
+  }
+})
+
+test('initial administrator middleware rejects ordinary administrators', async () => {
+  const app = express()
+  const authMiddleware = (req, _res, next) => {
+    req.user = {
+      id: 'test-user',
+      role: req.get('x-test-role') || 'basic',
+      isInitialAdmin: req.get('x-test-initial-admin') === 'true',
+    }
+    next()
+  }
+  app.put('/branding', createInitialAdminMiddleware(authMiddleware), (_req, res) => res.json({ ok: true }))
+
+  const server = app.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const url = `http://127.0.0.1:${server.address().port}/branding`
+  try {
+    const ordinaryAdmin = await fetch(url, { method: 'PUT', headers: { 'x-test-role': 'admin' } })
+    assert.equal(ordinaryAdmin.status, 403)
+    assert.equal((await ordinaryAdmin.json()).code, 'INITIAL_ADMIN_REQUIRED')
+    assert.equal((await fetch(url, {
+      method: 'PUT',
+      headers: { 'x-test-role': 'admin', 'x-test-initial-admin': 'true' },
+    })).status, 200)
   } finally {
     server.close()
     await once(server, 'close')
