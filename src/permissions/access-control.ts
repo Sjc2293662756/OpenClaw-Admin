@@ -59,7 +59,7 @@ export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   userAdministration: { moduleName: '账户管理', roles: ADMIN_ONLY },
   audit: { moduleName: '审计信息', roles: AUDIT_AND_ADMIN },
   settings: { moduleName: '系统设置', roles: NON_BASIC_ROLES },
-  systemConfiguration: { moduleName: '系统配置', roles: ADMIN_ONLY },
+  systemConfiguration: { moduleName: '高级配置', roles: ADMIN_ONLY },
   systemUpgrade: { moduleName: '系统升级', roles: ADMIN_ONLY },
 }
 

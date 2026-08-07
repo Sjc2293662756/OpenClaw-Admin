@@ -103,7 +103,7 @@ loadExisting()
       <NFormItem :label="text('账号', 'Account')" path="username" required><NInput v-model:value="form.username" :placeholder="text('请输入 NAPM 访问账号', 'Enter the NAPM account')" /></NFormItem>
       <NFormItem :label="text('密码', 'Password')" path="password" :required="!editingId"><NInput v-model:value="form.password" type="password" show-password-on="click" :placeholder="editingId ? text('留空表示不修改', 'Leave blank to keep unchanged') : text('请输入 NAPM 访问密码', 'Enter the NAPM password')" /></NFormItem>
       <NFormItem :label="text('状态', 'Status')"><NRadioGroup v-model:value="form.status"><NSpace><NRadio value="untested">{{ text('未测试', 'Not tested') }}</NRadio><NRadio value="disabled">{{ text('停用', 'Disabled') }}</NRadio></NSpace></NRadioGroup></NFormItem>
-      <NFormItem label=""><NSpace><NButton :disabled="loading" @click="returnToSystemConfiguration">{{ text('返回系统配置', 'Back to system configuration') }}</NButton><NButton type="primary" :loading="loading" @click="submit">{{ text('提交', 'Submit') }}</NButton></NSpace></NFormItem>
+<NFormItem label=""><NSpace><NButton :disabled="loading" @click="returnToSystemConfiguration">{{ text('返回高级配置', 'Back to advanced configuration') }}</NButton><NButton type="primary" :loading="loading" @click="submit">{{ text('提交', 'Submit') }}</NButton></NSpace></NFormItem>
     </NForm>
   </NCard>
 </template>

@@ -29,7 +29,7 @@ export default {
     reports: 'Report Management',
     auditLogs: 'Audit Logs',
     accessDenied: 'Access Denied',
-    systemConfiguration: 'System Configuration',
+    systemConfiguration: 'Advanced Configuration',
     sessionManagement: 'Session Retention',
     reportStorage: 'Report Storage',
     accessControl: 'Access Control',
@@ -3468,9 +3468,9 @@ export default {
         optionalDescription: 'Optional; describe the purpose of this account', userType: 'User type', formName: 'Name', definition: 'Definition', user: 'User', usernamePlaceholder: 'Enter username', activate: 'Active', deactivate: 'Inactive',
       },
       systemConfig: {
-        introTag: 'Deployment & Data Integration', title: 'GAIOP System Configuration', intro: 'Configure the connection, alert ingestion, and runtime data sources in deployment order. Each section saves and takes effect independently.', noGlobalSave: 'No page-wide save required',
+        introTag: 'Deployment & Data Integration', title: 'GAIOP Advanced Configuration', intro: 'Configure the connection, alert ingestion, and runtime data sources in deployment order. Each section saves and takes effect independently.', noGlobalSave: 'No page-wide save required',
         serviceTitle: 'GAIOP Service Connection', serviceDescription: 'Establish the controlled connection between Admin BFF and GAIOP Gateway first.', alertTitle: 'Syslog Alert Ingestion', alertDescription: 'Maintain the runtime target that receives NAPM Syslog alerts for GAIOP.', dataSourceTitle: 'Runtime Data Sources', dataSourceDescription: 'Maintain and enable the NAPM data sources used by the current GAIOP runtime.',
-        back: 'Back to system configuration', serviceConfig: 'GAIOP Service Configuration', connection: 'GAIOP Service Connection', connectionDescription: 'Maintain the service endpoint, access token, and current connection state.', connectionConfig: 'Service Connection', endpoint: 'Service endpoint', token: 'Service access token', tokenConfigured: 'Configured; leave blank to keep unchanged', tokenRequired: 'Enter service access token', saveReconnect: 'Save and reconnect', currentStatus: 'Current connection status', refreshStatus: 'Refresh status', connected: 'Connected', disconnected: 'Disconnected', configured: 'Configured', notConfigured: 'Not configured', loadFailed: 'Failed to load GAIOP service configuration', saveFailed: 'Failed to save GAIOP service configuration', saveSuccess: 'Saved and reconnection started',
+        back: 'Back to advanced configuration', serviceConfig: 'GAIOP Service Configuration', connection: 'GAIOP Service Connection', connectionDescription: 'Maintain the service endpoint, access token, and current connection state.', connectionConfig: 'Service Connection', endpoint: 'Service endpoint', token: 'Service access token', tokenConfigured: 'Configured; leave blank to keep unchanged', tokenRequired: 'Enter service access token', saveReconnect: 'Save and reconnect', currentStatus: 'Current connection status', refreshStatus: 'Refresh status', connected: 'Connected', disconnected: 'Disconnected', configured: 'Configured', notConfigured: 'Not configured', loadFailed: 'Failed to load GAIOP service configuration', saveFailed: 'Failed to save GAIOP service configuration', saveSuccess: 'Saved and reconnection started',
       },
       alerts: {
         title: 'Alert Notifications', refresh: 'Refresh', export: 'Export Excel', details: 'Details', empty: 'No alerts match the current filters',

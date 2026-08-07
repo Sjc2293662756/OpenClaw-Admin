@@ -29,7 +29,7 @@ export default {
     reports: '报告文件管理',
     auditLogs: '审计信息',
     accessDenied: '无访问权限',
-    systemConfiguration: '系统配置',
+    systemConfiguration: '高级配置',
     sessionManagement: '会话时长管理',
     reportStorage: '报告存储位置',
     accessControl: '访问控制',
@@ -3474,9 +3474,9 @@ export default {
         optionalDescription: '可选，用于说明该账户用途', userType: '用户类型', formName: '名称', definition: '定义内容', user: '用户', usernamePlaceholder: '请输入用户名', activate: '激活', deactivate: '非激活',
       },
       systemConfig: {
-        introTag: '部署与数据接入', title: 'GAIOP 系统配置', intro: '按实际部署顺序完成连接、告警接入和运行数据源配置；每一步独立保存与生效。', noGlobalSave: '无需全页保存',
+        introTag: '部署与数据接入', title: 'GAIOP 高级配置', intro: '按实际部署顺序完成连接、告警接入和运行数据源配置；每一步独立保存与生效。', noGlobalSave: '无需全页保存',
         serviceTitle: 'GAIOP 服务连接', serviceDescription: '先建立 Admin BFF 与 GAIOP Gateway 的受控连接。', alertTitle: 'Syslog 告警接入', alertDescription: '维护 GAIOP 接收 NAPM Syslog 告警的运行目标。', dataSourceTitle: '运行数据源', dataSourceDescription: '维护并启用当前 GAIOP 运行时使用的 NAPM 数据源。',
-        back: '返回系统配置', serviceConfig: 'GAIOP 服务配置', connection: 'GAIOP 服务连接', connectionDescription: '维护服务接入地址、访问令牌和当前连接状态。', connectionConfig: '服务接入配置', endpoint: '服务接入地址', token: '服务访问令牌', tokenConfigured: '已配置；留空保持不变', tokenRequired: '请输入服务访问令牌', saveReconnect: '保存并重新连接', currentStatus: '当前连接状态', refreshStatus: '刷新状态', connected: '已连接', disconnected: '未连接', configured: '已配置', notConfigured: '未配置', loadFailed: '读取 GAIOP 服务配置失败', saveFailed: '保存 GAIOP 服务配置失败', saveSuccess: '已保存，并已发起服务重新连接',
+        back: '返回高级配置', serviceConfig: 'GAIOP 服务配置', connection: 'GAIOP 服务连接', connectionDescription: '维护服务接入地址、访问令牌和当前连接状态。', connectionConfig: '服务接入配置', endpoint: '服务接入地址', token: '服务访问令牌', tokenConfigured: '已配置；留空保持不变', tokenRequired: '请输入服务访问令牌', saveReconnect: '保存并重新连接', currentStatus: '当前连接状态', refreshStatus: '刷新状态', connected: '已连接', disconnected: '未连接', configured: '已配置', notConfigured: '未配置', loadFailed: '读取 GAIOP 服务配置失败', saveFailed: '保存 GAIOP 服务配置失败', saveSuccess: '已保存，并已发起服务重新连接',
       },
       alerts: {
         title: '告警通知', refresh: '刷新', export: '导出 Excel', details: '详情', empty: '当前条件暂无告警记录',

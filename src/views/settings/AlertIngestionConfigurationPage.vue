@@ -112,7 +112,7 @@ onMounted(() => { void loadConfiguration() })
 
 <template>
   <section class="alert-ingestion-page">
-    <NButton v-if="!embedded" quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← {{ text('返回系统配置', 'Back to system configuration') }}</NButton>
+<NButton v-if="!embedded" quaternary class="back-button" @click="router.push({ name: 'SystemConfiguration' })">← {{ text('返回高级配置', 'Back to advanced configuration') }}</NButton>
 
     <NSpin :show="loading">
       <NCard v-if="!embedded" class="app-card ingestion-hero">

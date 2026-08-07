@@ -21,7 +21,7 @@ const info = computed(() => modules[props.module || ''] || modules.environment!)
       <h1>{{ info.title }}</h1>
       <NText depth="3">{{ info.description }}</NText>
       <NText depth="3" class="placeholder-note">具体字段、权限、保存方式和连通性验证规则将在该模块进入实施阶段时确认。</NText>
-      <NButton type="primary" @click="router.push({ name: 'SystemConfiguration' })">返回系统配置</NButton>
+<NButton type="primary" @click="router.push({ name: 'SystemConfiguration' })">返回高级配置</NButton>
     </div>
   </NCard>
 </template>

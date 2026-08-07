@@ -206,7 +206,7 @@ onMounted(() => { refresh(false) })
 <template>
   <section class="sensitive-config-page">
     <NResult v-if="!isAdmin" status="403" :title="text('仅管理员可访问', 'Administrators only')" :description="text('环境与敏感配置属于系统安全配置，只有管理员可以查看和维护。', 'Environment and sensitive configuration is a system-security area that only administrators can view and manage.')">
-      <template #footer><NButton @click="router.push({ name: 'SystemConfiguration' })">{{ text('返回系统配置', 'Back to system configuration') }}</NButton></template>
+<template #footer><NButton @click="router.push({ name: 'SystemConfiguration' })">{{ text('返回高级配置', 'Back to advanced configuration') }}</NButton></template>
     </NResult>
 
     <template v-else>
