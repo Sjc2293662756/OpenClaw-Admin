@@ -154,6 +154,28 @@ describe('personal WeChat account store', () => {
     expect(store.accounts.map((account) => account.accountId)).toEqual(['account-b'])
   })
 
+  it('updates a disabled account immediately and rolls back when the server rejects the change', async () => {
+    let resolveMutation!: (response: Response) => void
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        plugin: { installed: true, available: true },
+        accounts: [{ accountId: 'account-a', displayName: 'A', enabled: true, status: 'online' }],
+      }))
+      .mockReturnValueOnce(new Promise<Response>((resolve) => {
+        resolveMutation = resolve
+      }))
+    const store = usePersonalWechatStore()
+    await store.refresh()
+
+    const mutation = store.setAccountEnabled('account-a', false)
+
+    expect(store.accounts[0]).toMatchObject({ enabled: false, status: 'disabled' })
+    resolveMutation(jsonResponse({ ok: false, errorCode: 'PERSONAL_WECHAT_ACCOUNT_STATE_FAILED' }, 503))
+    await expect(mutation).rejects.toThrow('PERSONAL_WECHAT_ACCOUNT_STATE_FAILED')
+    expect(store.accounts[0]).toMatchObject({ enabled: true, status: 'online' })
+  })
+
   it('does not surface arbitrary backend error text', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({
       ok: false,

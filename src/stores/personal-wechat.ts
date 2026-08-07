@@ -312,6 +312,16 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
   async function setAccountEnabled(accountId: string, enabled: boolean): Promise<void> {
     operationAccountId.value = accountId
     lastError.value = null
+    const index = accounts.value.findIndex((item) => item.accountId === accountId)
+    const previousAccount = index >= 0 ? accounts.value[index] : null
+    if (index >= 0 && previousAccount) {
+      accounts.value[index] = {
+        ...previousAccount,
+        enabled,
+        status: enabled ? 'unknown' : 'disabled',
+        errorCode: undefined,
+      }
+    }
     try {
       const response = await fetch(`/api/channels/personal-wechat/accounts/${encodeURIComponent(accountId)}/enabled`, {
         method: 'PUT',
@@ -324,12 +334,20 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
       )
       const account = normalizePersonalWechatAccount(result.account)
       if (account) {
-        const index = accounts.value.findIndex((item) => item.accountId === account.accountId)
-        if (index >= 0) accounts.value[index] = account
+        const currentIndex = accounts.value.findIndex((item) => item.accountId === account.accountId)
+        if (currentIndex >= 0) accounts.value[currentIndex] = account
         else accounts.value.push(account)
       } else {
         await refresh()
       }
+    } catch (error) {
+      if (previousAccount) {
+        const currentIndex = accounts.value.findIndex((item) => item.accountId === accountId)
+        if (currentIndex >= 0) accounts.value[currentIndex] = previousAccount
+        else accounts.value.push(previousAccount)
+      }
+      lastError.value = error instanceof Error ? error.message : String(error)
+      throw error
     } finally {
       operationAccountId.value = null
     }

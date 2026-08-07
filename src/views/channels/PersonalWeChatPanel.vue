@@ -79,7 +79,7 @@ function startStatusPolling(): void {
   stopStatusPolling()
   if (!props.active) return
   statusTimer = setInterval(() => {
-    if (store.loading || store.mutating) return
+    if (store.loading || store.mutating || store.operationAccountId) return
     void store.refresh().catch(() => {})
   }, 20_000)
 }
@@ -323,21 +323,23 @@ onUnmounted(() => { stopStatusPolling(); stopPolling() })
 
           <NCard size="small" :title="t('pages.channels.personalWechat.manageTitle')" embedded>
             <template #header-extra>
-              <NButton size="small" :loading="store.loading" @click="handleRefresh">
-                <template #icon><NIcon :component="RefreshOutline" /></template>
-                {{ t('common.refresh') }}
-              </NButton>
-              <NButton
-                v-if="canManage"
-                size="small"
-                type="primary"
-                :disabled="!store.pluginReady || onboardingActive"
-                :title="!canManage ? readOnlyHint : undefined"
-                @click="openOnboarding"
-              >
-                <template #icon><NIcon :component="AddOutline" /></template>
-                {{ t('pages.channels.personalWechat.add') }}
-              </NButton>
+              <NSpace :size="12">
+                <NButton size="small" :loading="store.loading" @click="handleRefresh">
+                  <template #icon><NIcon :component="RefreshOutline" /></template>
+                  {{ t('common.refresh') }}
+                </NButton>
+                <NButton
+                  v-if="canManage"
+                  size="small"
+                  type="primary"
+                  :disabled="!store.pluginReady || onboardingActive"
+                  :title="!canManage ? readOnlyHint : undefined"
+                  @click="openOnboarding"
+                >
+                  <template #icon><NIcon :component="AddOutline" /></template>
+                  {{ t('pages.channels.personalWechat.add') }}
+                </NButton>
+              </NSpace>
             </template>
 
             <NAlert type="info" :bordered="false" style="margin-bottom: 12px;">
@@ -640,6 +642,12 @@ onUnmounted(() => { stopStatusPolling(); stopPolling() })
   border-radius: 8px;
   background: white;
   padding: 8px;
+}
+
+.personal-wechat-modal {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
 }
 
 @media (max-width: 640px) {

@@ -58,6 +58,7 @@ export default {
     httpsWsBlocked: '当前页面为 HTTPS，浏览器会拦截 ws:// WebSocket。请改用 wss:// 地址，或使用 SSH 隧道后连接 ws://127.0.0.1:18789。',
     logout: '退出登录',
     refresh: '刷新',
+    loading: '读取中',
     refreshSuccess: '刷新成功',
     save: '保存',
     saveFailed: '保存失败',

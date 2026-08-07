@@ -93,6 +93,7 @@ const message = useMessage()
 const { t } = useI18n()
 
 const expandedChannelKeys = ref<string[]>([])
+const initialLoadPending = ref(true)
 const feishuAppName = ref(`${platformBranding.productShortZh} 智能助手`)
 let feishuOnboardingTimer: ReturnType<typeof setInterval> | null = null
 const dmPolicyOptions = computed(() => [
@@ -251,11 +252,10 @@ function hasSecretUpdate(channelKey: string, field: string): boolean {
   return channelStore.hasSecretUpdate({ channelKey, field })
 }
 
-function refreshExpandedPanels(): void {
-  expandedChannelKeys.value = [
-    ...channelCards.value.map((card) => card.channelKey),
-    'personal-wechat',
-  ]
+function expandChannel(channelKey: string): void {
+  if (!expandedChannelKeys.value.includes(channelKey)) {
+    expandedChannelKeys.value = [...expandedChannelKeys.value, channelKey]
+  }
 }
 
 function stopFeishuOnboardingPolling(): void {
@@ -271,7 +271,6 @@ async function handleFeishuOnboardingUpdate(): Promise<void> {
 
     if (session.status === 'configured') {
       await channelStore.refreshAll()
-      refreshExpandedPanels()
       message.success(t('pages.channels.feishuOnboarding.configured'))
       return
     }
@@ -319,7 +318,7 @@ function createChannelConfig(meta: ChannelCard): void {
   // 新建草稿默认停用，避免凭据尚未补齐时保存并应用后触发运行时错误。
   channelStore.setChannelField(channelKey, 'enabled', false)
   if (['feishu', 'dingtalk', 'wecom'].includes(meta.key)) channelStore.setChannelField(channelKey, 'dmPolicy', 'open')
-  refreshExpandedPanels()
+  expandChannel(channelKey)
   message.success(t('pages.channels.configDraftCreated', { channel: meta.label || meta.key }))
 }
 
@@ -328,9 +327,6 @@ async function handleRefresh(): Promise<void> {
     channelStore.refreshAll(),
     personalWechatStore.refresh(),
   ])
-  if (channelsResult.status === 'fulfilled') {
-    refreshExpandedPanels()
-  }
   if (channelsResult.status === 'rejected' || personalWechatResult.status === 'rejected') {
     message.error(t('pages.channels.refreshFailed'))
   }
@@ -363,7 +359,9 @@ async function handleSaveChannel(card: ChannelCard): Promise<void> {
 }
 
 onMounted(() => {
-  handleRefresh()
+  void handleRefresh().finally(() => {
+    initialLoadPending.value = false
+  })
 })
 
 onUnmounted(() => {
@@ -376,7 +374,12 @@ onUnmounted(() => {
     <NCard :title="t('pages.channels.title')" class="channel-root-card">
       <template #header-extra>
         <NSpace :size="10" class="toolbar-actions">
-          <NButton size="small" class="toolbar-btn toolbar-btn--refresh" @click="handleRefresh">
+          <NButton
+            size="small"
+            class="toolbar-btn toolbar-btn--refresh"
+            :loading="channelStore.loading || personalWechatStore.loading"
+            @click="handleRefresh"
+          >
             <template #icon><NIcon :component="RefreshOutline" /></template>
             {{ t('common.refresh') }}
           </NButton>
@@ -401,7 +404,7 @@ onUnmounted(() => {
           {{ channelStore.lastError }}
         </NAlert>
 
-        <NSpin :show="channelStore.loading || channelStore.applying">
+        <NSpin :show="channelStore.applying">
           <NCollapse v-model:expanded-names="expandedChannelKeys">
             <NCollapseItem
               v-for="card in channelCards"
@@ -416,18 +419,18 @@ onUnmounted(() => {
                   <NText strong>{{ card.label }}</NText>
                   <NText depth="3" class="channel-key-text">{{ card.channelKey }}</NText>
                   <NTag
-                    :type="pluginStatusType(card)"
+                    :type="initialLoadPending ? 'default' : pluginStatusType(card)"
                     size="small"
                     :bordered="false"
                   >
-                    {{ pluginStatusLabel(card) }}
+                    {{ initialLoadPending ? t('common.loading') : pluginStatusLabel(card) }}
                   </NTag>
                   <NTag
-                    :type="card.configured ? 'success' : 'default'"
+                    :type="!initialLoadPending && card.configured ? 'success' : 'default'"
                     size="small"
                     :bordered="false"
                   >
-                    {{ card.configured ? t('pages.channels.configured') : t('pages.channels.notConfigured') }}
+                    {{ initialLoadPending ? t('common.loading') : (card.configured ? t('pages.channels.configured') : t('pages.channels.notConfigured')) }}
                   </NTag>
                 </NSpace>
               </template>
@@ -663,11 +666,11 @@ onUnmounted(() => {
                   <span class="channel-brand channel-brand--weixin"><FontAwesomeIcon :icon="faWeixin" /></span>
                   <NText strong>{{ t('pages.channels.personalWechat.title') }}</NText>
                   <NText depth="3" class="channel-key-text">weixin</NText>
-                  <NTag :type="personalWechatPluginType" size="small" :bordered="false">
-                    {{ personalWechatPluginLabel }}
+                  <NTag :type="initialLoadPending ? 'default' : personalWechatPluginType" size="small" :bordered="false">
+                    {{ initialLoadPending ? t('common.loading') : personalWechatPluginLabel }}
                   </NTag>
-                  <NTag :type="personalWechatStore.channelConfigured ? 'success' : 'default'" size="small" :bordered="false">
-                    {{ personalWechatStore.channelConfigured ? t('pages.channels.configured') : t('pages.channels.notConfigured') }}
+                  <NTag :type="!initialLoadPending && personalWechatStore.channelConfigured ? 'success' : 'default'" size="small" :bordered="false">
+                    {{ initialLoadPending ? t('common.loading') : (personalWechatStore.channelConfigured ? t('pages.channels.configured') : t('pages.channels.notConfigured')) }}
                   </NTag>
                 </NSpace>
               </template>

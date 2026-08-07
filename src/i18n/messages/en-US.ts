@@ -58,6 +58,7 @@ export default {
     httpsWsBlocked: 'This page is HTTPS. Browsers block ws:// WebSocket. Use wss://, or connect via an SSH tunnel to ws://127.0.0.1:18789.',
     logout: 'Log out',
     refresh: 'Refresh',
+    loading: 'Loading',
     refreshSuccess: 'Refreshed successfully',
     save: 'Save',
     saveFailed: 'Save failed',
