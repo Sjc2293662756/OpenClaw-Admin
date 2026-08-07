@@ -100,21 +100,25 @@ install -d -o netinside -g netinside -m 0700 "$remote_dir"
 chown -R netinside:netinside "$remote_dir"
 chmod 0600 "$remote_dir/adapter.mjs" "$remote_dir/worker.mjs"
 
-if [ ! -s "$remote_dir/adapter.env" ]; then
+if ! grep -Eq '^GAIOP_WEIXIN_ADAPTER_TOKEN=.+$' "$remote_dir/adapter.env" 2>/dev/null; then
   token=$(openssl rand -hex 24)
-  cat > "$remote_dir/adapter.env" <<EOF
-GAIOP_WEIXIN_ADAPTER_PORT=19091
-GAIOP_WEIXIN_ADAPTER_TOKEN=$token
-EOF
+  if [ -f "$remote_dir/adapter.env" ]; then
+    sed -i '/^GAIOP_WEIXIN_ADAPTER_TOKEN=/d' "$remote_dir/adapter.env"
+  else
+    printf 'GAIOP_WEIXIN_ADAPTER_PORT=19091\\n' > "$remote_dir/adapter.env"
+  fi
+  printf 'GAIOP_WEIXIN_ADAPTER_TOKEN=%s\\n' "$token" >> "$remote_dir/adapter.env"
   chown netinside:netinside "$remote_dir/adapter.env"
   chmod 0600 "$remote_dir/adapter.env"
 fi
 
 token=$(grep '^GAIOP_WEIXIN_ADAPTER_TOKEN=' "$remote_dir/adapter.env" | cut -d= -f2-)
+test -n "$token"
 
 if [ -f /etc/gaiop/admin.env ]; then
-  grep -qx 'PERSONAL_WECHAT_ADAPTER_URL=http://127.0.0.1:19091' /etc/gaiop/admin.env || printf 'PERSONAL_WECHAT_ADAPTER_URL=http://127.0.0.1:19091\\n' >> /etc/gaiop/admin.env
-  grep -qx "PERSONAL_WECHAT_ADAPTER_TOKEN=$token" /etc/gaiop/admin.env || printf 'PERSONAL_WECHAT_ADAPTER_TOKEN=%s\\n' "$token" >> /etc/gaiop/admin.env
+  sed -i '/^PERSONAL_WECHAT_ADAPTER_URL=/d; /^PERSONAL_WECHAT_ADAPTER_TOKEN=/d' /etc/gaiop/admin.env
+  printf 'PERSONAL_WECHAT_ADAPTER_URL=http://127.0.0.1:19091\\n' >> /etc/gaiop/admin.env
+  printf 'PERSONAL_WECHAT_ADAPTER_TOKEN=%s\\n' "$token" >> /etc/gaiop/admin.env
 fi
 
 runuser -u netinside -- env HOME="$home" PATH="$home/.npm-global/bin:/usr/local/bin:/usr/bin:/bin" XDG_RUNTIME_DIR=/run/user/1000 systemctl --user daemon-reload

@@ -54,6 +54,7 @@ export function createPersonalWechatOnboarding({
   ttlMs = DEFAULT_TTL_MS,
   retentionMs = DEFAULT_RETENTION_MS,
   onConnected,
+  onFailed,
 } = {}) {
   if (!runtime || !metadataStore) throw new Error('Personal WeChat onboarding dependencies are required')
   const sessions = new Map()
@@ -82,14 +83,39 @@ export function createPersonalWechatOnboarding({
       error.code = 'PERSONAL_WECHAT_ACCOUNT_ID_MISSING'
       throw error
     }
-    const account = metadataStore.saveLinkedAccount({
-      accountId: snapshot.accountId,
-      displayName: session.displayName,
-      note: session.note,
-      wechatId: snapshot.wechatId,
-      nickname: snapshot.nickname,
-      actorId: session.ownerId,
-    })
+    let existing = null
+    let metadataReadable = false
+    let account
+    try {
+      existing = metadataStore.get(snapshot.accountId)
+      metadataReadable = true
+      account = metadataStore.saveLinkedAccount({
+        accountId: snapshot.accountId,
+        displayName: session.displayName,
+        note: session.note,
+        wechatId: snapshot.wechatId,
+        nickname: snapshot.nickname,
+        actorId: session.ownerId,
+      })
+    } catch {
+      if (metadataReadable && !existing) {
+        try {
+          await runtime.deleteAccount(snapshot.accountId)
+        } catch {
+          const error = new Error('个人微信登录已完成，但管理信息保存和运行时补偿均失败')
+          error.code = 'PERSONAL_WECHAT_ACCOUNT_STATE_INCONSISTENT'
+          throw error
+        }
+      }
+      if (!metadataReadable) {
+        const error = new Error('个人微信登录已完成，但管理信息状态无法确认')
+        error.code = 'PERSONAL_WECHAT_ACCOUNT_STATE_INCONSISTENT'
+        throw error
+      }
+      const error = new Error('个人微信管理信息保存失败')
+      error.code = 'PERSONAL_WECHAT_METADATA_SAVE_FAILED'
+      throw error
+    }
     session.status = 'success'
     session.accountId = account.accountId
     session.wechatId = account.wechatId
@@ -101,6 +127,23 @@ export function createPersonalWechatOnboarding({
       await onConnected?.({ actor: session.actor, account, sessionId: session.id })
     } catch {
       // A successful plugin login and metadata write must not be rolled back by audit failure.
+    }
+  }
+
+  function failSession(session, errorCode) {
+    session.status = 'failed'
+    session.errorCode = errorCode
+    session.completedAt = now()
+    clearQrArtifacts(session)
+    try {
+      onFailed?.({
+        actor: session.actor,
+        displayName: session.displayName,
+        sessionId: session.id,
+        errorCode,
+      })
+    } catch {
+      // Audit notification must not replace the original onboarding failure.
     }
   }
 
@@ -137,10 +180,7 @@ export function createPersonalWechatOnboarding({
         expireSession(session)
         break
       case 'failed':
-        session.status = 'failed'
-        session.errorCode = 'PERSONAL_WECHAT_LOGIN_FAILED'
-        session.completedAt = now()
-        clearQrArtifacts(session)
+        failSession(session, 'PERSONAL_WECHAT_LOGIN_FAILED')
         break
       case 'canceled':
         session.status = 'cancelled'
@@ -167,10 +207,7 @@ export function createPersonalWechatOnboarding({
       } catch (error) {
         if (error?.code === 'PERSONAL_WECHAT_RUNTIME_TIMEOUT' && session.expiresAt > now()) continue
         if (!TERMINAL_STATUSES.has(session.status)) {
-          session.status = 'failed'
-          session.errorCode = safeRuntimeErrorCode(error)
-          session.completedAt = now()
-          clearQrArtifacts(session)
+          failSession(session, safeRuntimeErrorCode(error))
         }
         return
       }
@@ -220,10 +257,7 @@ export function createPersonalWechatOnboarding({
       await applySnapshot(session, snapshot)
       startWaitLoop(session)
     } catch (error) {
-      session.status = 'failed'
-      session.errorCode = safeRuntimeErrorCode(error)
-      session.completedAt = now()
-      clearQrArtifacts(session)
+      failSession(session, safeRuntimeErrorCode(error))
     }
     return publicSession(session)
   }

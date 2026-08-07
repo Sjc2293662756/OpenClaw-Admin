@@ -27,6 +27,7 @@ describe('personal WeChat account store', () => {
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({
       ok: true,
       plugin: { installed: true, available: true, version: '2.4.6' },
+      channel: { configured: true, enabled: true },
       accounts: [
         {
           accountId: 'account-a', displayName: '杨硕微信', note: '本人', nickname: '杨硕',
@@ -43,6 +44,8 @@ describe('personal WeChat account store', () => {
     await store.refresh()
 
     expect(store.plugin).toEqual({ installed: true, available: true, version: '2.4.6', reasonCode: undefined })
+    expect(store.channel).toEqual({ configured: true, enabled: true })
+    expect(store.channelConfigured).toBe(true)
     expect(store.accounts).toEqual([
       {
         accountId: 'account-a', displayName: '杨硕微信', note: '本人', nickname: '杨硕',
@@ -161,5 +164,40 @@ describe('personal WeChat account store', () => {
 
     await expect(store.refresh()).rejects.toThrow('WEIXIN_UNAVAILABLE')
     expect(store.lastError).not.toContain('must-not-surface')
+  })
+
+  it('keeps channel state unknown when the unified status response cannot provide it', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      plugin: { installed: true, available: true },
+      accounts: [],
+    }))
+    const store = usePersonalWechatStore()
+
+    await store.refresh()
+
+    expect(store.channel).toEqual({ configured: false, enabled: null })
+  })
+
+  it('updates the channel through the personal WeChat status boundary', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ ok: true, enabled: false }))
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        plugin: { installed: true, available: true },
+        channel: { configured: true, enabled: false },
+        accounts: [{ accountId: 'account-a', displayName: 'A', enabled: false, status: 'disabled' }],
+      }))
+    const store = usePersonalWechatStore()
+
+    await store.setChannelEnabled(false)
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      '/api/channels/personal-wechat/channel-enabled',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify({ enabled: false }) }),
+    )
+    expect(store.channel.enabled).toBe(false)
+    expect(store.accounts[0]?.status).toBe('disabled')
   })
 })

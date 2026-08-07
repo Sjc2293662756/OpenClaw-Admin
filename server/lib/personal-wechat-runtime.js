@@ -47,7 +47,7 @@ function safeAccount(value) {
     nickname: safeString(row.nickname, 128) || undefined,
     enabled: row.enabled !== false,
     configured: row.configured === true,
-    running: row.running === true,
+    running: typeof row.running === 'boolean' ? row.running : undefined,
     lastErrorCode,
     lastEventAt: safeOptionalTimestamp(row.lastEventAt),
     lastInboundAt: safeOptionalTimestamp(row.lastInboundAt),
@@ -155,6 +155,7 @@ export function createPersonalWechatRuntime({
     return {
       available: row.available === true,
       version: safeString(row.version, 80) || undefined,
+      channelEnabled: typeof row.channelEnabled === 'boolean' ? row.channelEnabled : undefined,
       accounts: Array.isArray(row.accounts) ? row.accounts.map(safeAccount).filter(Boolean) : [],
     }
   }

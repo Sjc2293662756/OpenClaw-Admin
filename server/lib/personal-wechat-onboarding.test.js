@@ -137,3 +137,42 @@ test('personal WeChat onboarding accepts a verification code only for its owning
     db.close()
   }
 })
+
+test('personal WeChat onboarding removes a newly linked runtime account when metadata persistence fails', async () => {
+  const deleted = []
+  const failures = []
+  const runtime = {
+    async startQr() {
+      return {
+        loginId: 'private-login-failure',
+        status: 'connected',
+        accountId: 'wx-account-orphan',
+        wechatId: 'wx-user-orphan',
+      }
+    },
+    async deleteAccount(accountId) {
+      deleted.push(accountId)
+      return { accountId, deleted: true }
+    },
+  }
+  const metadataStore = {
+    get: () => null,
+    saveLinkedAccount: () => { throw new Error('simulated database failure') },
+  }
+  const onboarding = createPersonalWechatOnboarding({
+    runtime,
+    metadataStore,
+    onFailed: (failure) => failures.push(failure),
+  })
+
+  const result = await onboarding.start({
+    ownerId: 'admin-one',
+    actor: { id: 'admin-one', username: 'admin', role: 'admin' },
+    displayName: '失败补偿测试',
+  })
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.errorCode, 'PERSONAL_WECHAT_METADATA_SAVE_FAILED')
+  assert.deepEqual(deleted, ['wx-account-orphan'])
+  assert.equal(failures[0].errorCode, 'PERSONAL_WECHAT_METADATA_SAVE_FAILED')
+})

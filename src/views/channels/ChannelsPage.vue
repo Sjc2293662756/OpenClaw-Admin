@@ -92,7 +92,7 @@ const { canManageSecurity, readOnlyHint } = usePermissions()
 const message = useMessage()
 const { t } = useI18n()
 
-const expandedChannelKeys = ref<string[]>(['personal-wechat'])
+const expandedChannelKeys = ref<string[]>([])
 const feishuAppName = ref(`${platformBranding.productShortZh} 智能助手`)
 let feishuOnboardingTimer: ReturnType<typeof setInterval> | null = null
 const dmPolicyOptions = computed(() => [
@@ -252,7 +252,10 @@ function hasSecretUpdate(channelKey: string, field: string): boolean {
 }
 
 function refreshExpandedPanels(): void {
-  expandedChannelKeys.value = channelCards.value.map((card) => card.channelKey)
+  expandedChannelKeys.value = [
+    ...channelCards.value.map((card) => card.channelKey),
+    'personal-wechat',
+  ]
 }
 
 function stopFeishuOnboardingPolling(): void {
@@ -321,13 +324,16 @@ function createChannelConfig(meta: ChannelCard): void {
 }
 
 async function handleRefresh(): Promise<void> {
-  try {
-    await channelStore.refreshAll()
+  const [channelsResult, personalWechatResult] = await Promise.allSettled([
+    channelStore.refreshAll(),
+    personalWechatStore.refresh(),
+  ])
+  if (channelsResult.status === 'fulfilled') {
     refreshExpandedPanels()
-  } catch {
+  }
+  if (channelsResult.status === 'rejected' || personalWechatResult.status === 'rejected') {
     message.error(t('pages.channels.refreshFailed'))
   }
-  void personalWechatStore.refresh().catch(() => {})
 }
 
 async function handleSave(applyAfterSave = false): Promise<void> {
@@ -660,12 +666,16 @@ onUnmounted(() => {
                   <NTag :type="personalWechatPluginType" size="small" :bordered="false">
                     {{ personalWechatPluginLabel }}
                   </NTag>
-                  <NTag :type="personalWechatStore.pluginReady ? 'success' : 'default'" size="small" :bordered="false">
-                    {{ personalWechatStore.pluginReady ? t('pages.channels.configured') : t('pages.channels.notConfigured') }}
+                  <NTag :type="personalWechatStore.channelConfigured ? 'success' : 'default'" size="small" :bordered="false">
+                    {{ personalWechatStore.channelConfigured ? t('pages.channels.configured') : t('pages.channels.notConfigured') }}
                   </NTag>
                 </NSpace>
               </template>
-              <PersonalWeChatPanel :can-manage="canManageSecurity" :read-only-hint="readOnlyHint" />
+              <PersonalWeChatPanel
+                :can-manage="canManageSecurity"
+                :active="expandedChannelKeys.includes('personal-wechat')"
+                :read-only-hint="readOnlyHint"
+              />
             </NCollapseItem>
           </NCollapse>
         </NSpin>

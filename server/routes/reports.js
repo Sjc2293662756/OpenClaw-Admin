@@ -67,6 +67,45 @@ function safeText(value) {
   return text || null
 }
 
+function personalWechatAccountIdFromSessionKey(sessionKey) {
+  const parts = String(sessionKey || '').split(':')
+  const channelIndex = parts.findIndex((part) => ['openclaw-weixin', 'weixin'].includes(part.toLowerCase()))
+  if (channelIndex < 0) return null
+  const accountId = safeText(parts[channelIndex + 1])
+  const peerKind = String(parts[channelIndex + 2] || '').toLowerCase()
+  if (!accountId || !['direct', 'group'].includes(peerKind)) return null
+  return accountId
+}
+
+function enrichPersonalWechatAccountNames(db, rows) {
+  if (!rows.some((row) => String(row.source_channel || '').toLowerCase() === 'openclaw-weixin')) return
+  const namesByAccountId = new Map()
+  const namesByWechatId = new Map()
+  try {
+    const accounts = db.prepare(
+      'SELECT account_id, display_name, wechat_user_id FROM personal_wechat_accounts',
+    ).all()
+    for (const account of accounts) {
+      const displayName = safeText(account.display_name)
+      if (!displayName) continue
+      const accountId = String(account.account_id || '').toLowerCase()
+      const wechatId = String(account.wechat_user_id || '').toLowerCase()
+      if (accountId) namesByAccountId.set(accountId, displayName)
+      if (wechatId) namesByWechatId.set(wechatId, displayName)
+    }
+  } catch {
+    // The personal WeChat metadata table may be absent on older databases.
+    return
+  }
+  for (const row of rows) {
+    if (String(row.source_channel || '').toLowerCase() !== 'openclaw-weixin' || row.source_channel_user_name) continue
+    const accountId = personalWechatAccountIdFromSessionKey(row.source_session_id)
+    const name = namesByAccountId.get(String(accountId || '').toLowerCase())
+      || namesByWechatId.get(String(row.source_channel_user_id || '').toLowerCase())
+    if (name) row.source_channel_user_name = name
+  }
+}
+
 // Keep this derivation aligned with GAIOP ReportStorageService. The value is
 // used only to verify a controlled archive directory; the database continues
 // to retain the original trusted source ID for access control.
@@ -434,31 +473,9 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
         ${where}
         ORDER BY report_files.created_at DESC
       `).all(...values)
-      // Personal WeChat reports carry the peer WeChat id as the channel user.
-      // Surface the GAIOP-entered account name (display_name) as the source
-      // channel user so the report manager shows "个人微信 · 账户名称".
-      const personalWechatNames = new Map()
-      try {
-        if (rows.some((row) => String(row.source_channel || '').toLowerCase() === 'openclaw-weixin')) {
-          const accounts = db.prepare(
-            'SELECT display_name, wechat_user_id FROM personal_wechat_accounts WHERE wechat_user_id IS NOT NULL',
-          ).all()
-          for (const account of accounts) {
-            const normalized = String(account.wechat_user_id || '').toLowerCase()
-            if (normalized && typeof account.display_name === 'string' && account.display_name.trim()) {
-              personalWechatNames.set(normalized, account.display_name.trim())
-            }
-          }
-        }
-      } catch {
-        // The personal WeChat metadata table may be absent on older databases.
-      }
-      for (const row of rows) {
-        if (String(row.source_channel || '').toLowerCase() === 'openclaw-weixin' && !row.source_channel_user_name) {
-          const name = personalWechatNames.get(String(row.source_channel_user_id || '').toLowerCase())
-          if (name) row.source_channel_user_name = name
-        }
-      }
+      // The channel-user field is the contact/peer. Resolve the logged-in
+      // account from the per-account session key before applying its GAIOP name.
+      enrichPersonalWechatAccountNames(db, rows)
       const deliveries = db.prepare(`
         SELECT *
         FROM report_deliveries
@@ -535,4 +552,6 @@ export const __test__ = {
   resolveStoredReportPath,
   syncGeneratedReports,
   syncReportDeliveries,
+  personalWechatAccountIdFromSessionKey,
+  enrichPersonalWechatAccountNames,
 }

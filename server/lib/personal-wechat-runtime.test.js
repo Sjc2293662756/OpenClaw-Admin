@@ -32,6 +32,7 @@ test('personal WeChat runtime calls only the local loopback adapter surface', as
       return jsonResponse(200, {
         available: true,
         version: '2.4.4',
+        channelEnabled: false,
         accounts: [{
           accountId: 'wx-account-one',
           userId: 'wx-user-one',
@@ -77,6 +78,8 @@ test('personal WeChat runtime calls only the local loopback adapter surface', as
 
   const status = await runtime.getStatus()
   assert.equal(status.available, true)
+  assert.equal(status.channelEnabled, false)
+  assert.equal(status.accounts[0].running, undefined)
   assert.equal(status.accounts[0].lastErrorCode, undefined)
   assert.equal(JSON.stringify(status).includes('must-not-leak'), false)
 

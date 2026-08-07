@@ -295,3 +295,27 @@ test('report list failures remain JSON responses', async () => {
     else process.env.GAIOP_REPORTS_DIR = previousRoot
   }
 })
+
+test('personal WeChat report names are resolved from the logged-in account segment, not the peer id', async () => {
+  const { __test__ } = await import(`./reports.js?personal-wechat-name-test=${Date.now()}-${Math.random()}`)
+  const rows = [{
+    source_channel: 'openclaw-weixin',
+    source_session_id: 'agent:main:openclaw-weixin:account-a:direct:peer-contact',
+    source_channel_user_id: 'peer-contact',
+    source_channel_user_name: null,
+  }]
+  const db = {
+    prepare(sql) {
+      assert.match(sql, /account_id/)
+      return {
+        all: () => [{ account_id: 'account-a', display_name: '售后微信', wechat_user_id: 'logged-in-wechat-id' }],
+      }
+    },
+  }
+
+  __test__.enrichPersonalWechatAccountNames(db, rows)
+
+  assert.equal(__test__.personalWechatAccountIdFromSessionKey(rows[0].source_session_id), 'account-a')
+  assert.equal(rows[0].source_channel_user_name, '售后微信')
+  assert.notEqual(rows[0].source_channel_user_id, 'logged-in-wechat-id')
+})

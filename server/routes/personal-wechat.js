@@ -32,6 +32,19 @@ function sendSafeRuntimeError(res, error, fallbackCode, fallbackMessage) {
   return sendError(res, { status: errorStatus(code), code, message: fallbackMessage })
 }
 
+function recordOperationAudit(recordAudit, req, action, target, detail, {
+  result = 'success',
+  errorCode,
+} = {}) {
+  recordAudit?.(req.user, action, target, detail, {
+    req,
+    category: 'operation',
+    result,
+    source: 'rest',
+    errorCode,
+  })
+}
+
 function runtimeAccountStatus(runtimeAccount, metadata, runtimeAvailable) {
   const enabled = runtimeAccount ? runtimeAccount.enabled : metadata?.enabled !== false
   if (!enabled) return { status: 'disabled' }
@@ -133,6 +146,7 @@ export function createPersonalWechatRouter({
       accounts: Array.from(runtimeMap.values()),
       available: snapshot.available,
       version: snapshot.version,
+      channelEnabled: snapshot.channelEnabled,
     }
   }
   const onboarding = injectedOnboarding || createPersonalWechatOnboarding({
@@ -144,6 +158,29 @@ export function createPersonalWechatRouter({
         '完成个人微信扫码接入',
         account.accountId,
         `账户名称：${account.displayName}`,
+        {
+          category: 'operation',
+          result: 'success',
+          source: 'rest',
+          restMethod: 'POST',
+          restPath: '/api/channels/personal-wechat/onboarding',
+        },
+      )
+    },
+    onFailed: ({ actor, displayName, errorCode }) => {
+      recordAudit?.(
+        actor,
+        '个人微信扫码接入',
+        '频道管理',
+        `账户名称：${displayName}`,
+        {
+          category: 'operation',
+          result: 'failed',
+          source: 'rest',
+          restMethod: 'POST',
+          restPath: '/api/channels/personal-wechat/onboarding',
+          errorCode,
+        },
       )
     },
   })
@@ -151,9 +188,19 @@ export function createPersonalWechatRouter({
   router.use(noStore)
 
   router.get('/', adminMiddleware, async (_req, res) => {
-    const metadataAccounts = metadataStore.list()
+    let metadataAccounts
     try {
-      const { accounts: runtimeAccounts, available, version } = await loadAccountSnapshot()
+      metadataAccounts = metadataStore.list()
+    } catch {
+      return sendError(res, {
+        status: 503,
+        code: 'PERSONAL_WECHAT_METADATA_UNAVAILABLE',
+        message: '个人微信管理信息暂时无法读取',
+      })
+    }
+    try {
+      const { accounts: runtimeAccounts, available, version, channelEnabled } = await loadAccountSnapshot()
+      const accounts = mergeAccounts(metadataAccounts, runtimeAccounts, available)
       return sendOk(res, {
         plugin: {
           installed: true,
@@ -162,7 +209,11 @@ export function createPersonalWechatRouter({
           reason: available ? undefined : 'PERSONAL_WECHAT_PLUGIN_UNAVAILABLE',
           reasonCode: available ? undefined : 'PERSONAL_WECHAT_PLUGIN_UNAVAILABLE',
         },
-        accounts: mergeAccounts(metadataAccounts, runtimeAccounts, available),
+        channel: {
+          configured: accounts.length > 0,
+          enabled: typeof channelEnabled === 'boolean' ? channelEnabled : null,
+        },
+        accounts,
       })
     } catch (error) {
       const code = safeErrorCode(error, 'PERSONAL_WECHAT_RUNTIME_FAILED')
@@ -172,6 +223,10 @@ export function createPersonalWechatRouter({
           available: false,
           reason: code,
           reasonCode: code,
+        },
+        channel: {
+          configured: metadataAccounts.length > 0,
+          enabled: null,
         },
         accounts: mergeAccounts(metadataAccounts, [], false),
       })
@@ -186,14 +241,20 @@ export function createPersonalWechatRouter({
         displayName: req.body?.displayName,
         note: req.body?.note,
       })
-      recordAudit?.(
-        req.user,
+      if (session.status !== 'failed') recordOperationAudit(
+        recordAudit,
+        req,
         '启动个人微信扫码接入',
         '频道管理',
         `账户名称：${session.displayName}`,
       )
       return sendOk(res, { session })
     } catch (error) {
+      const code = safeErrorCode(error, 'PERSONAL_WECHAT_ONBOARDING_START_FAILED')
+      recordOperationAudit(recordAudit, req, '启动个人微信扫码接入', '频道管理', '', {
+        result: 'failed',
+        errorCode: code,
+      })
       return sendSafeRuntimeError(
         res,
         error,
@@ -223,15 +284,26 @@ export function createPersonalWechatRouter({
         code: req.body?.code,
       })
       if (!session) {
+        recordOperationAudit(recordAudit, req, '提交个人微信扫码验证', '频道管理', '扫码会话不存在或已过期', {
+          result: 'failed',
+          errorCode: 'PERSONAL_WECHAT_ONBOARDING_NOT_FOUND',
+        })
         return sendError(res, {
           status: 404,
           code: 'PERSONAL_WECHAT_ONBOARDING_NOT_FOUND',
           message: '个人微信扫码会话不存在或已过期',
         })
       }
-      recordAudit?.(req.user, '提交个人微信扫码验证', '频道管理', '未记录验证码内容')
+      if (session.status !== 'failed') {
+        recordOperationAudit(recordAudit, req, '提交个人微信扫码验证', '频道管理', '未记录验证码内容')
+      }
       return sendOk(res, { session })
     } catch (error) {
+      const code = safeErrorCode(error, 'PERSONAL_WECHAT_VERIFICATION_FAILED')
+      recordOperationAudit(recordAudit, req, '提交个人微信扫码验证', '频道管理', '未记录验证码内容', {
+        result: 'failed',
+        errorCode: code,
+      })
       return sendSafeRuntimeError(
         res,
         error,
@@ -245,15 +317,24 @@ export function createPersonalWechatRouter({
     try {
       const session = await onboarding.cancel({ id: req.params.id, ownerId: req.user.id })
       if (!session) {
+        recordOperationAudit(recordAudit, req, '取消个人微信扫码接入', '频道管理', '扫码会话不存在或已过期', {
+          result: 'failed',
+          errorCode: 'PERSONAL_WECHAT_ONBOARDING_NOT_FOUND',
+        })
         return sendError(res, {
           status: 404,
           code: 'PERSONAL_WECHAT_ONBOARDING_NOT_FOUND',
           message: '个人微信扫码会话不存在或已过期',
         })
       }
-      recordAudit?.(req.user, '取消个人微信扫码接入', '频道管理', '未保存二维码授权数据')
+      recordOperationAudit(recordAudit, req, '取消个人微信扫码接入', '频道管理', '未保存二维码授权数据')
       return sendOk(res, { session })
     } catch (error) {
+      const code = safeErrorCode(error, 'PERSONAL_WECHAT_ONBOARDING_CANCEL_FAILED')
+      recordOperationAudit(recordAudit, req, '取消个人微信扫码接入', '频道管理', '未保存二维码授权数据', {
+        result: 'failed',
+        errorCode: code,
+      })
       return sendSafeRuntimeError(
         res,
         error,
@@ -264,8 +345,25 @@ export function createPersonalWechatRouter({
   })
 
   router.put('/accounts/:accountId/enabled', adminMiddleware, async (req, res) => {
-    const existing = metadataStore.get(req.params.accountId)
+    let existing
+    try {
+      existing = metadataStore.get(req.params.accountId)
+    } catch {
+      recordOperationAudit(recordAudit, req, '修改个人微信账号状态', req.params.accountId, '管理信息读取失败', {
+        result: 'failed',
+        errorCode: 'PERSONAL_WECHAT_METADATA_UNAVAILABLE',
+      })
+      return sendError(res, {
+        status: 503,
+        code: 'PERSONAL_WECHAT_METADATA_UNAVAILABLE',
+        message: '个人微信管理信息暂时无法读取',
+      })
+    }
     if (!existing) {
+      recordOperationAudit(recordAudit, req, '修改个人微信账号状态', req.params.accountId, '账号不存在', {
+        result: 'failed',
+        errorCode: 'PERSONAL_WECHAT_ACCOUNT_NOT_FOUND',
+      })
       return sendError(res, {
         status: 404,
         code: 'PERSONAL_WECHAT_ACCOUNT_NOT_FOUND',
@@ -273,30 +371,71 @@ export function createPersonalWechatRouter({
       })
     }
     if (typeof req.body?.enabled !== 'boolean') {
+      recordOperationAudit(recordAudit, req, '修改个人微信账号状态', existing.accountId, '状态参数无效', {
+        result: 'failed',
+        errorCode: 'PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID',
+      })
       return sendError(res, {
         status: 400,
         code: 'PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID',
         message: '个人微信账号状态参数无效',
       })
     }
+    let runtimeChanged = false
     try {
       await runtime.setAccountEnabled(existing.accountId, req.body.enabled)
-      const saved = metadataStore.setEnabled(existing.accountId, req.body.enabled)
-      if (!saved) throw Object.assign(new Error('metadata update failed'), { code: 'PERSONAL_WECHAT_METADATA_UPDATE_FAILED' })
-      const { accounts: runtimeAccounts, available } = await loadAccountSnapshot()
+      runtimeChanged = true
+      let saved
+      try {
+        saved = metadataStore.setEnabled(existing.accountId, req.body.enabled)
+        if (!saved) throw new Error('metadata update returned no account')
+      } catch {
+        try {
+          await runtime.setAccountEnabled(existing.accountId, existing.enabled)
+          runtimeChanged = false
+        } catch {
+          throw Object.assign(new Error('runtime compensation failed'), {
+            code: 'PERSONAL_WECHAT_ACCOUNT_STATE_INCONSISTENT',
+          })
+        }
+        throw Object.assign(new Error('metadata update failed'), {
+          code: 'PERSONAL_WECHAT_METADATA_UPDATE_FAILED',
+        })
+      }
+
+      let runtimeAccounts = []
+      let available = false
+      try {
+        const snapshot = await loadAccountSnapshot()
+        runtimeAccounts = snapshot.accounts
+        available = snapshot.available
+      } catch {
+        // The state change succeeded. Return the saved metadata with an
+        // unavailable runtime status instead of turning success into a 5xx.
+      }
       const [account] = mergeAccounts([saved], runtimeAccounts, available)
         .filter((item) => item.accountId === existing.accountId)
       if (!account) {
         throw Object.assign(new Error('account snapshot missing'), { code: 'PERSONAL_WECHAT_ACCOUNT_STATE_FAILED' })
       }
-      recordAudit?.(
-        req.user,
+      recordOperationAudit(
+        recordAudit,
+        req,
         req.body.enabled ? '启用个人微信账号' : '停用个人微信账号',
         existing.accountId,
         `账户名称：${existing.displayName}`,
       )
       return sendOk(res, { account })
     } catch (error) {
+      const code = safeErrorCode(error, 'PERSONAL_WECHAT_ACCOUNT_STATE_FAILED')
+      recordOperationAudit(
+        recordAudit,
+        req,
+        req.body.enabled ? '启用个人微信账号' : '停用个人微信账号',
+        existing.accountId,
+        runtimeChanged ? '账号状态修改失败，运行时状态需重新核对' : '账号状态修改失败，运行时已回退或未变更',
+        { result: 'failed', errorCode: code },
+      )
       return sendSafeRuntimeError(
         res,
         error,
@@ -308,6 +447,10 @@ export function createPersonalWechatRouter({
 
   router.put('/channel-enabled', adminMiddleware, async (req, res) => {
     if (typeof req.body?.enabled !== 'boolean') {
+      recordOperationAudit(recordAudit, req, '修改个人微信渠道状态', '频道管理', '状态参数无效', {
+        result: 'failed',
+        errorCode: 'PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID',
+      })
       return sendError(res, {
         status: 400,
         code: 'PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID',
@@ -316,14 +459,24 @@ export function createPersonalWechatRouter({
     }
     try {
       const result = await runtime.setChannelEnabled(req.body.enabled)
-      recordAudit?.(
-        req.user,
+      recordOperationAudit(
+        recordAudit,
+        req,
         req.body.enabled ? '启用个人微信渠道' : '停用个人微信渠道',
         '频道管理',
         '渠道级启停同时作用于全部个人微信账号',
       )
       return sendOk(res, { enabled: result.enabled })
     } catch (error) {
+      const code = safeErrorCode(error, 'PERSONAL_WECHAT_CHANNEL_STATE_FAILED')
+      recordOperationAudit(
+        recordAudit,
+        req,
+        req.body.enabled ? '启用个人微信渠道' : '停用个人微信渠道',
+        '频道管理',
+        '渠道状态修改失败',
+        { result: 'failed', errorCode: code },
+      )
       return sendSafeRuntimeError(
         res,
         error,
@@ -334,26 +487,67 @@ export function createPersonalWechatRouter({
   })
 
   router.delete('/accounts/:accountId', adminMiddleware, async (req, res) => {
-    const existing = metadataStore.get(req.params.accountId)
+    let existing
+    try {
+      existing = metadataStore.get(req.params.accountId)
+    } catch {
+      recordOperationAudit(recordAudit, req, '删除个人微信账号', req.params.accountId, '管理信息读取失败', {
+        result: 'failed',
+        errorCode: 'PERSONAL_WECHAT_METADATA_UNAVAILABLE',
+      })
+      return sendError(res, {
+        status: 503,
+        code: 'PERSONAL_WECHAT_METADATA_UNAVAILABLE',
+        message: '个人微信管理信息暂时无法读取',
+      })
+    }
     if (!existing) {
+      recordOperationAudit(recordAudit, req, '删除个人微信账号', req.params.accountId, '账号不存在', {
+        result: 'failed',
+        errorCode: 'PERSONAL_WECHAT_ACCOUNT_NOT_FOUND',
+      })
       return sendError(res, {
         status: 404,
         code: 'PERSONAL_WECHAT_ACCOUNT_NOT_FOUND',
         message: '个人微信账号不存在',
       })
     }
+    let metadataRemoved = false
     try {
-      await runtime.deleteAccount(existing.accountId)
       const removed = metadataStore.deleteAccount(existing.accountId)
       if (!removed) throw Object.assign(new Error('metadata delete failed'), { code: 'PERSONAL_WECHAT_METADATA_DELETE_FAILED' })
-      recordAudit?.(
-        req.user,
+      metadataRemoved = true
+      try {
+        await runtime.deleteAccount(existing.accountId)
+      } catch (error) {
+        try {
+          metadataStore.restoreAccount(removed)
+          metadataRemoved = false
+        } catch {
+          throw Object.assign(new Error('metadata restore failed'), {
+            code: 'PERSONAL_WECHAT_ACCOUNT_STATE_INCONSISTENT',
+          })
+        }
+        throw error
+      }
+      recordOperationAudit(
+        recordAudit,
+        req,
         '删除个人微信账号',
         existing.accountId,
         `账户名称：${existing.displayName}；仅删除该账号，未卸载个人微信插件`,
       )
       return sendOk(res, { deleted: true, accountId: existing.accountId })
     } catch (error) {
+      const code = safeErrorCode(error, 'PERSONAL_WECHAT_ACCOUNT_DELETE_FAILED')
+      recordOperationAudit(
+        recordAudit,
+        req,
+        '删除个人微信账号',
+        existing.accountId,
+        metadataRemoved ? '删除失败，管理信息恢复失败' : '删除失败，管理信息已保留或恢复，可重试',
+        { result: 'failed', errorCode: code },
+      )
       return sendSafeRuntimeError(
         res,
         error,

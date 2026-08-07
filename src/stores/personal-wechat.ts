@@ -10,6 +10,11 @@ export type PersonalWechatPlugin = {
   reasonCode?: string
 }
 
+export type PersonalWechatChannel = {
+  configured: boolean
+  enabled: boolean | null
+}
+
 export type PersonalWechatAccountStatus = 'online' | 'offline' | 'disabled' | 'error' | 'unknown'
 
 export type PersonalWechatAccount = {
@@ -148,11 +153,13 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
   const mutating = ref(false)
   const operationAccountId = ref<string | null>(null)
   const plugin = ref<PersonalWechatPlugin>({ installed: false, available: false })
+  const channel = ref<PersonalWechatChannel>({ configured: false, enabled: null })
   const accounts = ref<PersonalWechatAccount[]>([])
   const onboarding = ref<PersonalWechatOnboardingSession | null>(null)
   const lastError = ref<string | null>(null)
 
   const pluginReady = computed(() => plugin.value.installed && plugin.value.available)
+  const channelConfigured = computed(() => channel.value.configured)
 
   function headers(json = false): Record<string, string> {
     const result: Record<string, string> = {
@@ -182,6 +189,11 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
     accounts.value = rows
       .map(normalizePersonalWechatAccount)
       .filter((account): account is PersonalWechatAccount => account !== null)
+    const channelRow = asRecord(result.channel)
+    channel.value = {
+      configured: channelRow.configured === true || accounts.value.length > 0,
+      enabled: typeof channelRow.enabled === 'boolean' ? channelRow.enabled : null,
+    }
   }
 
   async function refresh(): Promise<void> {
@@ -323,6 +335,32 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
     }
   }
 
+  async function setChannelEnabled(enabled: boolean): Promise<void> {
+    mutating.value = true
+    lastError.value = null
+    try {
+      const response = await fetch('/api/channels/personal-wechat/channel-enabled', {
+        method: 'PUT',
+        headers: headers(true),
+        body: JSON.stringify({ enabled }),
+      })
+      await parseResponse(
+        response,
+        fallbackMessage('个人微信渠道状态更新失败', 'Failed to update the Personal WeChat channel'),
+      )
+      channel.value = { ...channel.value, enabled }
+      accounts.value = accounts.value.map((account) => ({
+        ...account,
+        enabled,
+        status: enabled ? 'unknown' : 'disabled',
+        errorCode: undefined,
+      }))
+      await refresh().catch(() => {})
+    } finally {
+      mutating.value = false
+    }
+  }
+
   async function deleteAccount(accountId: string): Promise<void> {
     operationAccountId.value = accountId
     lastError.value = null
@@ -357,7 +395,9 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
     mutating,
     operationAccountId,
     plugin,
+    channel,
     pluginReady,
+    channelConfigured,
     accounts,
     onboarding,
     lastError,
@@ -367,6 +407,7 @@ export const usePersonalWechatStore = defineStore('personal-wechat', () => {
     verifyOnboarding,
     cancelOnboarding,
     setAccountEnabled,
+    setChannelEnabled,
     deleteAccount,
     clearOnboarding,
   }

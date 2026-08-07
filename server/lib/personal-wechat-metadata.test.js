@@ -78,8 +78,11 @@ test('personal WeChat metadata keeps distinct accounts isolated and only replace
 
     assert.equal(store.setEnabled('wx-account-one', false).enabled, false)
     assert.equal(store.get('wx-account-two').enabled, true)
-    assert.equal(store.deleteAccount('wx-account-one').accountId, 'wx-account-one')
+    const removed = store.deleteAccount('wx-account-one')
+    assert.equal(removed.accountId, 'wx-account-one')
     assert.equal(store.get('wx-account-one'), null)
+    assert.equal(store.restoreAccount(removed).enabled, false)
+    assert.equal(store.get('wx-account-one').createdAt, removed.createdAt)
     assert.equal(store.get('wx-account-two').accountId, 'wx-account-two')
   } finally {
     db.close()

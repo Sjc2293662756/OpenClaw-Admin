@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
   NCard,
-  NCollapse,
-  NCollapseItem,
   NEmpty,
   NForm,
   NFormItem,
@@ -27,10 +25,7 @@ import {
   RefreshOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
-import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
-import { faWeixin } from '@fortawesome/free-brands-svg-icons'
 import { useI18n } from 'vue-i18n'
-import { useAuthStore } from '@/stores/auth'
 import {
   usePersonalWechatStore,
   type PersonalWechatAccount,
@@ -44,11 +39,11 @@ import {
 
 const props = defineProps<{
   canManage: boolean
+  active: boolean
   readOnlyHint?: string
 }>()
 
 const store = usePersonalWechatStore()
-const authStore = useAuthStore()
 const message = useMessage()
 const { t } = useI18n()
 
@@ -58,8 +53,8 @@ const note = ref('')
 const verificationCode = ref('')
 const polling = ref(false)
 const notifiedTerminalSessionId = ref<string | null>(null)
-const launchEnabled = ref(true)
-const launchDraft = ref(true)
+const launchEnabled = ref<boolean | null>(null)
+const launchDraft = ref(false)
 const launchSaving = ref(false)
 let onboardingTimer: ReturnType<typeof setInterval> | null = null
 let statusTimer: ReturnType<typeof setInterval> | null = null
@@ -82,6 +77,7 @@ function stopStatusPolling(): void {
 
 function startStatusPolling(): void {
   stopStatusPolling()
+  if (!props.active) return
   statusTimer = setInterval(() => {
     if (store.loading || store.mutating) return
     void store.refresh().catch(() => {})
@@ -127,47 +123,20 @@ function startPolling(): void {
 
 async function handleRefresh(): Promise<void> {
   try {
-    await Promise.all([store.refresh(), loadLaunchState()])
+    await store.refresh()
   } catch {
     message.error(t('pages.channels.personalWechat.messages.loadFailed'))
   }
 }
 
-async function loadLaunchState(): Promise<void> {
-  try {
-    const response = await fetch('/api/channels/config', {
-      headers: { Authorization: `Bearer ${authStore.getToken() || ''}` },
-    })
-    const result = await response.json().catch(() => ({}))
-    const config = (result as Record<string, unknown>).config as Record<string, unknown> | undefined
-    const weixin = (config?.channels as Record<string, unknown> | undefined)?.['openclaw-weixin'] as Record<string, unknown> | undefined
-    if (weixin) {
-      launchEnabled.value = weixin.enabled !== false
-      launchDraft.value = weixin.enabled !== false
-    }
-  } catch {
-    // Keep the current value when the config endpoint is temporarily unavailable.
-  }
-}
-
 async function handleSaveLaunch(): Promise<void> {
-  if (launchSaving.value) return
+  if (launchSaving.value || launchEnabled.value === null) return
   const previous = launchEnabled.value
   const target = launchDraft.value
   launchSaving.value = true
   try {
-    const response = await fetch('/api/channels/personal-wechat/channel-enabled', {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${authStore.getToken() || ''}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ enabled: target }),
-    })
-    const result = await response.json().catch(() => ({}))
-    if (!response.ok || (result as Record<string, unknown>).ok !== true) throw new Error('failed')
+    await store.setChannelEnabled(target)
     launchEnabled.value = target
-    await store.refresh()
     message.success(target
       ? t('pages.channels.personalWechat.messages.launchEnabled')
       : t('pages.channels.personalWechat.messages.launchDisabled'))
@@ -285,8 +254,26 @@ function formatExpiry(value?: number): string {
   return new Date(value).toLocaleTimeString()
 }
 
-  onMounted(() => { void handleRefresh().finally(startStatusPolling) })
-  onUnmounted(() => { stopStatusPolling(); stopPolling() })
+watch(
+  () => store.channel.enabled,
+  (enabled) => {
+    if (enabled === null || launchSaving.value) return
+    launchEnabled.value = enabled
+    launchDraft.value = enabled
+  },
+  { immediate: true },
+)
+
+watch(
+  () => props.active,
+  (active) => {
+    if (active) startStatusPolling()
+    else stopStatusPolling()
+  },
+  { immediate: true },
+)
+
+onUnmounted(() => { stopStatusPolling(); stopPolling() })
 </script>
 
 <template>
@@ -312,7 +299,7 @@ function formatExpiry(value?: number): string {
                 size="small"
                 type="primary"
                 :loading="launchSaving"
-                :disabled="!canManage"
+                :disabled="!canManage || launchEnabled === null"
                 :title="!canManage ? readOnlyHint : undefined"
                 @click="handleSaveLaunch"
               >
@@ -323,7 +310,7 @@ function formatExpiry(value?: number): string {
               <NFormItem :label="t('pages.channels.personalWechat.launchChannel')">
                 <NSwitch
                   :value="launchDraft"
-                  :disabled="!canManage"
+                  :disabled="!canManage || launchEnabled === null"
                   :title="!canManage ? readOnlyHint : undefined"
                   @update:value="(value) => { launchDraft = value }"
                 />
@@ -661,16 +648,5 @@ function formatExpiry(value?: number): string {
     flex-direction: column;
   }
 
-  :deep(.n-collapse-item .n-collapse-item__header) {
-    padding: 9px 10px;
-  }
-
-  :deep(.n-collapse-item:first-child > .n-collapse-item__header) {
-    padding-top: 9px !important;
-  }
-
-  :deep(.n-collapse-item .n-collapse-item__content-inner) {
-    padding: 9px 10px 10px;
-  }
 }
 </style>

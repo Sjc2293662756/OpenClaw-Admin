@@ -29,10 +29,16 @@ async function startTestServer() {
   const audits = []
   const wait = deferred()
   const runtimeAccounts = new Map()
+  let channelEnabled = true
   const runtime = {
     async getStatus() {
       calls.push({ method: 'status' })
-      return { available: true, version: 'test-version', accounts: Array.from(runtimeAccounts.values()) }
+      return {
+        available: true,
+        version: 'test-version',
+        channelEnabled,
+        accounts: Array.from(runtimeAccounts.values()),
+      }
     },
     async startQr() {
       calls.push({ method: 'qr.start' })
@@ -72,8 +78,26 @@ async function startTestServer() {
     },
     async deleteAccount(accountId) {
       calls.push({ method: 'account.delete', accountId })
+      if (runtime.deleteFailure) {
+        const error = new Error('simulated delete failure')
+        error.code = 'PERSONAL_WECHAT_ACCOUNT_DELETE_FAILED'
+        throw error
+      }
       runtimeAccounts.delete(accountId)
       return { accountId, deleted: true }
+    },
+    async setChannelEnabled(enabled) {
+      calls.push({ method: 'channel.setEnabled', enabled })
+      if (runtime.channelFailure) {
+        const error = new Error('simulated channel failure')
+        error.code = 'PERSONAL_WECHAT_CHANNEL_STATE_FAILED'
+        throw error
+      }
+      channelEnabled = enabled
+      for (const [accountId, account] of runtimeAccounts) {
+        runtimeAccounts.set(accountId, { ...account, enabled, running: enabled })
+      }
+      return { enabled }
     },
   }
   const onboarding = createPersonalWechatOnboarding({
@@ -106,7 +130,10 @@ async function startTestServer() {
     metadataStore,
     runtime,
     onboarding,
-    recordAudit: (actor, action, target, detail) => audits.push({ actor, action, target, detail }),
+    recordAudit: (actor, action, target, detail, metadata) => {
+      const { req: _req, ...safeMetadata } = metadata || {}
+      audits.push({ actor, action, target, detail, metadata: safeMetadata })
+    },
   }))
   const server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')
@@ -118,6 +145,8 @@ async function startTestServer() {
     audits,
     wait,
     runtimeAccounts,
+    runtime,
+    metadataStore,
   }
 }
 
@@ -174,6 +203,7 @@ test('personal WeChat REST is admin-only, owner-bound, no-store and never projec
       available: true,
       version: 'test-version',
     })
+    assert.deepEqual(collection.channel, { configured: true, enabled: true })
     assert.equal(collection.accounts.length, 1)
     assert.deepEqual(collection.accounts[0], {
       accountId: 'wx-account-one',
@@ -298,4 +328,95 @@ test('runtime account status relies on an explicit Gateway running flag', () => 
     runtimeAccountStatus({ accountId: 'a', enabled: true, configured: true }, null, true).status,
     'unknown',
   )
+})
+
+test('personal WeChat writes failed audits and compensates cross-runtime account changes', async () => {
+  const context = await startTestServer()
+  try {
+    await fetch(`${context.baseUrl}/onboarding`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin', 'x-test-user-id': 'admin-one' },
+      body: JSON.stringify({ displayName: '补偿测试微信' }),
+    })
+    context.wait.resolve({
+      loginId: 'private-login-id',
+      status: 'connected',
+      accountId: 'wx-account-one',
+      wechatId: 'wx-user-one',
+    })
+    await nextTurn()
+
+    context.metadataStore.setEnabled = () => { throw new Error('simulated metadata failure') }
+    const stateResponse = await fetch(`${context.baseUrl}/accounts/wx-account-one/enabled`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin' },
+      body: JSON.stringify({ enabled: false }),
+    })
+    const statePayload = await stateResponse.json()
+    assert.equal(stateResponse.status, 502)
+    assert.equal(statePayload.code, 'PERSONAL_WECHAT_METADATA_UPDATE_FAILED')
+    assert.equal(context.runtimeAccounts.get('wx-account-one').enabled, true)
+    assert.equal(context.metadataStore.get('wx-account-one').enabled, true)
+
+    context.runtime.deleteFailure = true
+    const deleteResponse = await fetch(`${context.baseUrl}/accounts/wx-account-one`, {
+      method: 'DELETE',
+      headers: { 'x-test-role': 'admin' },
+    })
+    const deletePayload = await deleteResponse.json()
+    assert.equal(deleteResponse.status, 502)
+    assert.equal(deletePayload.code, 'PERSONAL_WECHAT_ACCOUNT_DELETE_FAILED')
+    assert.equal(context.metadataStore.get('wx-account-one').displayName, '补偿测试微信')
+
+    const failedAudits = context.audits.filter((audit) => audit.metadata?.result === 'failed')
+    assert.deepEqual(failedAudits.map((audit) => [audit.action, audit.metadata.errorCode]), [
+      ['停用个人微信账号', 'PERSONAL_WECHAT_METADATA_UPDATE_FAILED'],
+      ['删除个人微信账号', 'PERSONAL_WECHAT_ACCOUNT_DELETE_FAILED'],
+    ])
+    assert.equal(JSON.stringify(failedAudits).includes('private-login-id'), false)
+  } finally {
+    context.server.close()
+    context.db.close()
+  }
+})
+
+test('personal WeChat audits validation, missing-session and channel runtime failures', async () => {
+  const context = await startTestServer()
+  try {
+    const verifyResponse = await fetch(`${context.baseUrl}/onboarding/missing-session/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin' },
+      body: JSON.stringify({ code: '123456' }),
+    })
+    assert.equal(verifyResponse.status, 404)
+
+    const invalidChannelResponse = await fetch(`${context.baseUrl}/channel-enabled`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin' },
+      body: JSON.stringify({ enabled: 'yes' }),
+    })
+    assert.equal(invalidChannelResponse.status, 400)
+
+    context.runtime.channelFailure = true
+    const failedChannelResponse = await fetch(`${context.baseUrl}/channel-enabled`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-test-role': 'admin' },
+      body: JSON.stringify({ enabled: false }),
+    })
+    assert.equal(failedChannelResponse.status, 502)
+
+    assert.deepEqual(
+      context.audits
+        .filter((audit) => audit.metadata?.result === 'failed')
+        .map((audit) => [audit.action, audit.metadata.errorCode]),
+      [
+        ['提交个人微信扫码验证', 'PERSONAL_WECHAT_ONBOARDING_NOT_FOUND'],
+        ['修改个人微信渠道状态', 'PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID'],
+        ['停用个人微信渠道', 'PERSONAL_WECHAT_CHANNEL_STATE_FAILED'],
+      ],
+    )
+  } finally {
+    context.server.close()
+    context.db.close()
+  }
 })

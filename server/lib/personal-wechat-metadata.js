@@ -98,6 +98,13 @@ export function createPersonalWechatMetadataStore(db, { now = () => Date.now() }
     UPDATE personal_wechat_accounts SET enabled = ?, updated_at = ? WHERE account_id = ?
   `)
   const remove = db.prepare('DELETE FROM personal_wechat_accounts WHERE account_id = ?')
+  const restore = db.prepare(`
+    INSERT INTO personal_wechat_accounts (
+      account_id, display_name, note, wechat_user_id, wechat_nickname,
+      enabled, created_by_user_id, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(account_id) DO NOTHING
+  `)
 
   function get(accountId) {
     const normalizedId = normalizePersonalWechatAccountId(accountId)
@@ -153,7 +160,32 @@ export function createPersonalWechatMetadataStore(db, { now = () => Date.now() }
     return existing
   }
 
-  return { get, list, saveLinkedAccount, setEnabled, deleteAccount }
+  function restoreAccount(account) {
+    const normalizedId = normalizePersonalWechatAccountId(account?.accountId)
+    const registration = validatePersonalWechatRegistration(account)
+    if (!normalizedId || !registration.ok) {
+      const error = new Error('个人微信账号恢复信息无效')
+      error.code = 'PERSONAL_WECHAT_METADATA_RESTORE_INVALID'
+      throw error
+    }
+    const timestamp = now()
+    const createdAt = Number.isFinite(account?.createdAt) && account.createdAt > 0 ? account.createdAt : timestamp
+    const updatedAt = Number.isFinite(account?.updatedAt) && account.updatedAt > 0 ? account.updatedAt : timestamp
+    restore.run(
+      normalizedId,
+      registration.value.displayName,
+      registration.value.note,
+      cleanText(account?.wechatId, MAX_WECHAT_ID_LENGTH, { collapseWhitespace: true }) || null,
+      cleanText(account?.nickname, MAX_NICKNAME_LENGTH, { collapseWhitespace: true }) || null,
+      account?.enabled === false ? 0 : 1,
+      cleanText(account?.createdByUserId, 128, { collapseWhitespace: true }) || null,
+      createdAt,
+      updatedAt,
+    )
+    return get(normalizedId)
+  }
+
+  return { get, list, saveLinkedAccount, setEnabled, deleteAccount, restoreAccount }
 }
 
 export const __test__ = {

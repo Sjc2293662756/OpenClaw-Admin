@@ -18,7 +18,10 @@ import { randomUUID } from 'node:crypto'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const HOST = '127.0.0.1'
 const PORT = Number(process.env.GAIOP_WEIXIN_ADAPTER_PORT || 19091)
-const TOKEN = String(process.env.GAIOP_WEIXIN_ADAPTER_TOKEN || '')
+const TOKEN = String(process.env.GAIOP_WEIXIN_ADAPTER_TOKEN || '').trim()
+if (!TOKEN) {
+  throw new Error('GAIOP_WEIXIN_ADAPTER_TOKEN is required')
+}
 const HOME = String(process.env.GAIOP_HOME || '/home/netinside')
 const NODE_BIN = process.env.GAIOP_NODE_BIN || 'node'
 const PLUGIN_BASE = path.join(HOME, '.openclaw/npm/node_modules/@tencent-weixin/openclaw-weixin')
@@ -74,20 +77,38 @@ function listAccounts() {
  * multiple seconds per call on this host. The mutations here are structural
  * (delete an account key / toggle a boolean) and low risk.
  */
+let configWriteQueue = Promise.resolve()
+
 function updateOpenClawWeixinConfig(mutate) {
-  const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
-  const cfg = JSON.parse(raw)
-  if (!cfg.channels || typeof cfg.channels !== 'object' || Array.isArray(cfg.channels)) cfg.channels = {}
-  if (!cfg.channels['openclaw-weixin'] || typeof cfg.channels['openclaw-weixin'] !== 'object') {
-    cfg.channels['openclaw-weixin'] = {}
-  }
-  const section = cfg.channels['openclaw-weixin']
-  mutate(section)
-  section.channelConfigUpdatedAt = new Date().toISOString()
-  fs.copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.bak`)
-  const temporary = `${CONFIG_PATH}.tmp-${process.pid}`
-  fs.writeFileSync(temporary, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
-  fs.renameSync(temporary, CONFIG_PATH)
+  const operation = configWriteQueue.then(() => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const raw = fs.readFileSync(CONFIG_PATH, 'utf8')
+      const cfg = JSON.parse(raw)
+      if (!cfg.channels || typeof cfg.channels !== 'object' || Array.isArray(cfg.channels)) cfg.channels = {}
+      if (!cfg.channels['openclaw-weixin'] || typeof cfg.channels['openclaw-weixin'] !== 'object') {
+        cfg.channels['openclaw-weixin'] = {}
+      }
+      const section = cfg.channels['openclaw-weixin']
+      mutate(section)
+      section.channelConfigUpdatedAt = new Date().toISOString()
+
+      const temporary = `${CONFIG_PATH}.tmp-${process.pid}-${randomUUID()}`
+      try {
+        fs.writeFileSync(temporary, `${JSON.stringify(cfg, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+        // Another OpenClaw process may also update this shared file. Re-read
+        // immediately before rename and retry against its latest content.
+        if (fs.readFileSync(CONFIG_PATH, 'utf8') !== raw) continue
+        fs.copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.bak`)
+        fs.renameSync(temporary, CONFIG_PATH)
+        return
+      } finally {
+        if (fs.existsSync(temporary)) fs.unlinkSync(temporary)
+      }
+    }
+    throw new Error('openclaw.json changed during Personal WeChat update')
+  })
+  configWriteQueue = operation.catch(() => {})
+  return operation
 }
 
 // ---------------------------------------------------------------------------
@@ -379,7 +400,6 @@ function readBody(req, limit = 64 * 1024) {
 }
 
 function authorized(req) {
-  if (!TOKEN) return true
   const provided = String(req.headers['x-gaiop-weixin-token'] || '')
   const left = Buffer.from(provided)
   const right = Buffer.from(TOKEN)
@@ -403,10 +423,13 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && pathname === '/status') {
+      const config = readJson(CONFIG_PATH) || {}
+      const channelEnabled = config.channels?.['openclaw-weixin']?.enabled !== false
       return json(res, 200, {
         ok: true,
         available: pluginAvailable(),
         version: pluginVersion(),
+        channelEnabled,
         accounts: listAccounts(),
       })
     }
@@ -478,7 +501,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, errorPayload('PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID', '个人微信账号状态参数无效'))
       }
       try {
-        updateOpenClawWeixinConfig((section) => {
+        await updateOpenClawWeixinConfig((section) => {
           if (!section.accounts || typeof section.accounts !== 'object' || Array.isArray(section.accounts)) {
             section.accounts = {}
           }
@@ -499,7 +522,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, errorPayload('PERSONAL_WECHAT_ACCOUNT_INPUT_INVALID', '个人微信渠道状态参数无效'))
       }
       try {
-        updateOpenClawWeixinConfig((section) => {
+        await updateOpenClawWeixinConfig((section) => {
           section.enabled = body.enabled
           // The channel-level flag alone is overridden by per-account
           // enabled entries in this plugin. Apply the same state to every
@@ -536,7 +559,7 @@ const server = http.createServer(async (req, res) => {
       accountsModule.clearWeixinAccount(accountId)
       accountsModule.unregisterWeixinAccountId(accountId)
       try {
-        updateOpenClawWeixinConfig((section) => {
+        await updateOpenClawWeixinConfig((section) => {
           if (section.accounts && typeof section.accounts === 'object') {
             delete section.accounts[accountId]
           }
