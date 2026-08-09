@@ -28,6 +28,8 @@ invalid source/ISO checksums; it does not read environment files or secrets.
 | `systemd/gaiop-admin.service` | `/etc/systemd/system/gaiop-admin.service` |
 | `../systemd/gaiop-report-retention-cleanup.service` | `/etc/systemd/system/gaiop-report-retention-cleanup.service` |
 | `../systemd/gaiop-report-retention-cleanup.timer` | `/etc/systemd/system/gaiop-report-retention-cleanup.timer` |
+| `../systemd/gaiop-admin-sqlite-backup.service` | `/etc/systemd/system/gaiop-admin-sqlite-backup.service` |
+| `../systemd/gaiop-admin-sqlite-backup.timer` | `/etc/systemd/system/gaiop-admin-sqlite-backup.timer` |
 | `GAIOP-latest/deploy/iso/systemd/gaiop-gateway.service` | `/etc/systemd/system/gaiop-gateway.service` |
 | `GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-syslog-receiver.service` | `/etc/systemd/system/gaiop-syslog-receiver.service` |
 | `nginx/gaiop.conf` | deployment-managed Nginx site configuration |
