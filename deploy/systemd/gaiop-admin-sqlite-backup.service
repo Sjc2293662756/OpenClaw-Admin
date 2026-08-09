@@ -1,0 +1,23 @@
+[Unit]
+Description=GAIOP Admin SQLite consistent backup
+After=gaiop-admin.service
+
+[Service]
+Type=oneshot
+User=gaiop
+Group=gaiop
+WorkingDirectory=/opt/gaiop/admin
+EnvironmentFile=/etc/gaiop/admin.env
+ExecStart=/usr/local/bin/node /opt/gaiop/admin/server/sqlite-backup.js
+UMask=0077
+RuntimeDirectory=gaiop-admin-sqlite-backup
+RuntimeDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+InaccessiblePaths=-/var/lib/gaiop/upgrade
+InaccessiblePaths=-/var/lib/gaiop/alerts
+ReadWritePaths=/var/lib/gaiop/admin/sqlite-backups
+ReadWritePaths=/run/gaiop-admin-sqlite-backup
