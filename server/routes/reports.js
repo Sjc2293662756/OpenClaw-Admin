@@ -1,11 +1,13 @@
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'fs'
+import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'fs'
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'path'
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { readReportAttributionIndex, resolveReportAttribution, resolveReportAttributionByAudit } from '../lib/report-attribution-index.js'
-import { getReportStorageRoot } from '../lib/report-storage-path.js'
+import { getReportRecoveryRoot, getReportStorageRoot } from '../lib/report-storage-path.js'
+import { ReportRetentionService } from '../report-retention-service.js'
 
 const reportRoot = getReportStorageRoot()
+const reportRecoveryRoot = getReportRecoveryRoot()
 const previewableTextExtensions = new Set(['.txt', '.md', '.json', '.csv', '.log'])
 
 function inferMimeType(fileName) {
@@ -393,6 +395,8 @@ function publicReport(row, delivery = null) {
     mimeType: row.mime_type,
     size,
     status,
+    longTermKeep: Number(row.long_term_keep) === 1,
+    retentionState: row.retention_state || 'active',
     delivery: publicDelivery(delivery),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -401,7 +405,10 @@ function publicReport(row, delivery = null) {
 
 function resolveReportOrError(db, id, res, user) {
   const row = db.prepare('SELECT * FROM report_files WHERE id = ?').get(id)
-  if (!row || !canReadReport(user, row)) {
+  const hasRecoveryPlan = row && (row.retention_state || 'active') !== 'active'
+    ? Boolean(db.prepare('SELECT 1 FROM report_retention_artifacts WHERE report_id = ? LIMIT 1').get(row.id))
+    : false
+  if (!row || ['quarantined', 'restore_error', 'delete_error'].includes(row.retention_state) || hasRecoveryPlan || !canReadReport(user, row)) {
     sendError(res, { status: 404, code: 'REPORT_NOT_FOUND', message: '报告文件不存在' })
     return null
   }
@@ -428,8 +435,13 @@ function streamReport(res, filePath, row, disposition) {
   stream.pipe(res)
 }
 
-export function createReportsRouter({ db, authMiddleware, adminMiddleware, recordAudit }) {
+export function createReportsRouter({ db, authMiddleware, adminMiddleware, recordAudit, retentionService = null }) {
   const router = Router()
+  const retention = retentionService || new ReportRetentionService({
+    db,
+    reportRoot,
+    recoveryRoot: reportRecoveryRoot,
+  })
 
   router.get('/', authMiddleware, (req, res) => {
     try {
@@ -447,6 +459,16 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
       }
       const conditions = []
       const values = []
+      conditions.push(`(
+        COALESCE(report_files.retention_state, 'active') = 'active'
+        OR (
+          report_files.retention_state = 'quarantine_error'
+          AND NOT EXISTS (
+            SELECT 1 FROM report_retention_artifacts
+            WHERE report_retention_artifacts.report_id = report_files.id
+          )
+        )
+      )`)
       if (req.user?.role !== 'admin' && req.user?.role !== 'auditor') {
         const userId = safeText(req.user?.id)
         if (!userId) {
@@ -498,6 +520,34 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
     }
   })
 
+  router.get('/retention/recovery', adminMiddleware, (_req, res) => {
+    try {
+      sendOk(res, { reports: retention.listRecovery() })
+    } catch {
+      sendError(res, { code: 'REPORT_RECOVERY_LIST_FAILED', message: '报告恢复区暂时无法读取' })
+    }
+  })
+
+  router.patch('/:id/retention', adminMiddleware, (req, res) => {
+    if (typeof req.body?.longTermKeep !== 'boolean') {
+      return sendError(res, { status: 400, code: 'REPORT_RETENTION_INPUT_INVALID', message: '长期保留标记必须是布尔值' })
+    }
+    const result = retention.setLongTermKeep(req.params.id, req.body.longTermKeep)
+    if (!result.ok) return sendError(res, { status: 404, code: 'REPORT_NOT_FOUND', message: '报告文件不存在' })
+    recordAudit(req.user, req.body.longTermKeep ? '设置报告长期保留' : '取消报告长期保留', req.params.id, '仅更新报告留存标记')
+    sendOk(res, result)
+  })
+
+  router.post('/:id/restore', adminMiddleware, (req, res) => {
+    const result = retention.restoreReport(req.params.id)
+    if (!result.ok) {
+      const status = result.code === 'report_not_found' ? 404 : 409
+      return sendError(res, { status, code: String(result.code || 'REPORT_RESTORE_FAILED').toUpperCase(), message: '报告恢复失败，已保留可重试状态' })
+    }
+    recordAudit(req.user, '恢复报告文件', req.params.id, '从7天受控恢复区恢复')
+    sendOk(res)
+  })
+
   router.get('/:id/download', authMiddleware, (req, res) => {
     const report = resolveReportOrError(db, req.params.id, res, req.user)
     if (!report) return
@@ -522,23 +572,12 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
   router.delete('/:id', adminMiddleware, (req, res) => {
     const row = db.prepare('SELECT * FROM report_files WHERE id = ?').get(req.params.id)
     if (!row) return sendError(res, { status: 404, code: 'REPORT_NOT_FOUND', message: '报告文件不存在' })
-    const filePath = resolveStoredReportPath(row.stored_name)
-    try {
-      if (filePath && existsSync(filePath)) unlinkSync(filePath)
-      const auditPath = resolveStoredReportPath(row.audit_name)
-      if (auditPath && existsSync(auditPath)) unlinkSync(auditPath)
-      const deliveryEvents = db.prepare('SELECT event_name FROM report_deliveries WHERE report_id = ?').all(row.id)
-      for (const delivery of deliveryEvents) {
-        const eventPath = resolveStoredReportPath(delivery.event_name)
-        if (eventPath && existsSync(eventPath)) unlinkSync(eventPath)
-      }
-      db.prepare('DELETE FROM report_deliveries WHERE report_id = ?').run(row.id)
-      db.prepare('DELETE FROM report_files WHERE id = ?').run(row.id)
-      recordAudit(req.user, '删除报告文件', row.original_name, `报告类型：${row.report_type}`)
-      sendOk(res)
-    } catch (_error) {
-      sendError(res, { code: 'REPORT_DELETE_FAILED', message: '报告文件删除失败' })
+    const result = retention.quarantineReport(row.id)
+    if (!result.ok) {
+      return sendError(res, { status: 409, code: String(result.code || 'REPORT_QUARANTINE_FAILED').toUpperCase(), message: '报告移入恢复区失败，原记录已保留' })
     }
+    recordAudit(req.user, '将报告移入恢复区', row.original_name, '报告及配对记录保留7天后才允许永久删除')
+    sendOk(res, { quarantined: true, recoverableUntil: result.recoverableUntil })
   })
 
   return router

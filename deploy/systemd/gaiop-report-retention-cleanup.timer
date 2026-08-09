@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GAIOP formal report retention cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 02:45:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=gaiop-report-retention-cleanup.service
+
+[Install]
+WantedBy=timers.target
