@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { test } from 'node:test'
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import express from 'express'
-import { createSystemUpgradeRouter } from './system-upgrade.js'
+import { cleanupExpiredUpgradeUploadStaging, createSystemUpgradeRouter } from './system-upgrade.js'
 
 async function startTestServer({ readOverview, validatePackage, executeTask, readTask, rollbackBackup, deleteBackup } = {}) {
   const app = express()
@@ -209,5 +212,85 @@ test('overview and backup actions keep backup paths inside the upgrade service b
     assert.equal(context.audits.length, 2)
   } finally {
     context.server.close()
+  }
+})
+
+test('Admin upgrade staging cleanup deletes only expired strict UUID zip files in oldest-first batches', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'gaiop-admin-upgrade-cleanup-'))
+  const directory = join(parent, 'upgrade-upload-staging')
+  mkdirSync(directory)
+  const now = Date.UTC(2026, 7, 9, 12)
+  const old = join(directory, '00000000-0000-4000-8000-000000000001.zip')
+  const boundary = join(directory, '00000000-0000-4000-8000-000000000002.zip')
+  const fresh = join(directory, '00000000-0000-4000-8000-000000000003.zip')
+  try {
+    for (const target of [old, boundary, fresh]) writeFileSync(target, 'zip')
+    utimesSync(old, (now - 48 * 60 * 60 * 1000) / 1000, (now - 48 * 60 * 60 * 1000) / 1000)
+    utimesSync(boundary, (now - 24 * 60 * 60 * 1000) / 1000, (now - 24 * 60 * 60 * 1000) / 1000)
+    utimesSync(fresh, (now - 24 * 60 * 60 * 1000 + 1) / 1000, (now - 24 * 60 * 60 * 1000 + 1) / 1000)
+
+    const first = cleanupExpiredUpgradeUploadStaging({ stagingDirectory: directory, now, maxItems: 1 })
+    assert.equal(first.success, 1)
+    assert.equal(first.reasons.batch_limit, 1)
+    assert.equal(first.reasons.not_expired, 1)
+    assert.equal(lstatSync(old, { throwIfNoEntry: false }), undefined)
+
+    const second = cleanupExpiredUpgradeUploadStaging({ stagingDirectory: directory, now, maxItems: 10 })
+    assert.equal(second.success, 1)
+    assert.equal(lstatSync(boundary, { throwIfNoEntry: false }), undefined)
+    assert.equal(lstatSync(fresh).isFile(), true)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('Admin upgrade staging cleanup refuses unknown entries, symlinks, abnormal times and failed deletions', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'gaiop-admin-upgrade-safety-'))
+  const directory = join(parent, 'upgrade-upload-staging')
+  const outside = join(parent, 'outside')
+  mkdirSync(directory)
+  mkdirSync(outside)
+  const now = Date.UTC(2026, 7, 9, 12)
+  const retryable = join(directory, '00000000-0000-4000-8000-000000000010.zip')
+  const abnormal = join(directory, '00000000-0000-4000-8000-000000000011.zip')
+  try {
+    writeFileSync(retryable, 'retry')
+    writeFileSync(abnormal, 'abnormal')
+    utimesSync(retryable, (now - 48 * 60 * 60 * 1000) / 1000, (now - 48 * 60 * 60 * 1000) / 1000)
+    utimesSync(abnormal, (now - 48 * 60 * 60 * 1000) / 1000, (now - 48 * 60 * 60 * 1000) / 1000)
+    writeFileSync(join(directory, 'wizard.db'), 'protected')
+    writeFileSync(join(directory, '00000000-0000-4000-8000-000000000012.bak'), 'protected')
+    mkdirSync(join(directory, 'unknown-directory'))
+    symlinkSync(outside, join(directory, '00000000-0000-4000-8000-000000000013.zip'), 'junction')
+
+    const failed = cleanupExpiredUpgradeUploadStaging({
+      stagingDirectory: directory,
+      now,
+      fs: {
+        lstatSync: (target) => target === abnormal
+          ? new Proxy(lstatSync(target), { get: (stat, property) => property === 'mtimeMs' ? Number.NaN : Reflect.get(stat, property, stat) })
+          : lstatSync(target),
+        unlinkSync: () => { throw new Error('simulated') },
+      },
+    })
+    assert.equal(failed.success, 0)
+    assert.equal(failed.failed, 1)
+    assert.equal(failed.reasons.invalid_timestamp, 1)
+    assert.equal(failed.reasons.unknown_filename, 2)
+    assert.equal(failed.reasons.unknown_directory, 1)
+    assert.equal(failed.reasons.symbolic_link, 1)
+    assert.equal(readdirSync(directory).length, 6)
+
+    const retried = cleanupExpiredUpgradeUploadStaging({ stagingDirectory: directory, now })
+    assert.equal(retried.success, 2)
+    assert.equal(lstatSync(retryable, { throwIfNoEntry: false }), undefined)
+    assert.equal(lstatSync(join(directory, 'wizard.db')).isFile(), true)
+    assert.equal(lstatSync(join(directory, '00000000-0000-4000-8000-000000000012.bak')).isFile(), true)
+
+    const refused = cleanupExpiredUpgradeUploadStaging({ stagingDirectory: parent, now })
+    assert.equal(refused.failed, 1)
+    assert.equal(refused.reasons.unexpected_root_name, 1)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
   }
 })

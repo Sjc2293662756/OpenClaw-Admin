@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createHmac } from 'node:crypto'
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { createHash, createHmac } from 'node:crypto'
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { attachReportProvenance, __test__ } from './report-provenance-service.js'
+import { attachReportProvenance, cleanupExpiredReportProvenance, __test__ } from './report-provenance-service.js'
+
+function writeEnvelope(directory, sessionId, issuedAt, mtimeMs = issuedAt) {
+  const digest = createHash('sha256').update(sessionId, 'utf8').digest('hex')
+  const target = join(directory, `${digest}.json`)
+  writeFileSync(target, JSON.stringify({
+    version: __test__.PROVENANCE_VERSION,
+    userId: 'user-1',
+    sessionId,
+    issuedAt,
+    signature: 'owned-signature',
+  }))
+  utimesSync(target, mtimeMs / 1000, mtimeMs / 1000)
+  return target
+}
 
 test('report provenance v3 signs server-owned Web user, session, and source message', () => {
   const key = '0123456789abcdef0123456789abcdef'
@@ -94,5 +108,106 @@ test('report provenance store-only mode leaves Gateway and model transport param
     assert.equal(stored.dataSourceId, 'source-store-only')
   } finally {
     rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('report provenance cleanup requires both 48-hour age checks and deletes oldest owned envelopes first', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'gaiop-report-provenance-cleanup-'))
+  const directory = join(parent, 'report-provenance')
+  mkdirSync(directory)
+  const now = Date.UTC(2026, 7, 9, 12)
+  try {
+    const oldest = writeEnvelope(directory, 'session-oldest', now - 72 * 60 * 60 * 1000)
+    const boundary = writeEnvelope(directory, 'session-boundary', now - 48 * 60 * 60 * 1000)
+    const beforeBoundary = writeEnvelope(directory, 'session-before-boundary', now - 48 * 60 * 60 * 1000 + 1)
+
+    const first = cleanupExpiredReportProvenance({ storeDirectory: directory, now, maxItems: 1 })
+    assert.equal(first.success, 1)
+    assert.equal(first.reasons.batch_limit, 1)
+    assert.equal(first.reasons.not_expired, 1)
+    assert.equal(readdirSync(directory).length, 2)
+    assert.equal(lstatSync(oldest, { throwIfNoEntry: false }), undefined)
+
+    const second = cleanupExpiredReportProvenance({ storeDirectory: directory, now, maxItems: 10 })
+    assert.equal(second.success, 1)
+    assert.equal(lstatSync(boundary, { throwIfNoEntry: false }), undefined)
+    assert.equal(lstatSync(beforeBoundary).isFile(), true)
+
+    const third = cleanupExpiredReportProvenance({ storeDirectory: directory, now, maxItems: 10 })
+    assert.equal(third.success, 0)
+    assert.equal(third.reasons.not_expired, 1)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('report provenance cleanup skips unknown, malformed, symlinked and abnormal entries without widening scope', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'gaiop-report-provenance-safety-'))
+  const directory = join(parent, 'report-provenance')
+  const outside = join(parent, 'outside')
+  mkdirSync(directory)
+  mkdirSync(outside)
+  const now = Date.UTC(2026, 7, 9, 12)
+  try {
+    writeFileSync(join(directory, 'unknown.txt'), 'keep')
+    mkdirSync(join(directory, 'unknown-directory'))
+    const invalidDigest = 'a'.repeat(64)
+    writeFileSync(join(directory, `${invalidDigest}.json`), '{"version":"wrong"}')
+    const abnormal = writeEnvelope(directory, 'session-abnormal', now - 72 * 60 * 60 * 1000)
+    const linkName = `${'b'.repeat(64)}.json`
+    symlinkSync(outside, join(directory, linkName), 'junction')
+    const oldTempName = `.${'c'.repeat(64)}.12.${now - 72 * 60 * 60 * 1000}.tmp`
+    writeFileSync(join(directory, oldTempName), 'keep')
+
+    const result = cleanupExpiredReportProvenance({
+      storeDirectory: directory,
+      now,
+      fs: {
+        lstatSync: (target) => target === abnormal
+          ? new Proxy(lstatSync(target), { get: (stat, property) => property === 'mtimeMs' ? Number.NaN : Reflect.get(stat, property, stat) })
+          : lstatSync(target),
+      },
+    })
+    assert.equal(result.success, 0)
+    assert.equal(result.reasons.unknown_filename, 2)
+    assert.equal(result.reasons.unknown_directory, 1)
+    assert.equal(result.reasons.invalid_envelope, 1)
+    assert.equal(result.reasons.invalid_timestamp, 1)
+    assert.equal(result.reasons.symbolic_link, 1)
+    assert.equal(readdirSync(directory).length, 6)
+
+    const refused = cleanupExpiredReportProvenance({ storeDirectory: parent, now })
+    assert.equal(refused.failed, 1)
+    assert.equal(refused.reasons.unexpected_root_name, 1)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('owned provenance temp files follow a separate strict rule and deletion failures remain retryable', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'gaiop-report-provenance-temp-'))
+  const directory = join(parent, 'report-provenance')
+  mkdirSync(directory)
+  const now = Date.UTC(2026, 7, 9, 12)
+  const createdAt = now - 72 * 60 * 60 * 1000
+  const target = join(directory, `.gaiop-report-provenance-${'d'.repeat(64)}.123.${createdAt}.tmp`)
+  try {
+    writeFileSync(target, 'partial')
+    utimesSync(target, createdAt / 1000, createdAt / 1000)
+    const failed = cleanupExpiredReportProvenance({
+      storeDirectory: directory,
+      now,
+      fs: { unlinkSync: () => { throw new Error('simulated') } },
+    })
+    assert.equal(failed.failed, 1)
+    assert.equal(lstatSync(target).isFile(), true)
+
+    const retried = cleanupExpiredReportProvenance({ storeDirectory: directory, now })
+    assert.equal(retried.success, 1)
+    assert.equal(lstatSync(target, { throwIfNoEntry: false }), undefined)
+    const repeated = cleanupExpiredReportProvenance({ storeDirectory: directory, now })
+    assert.equal(repeated.success, 0)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
   }
 })

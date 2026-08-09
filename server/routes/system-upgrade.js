@@ -1,12 +1,15 @@
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
-import { mkdirSync, rmSync } from 'fs'
-import { extname, resolve } from 'path'
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync, unlinkSync } from 'fs'
+import { basename, extname, resolve } from 'path'
 import multer from 'multer'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { deleteUpgradeBackup, executeUpgradeTask, readSystemUpgradeOverview, readUpgradeTask, rollbackUpgradeBackup, validateUpgradePackage } from '../lib/system-upgrade-runtime.js'
 
-const uploadStagingDir = resolve(process.cwd(), 'data', 'upgrade-upload-staging')
+const ADMIN_UPLOAD_RETENTION_MS = 24 * 60 * 60 * 1000
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
+const OWNED_UPLOAD_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.zip$/i
+export const uploadStagingDir = resolve(process.env.GAIOP_ADMIN_UPGRADE_UPLOAD_STAGING_DIR || resolve(process.cwd(), 'data', 'upgrade-upload-staging'))
 const packageUpload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => {
@@ -28,6 +31,122 @@ function cleanupUpload(file) {
   } catch {
     // Cleanup must not replace the original validation response.
   }
+}
+
+function addCleanupReason(result, outcome, reason) {
+  result[outcome] += 1
+  result.reasons[reason] = (result.reasons[reason] || 0) + 1
+}
+
+export function cleanupExpiredUpgradeUploadStaging({
+  stagingDirectory = uploadStagingDir,
+  now = Date.now(),
+  retentionMs = ADMIN_UPLOAD_RETENTION_MS,
+  maxItems = 100,
+  fs = {},
+} = {}) {
+  const nowMs = Number(now)
+  const cutoffMs = nowMs - retentionMs
+  const result = {
+    category: 'admin_upgrade_upload_staging',
+    cutoffTime: Number.isFinite(cutoffMs) ? new Date(cutoffMs).toISOString() : null,
+    success: 0,
+    skipped: 0,
+    failed: 0,
+    freedBytes: 0,
+    reasons: {},
+  }
+  const io = {
+    existsSync: fs.existsSync || existsSync,
+    lstatSync: fs.lstatSync || lstatSync,
+    readdirSync: fs.readdirSync || readdirSync,
+    unlinkSync: fs.unlinkSync || unlinkSync,
+  }
+  if (!Number.isFinite(nowMs) || !Number.isFinite(retentionMs) || retentionMs < 0) {
+    addCleanupReason(result, 'failed', 'invalid_policy')
+    return result
+  }
+
+  const root = resolve(String(stagingDirectory || ''))
+  if (basename(root) !== 'upgrade-upload-staging') {
+    addCleanupReason(result, 'failed', 'unexpected_root_name')
+    return result
+  }
+  if (!stagingDirectory || !io.existsSync(root)) return result
+  let rootStat
+  try {
+    rootStat = io.lstatSync(root)
+  } catch {
+    addCleanupReason(result, 'failed', 'root_stat_failed')
+    return result
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    addCleanupReason(result, 'failed', 'unsafe_root')
+    return result
+  }
+
+  let entries
+  try {
+    entries = io.readdirSync(root, { withFileTypes: true })
+  } catch {
+    addCleanupReason(result, 'failed', 'root_read_failed')
+    return result
+  }
+  const candidates = []
+  for (const entry of entries) {
+    const target = resolve(root, entry.name)
+    if (target === root || !target.startsWith(root + '\\') && !target.startsWith(root + '/')) {
+      addCleanupReason(result, 'skipped', 'path_outside_root')
+      continue
+    }
+    let stat
+    try {
+      stat = io.lstatSync(target)
+    } catch {
+      addCleanupReason(result, 'failed', 'entry_stat_failed')
+      continue
+    }
+    if (stat.isSymbolicLink()) {
+      addCleanupReason(result, 'skipped', 'symbolic_link')
+      continue
+    }
+    if (!stat.isFile()) {
+      addCleanupReason(result, 'skipped', entry.isDirectory() ? 'unknown_directory' : 'unknown_file_type')
+      continue
+    }
+    if (!OWNED_UPLOAD_PATTERN.test(entry.name)) {
+      addCleanupReason(result, 'skipped', 'unknown_filename')
+      continue
+    }
+    if (!Number.isFinite(stat.mtimeMs) || stat.mtimeMs <= 0 || stat.mtimeMs > nowMs + MAX_CLOCK_SKEW_MS) {
+      addCleanupReason(result, 'skipped', 'invalid_timestamp')
+      continue
+    }
+    if (stat.mtimeMs > cutoffMs) {
+      addCleanupReason(result, 'skipped', 'not_expired')
+      continue
+    }
+    candidates.push({ target, stat })
+  }
+
+  candidates.sort((left, right) => left.stat.mtimeMs - right.stat.mtimeMs || left.target.localeCompare(right.target))
+  const limit = Math.max(0, Math.floor(Number(maxItems) || 0))
+  for (const candidate of candidates.slice(0, limit)) {
+    try {
+      const current = io.lstatSync(candidate.target)
+      if (current.isSymbolicLink() || !current.isFile() || current.dev !== candidate.stat.dev || current.ino !== candidate.stat.ino) {
+        addCleanupReason(result, 'skipped', 'entry_changed')
+        continue
+      }
+      io.unlinkSync(candidate.target)
+      result.success += 1
+      result.freedBytes += Number.isFinite(candidate.stat.size) ? candidate.stat.size : 0
+    } catch {
+      addCleanupReason(result, 'failed', 'delete_failed')
+    }
+  }
+  for (let index = limit; index < candidates.length; index += 1) addCleanupReason(result, 'skipped', 'batch_limit')
+  return result
 }
 
 function toPublicValidation(payload) {

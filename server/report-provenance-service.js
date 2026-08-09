@@ -1,8 +1,14 @@
 import { createHash, createHmac } from 'crypto'
-import { mkdirSync, renameSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'fs'
+import { basename, join, resolve } from 'path'
 
 const PROVENANCE_VERSION = 'gaiop_report_provenance.v3'
+const PROVENANCE_PHYSICAL_RETENTION_MS = 48 * 60 * 60 * 1000
+const PROVENANCE_TEMP_RETENTION_MS = 48 * 60 * 60 * 1000
+const PROVENANCE_FILE_PATTERN = /^([a-f0-9]{64})\.json$/
+const PROVENANCE_TEMP_FILE_PATTERN = /^\.gaiop-report-provenance-([a-f0-9]{64})\.(\d{1,10})\.(\d{13})\.tmp$/
+const MAX_PROVENANCE_FILE_BYTES = 64 * 1024
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000
 
 function cleanText(value, maxLength = 240) {
   const text = String(value || '').trim()
@@ -35,10 +41,182 @@ function persistEnvelope(envelope, storeDirectory) {
   mkdirSync(directory, { recursive: true, mode: 0o750 })
   const digest = createHash('sha256').update(envelope.sessionId, 'utf8').digest('hex')
   const target = join(directory, `${digest}.json`)
-  const temporary = join(directory, `.${digest}.${process.pid}.${Date.now()}.tmp`)
+  const temporary = join(directory, `.gaiop-report-provenance-${digest}.${process.pid}.${Date.now()}.tmp`)
   writeFileSync(temporary, `${JSON.stringify(envelope)}\n`, { encoding: 'utf8', mode: 0o640 })
   renameSync(temporary, target)
   return true
+}
+
+function createCleanupResult(cutoffMs) {
+  return {
+    category: 'report_provenance_envelope',
+    cutoffTime: new Date(cutoffMs).toISOString(),
+    success: 0,
+    skipped: 0,
+    failed: 0,
+    freedBytes: 0,
+    reasons: {},
+  }
+}
+
+function addReason(result, outcome, reason) {
+  result[outcome] += 1
+  result.reasons[reason] = (result.reasons[reason] || 0) + 1
+}
+
+function isValidEnvelopeForFile(envelope, digest, nowMs) {
+  if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) return false
+  if (envelope.version !== PROVENANCE_VERSION) return false
+  if (typeof envelope.userId !== 'string' || !envelope.userId.trim()) return false
+  if (typeof envelope.sessionId !== 'string' || !envelope.sessionId.trim()) return false
+  if (typeof envelope.signature !== 'string' || !envelope.signature.trim()) return false
+  if (!Number.isFinite(envelope.issuedAt) || envelope.issuedAt <= 0 || envelope.issuedAt > nowMs + MAX_CLOCK_SKEW_MS) return false
+  const expected = createHash('sha256').update(envelope.sessionId, 'utf8').digest('hex')
+  return expected === digest
+}
+
+/**
+ * Delete only expired files owned by the dedicated report-provenance store.
+ * The function is intentionally non-recursive and never follows symlinks.
+ */
+export function cleanupExpiredReportProvenance({
+  storeDirectory,
+  now = Date.now(),
+  retentionMs = PROVENANCE_PHYSICAL_RETENTION_MS,
+  tempRetentionMs = PROVENANCE_TEMP_RETENTION_MS,
+  maxItems = 100,
+  fs = {},
+} = {}) {
+  const nowMs = Number(now)
+  const cutoffMs = nowMs - retentionMs
+  const result = createCleanupResult(cutoffMs)
+  const io = {
+    existsSync: fs.existsSync || existsSync,
+    lstatSync: fs.lstatSync || lstatSync,
+    readFileSync: fs.readFileSync || readFileSync,
+    readdirSync: fs.readdirSync || readdirSync,
+    unlinkSync: fs.unlinkSync || unlinkSync,
+  }
+  if (!Number.isFinite(nowMs) || !Number.isFinite(retentionMs) || retentionMs < 0 || !Number.isFinite(tempRetentionMs) || tempRetentionMs < 0) {
+    addReason(result, 'failed', 'invalid_policy')
+    return result
+  }
+
+  const root = resolve(String(storeDirectory || ''))
+  if (basename(root) !== 'report-provenance') {
+    addReason(result, 'failed', 'unexpected_root_name')
+    return result
+  }
+  if (!storeDirectory || !io.existsSync(root)) return result
+  let rootStat
+  try {
+    rootStat = io.lstatSync(root)
+  } catch {
+    addReason(result, 'failed', 'root_stat_failed')
+    return result
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    addReason(result, 'failed', 'unsafe_root')
+    return result
+  }
+
+  let entries
+  try {
+    entries = io.readdirSync(root, { withFileTypes: true })
+  } catch {
+    addReason(result, 'failed', 'root_read_failed')
+    return result
+  }
+
+  const candidates = []
+  for (const entry of entries) {
+    const target = resolve(root, entry.name)
+    if (target === root || !target.startsWith(root + '\\') && !target.startsWith(root + '/')) {
+      addReason(result, 'skipped', 'path_outside_root')
+      continue
+    }
+    let stat
+    try {
+      stat = io.lstatSync(target)
+    } catch {
+      addReason(result, 'failed', 'entry_stat_failed')
+      continue
+    }
+    if (stat.isSymbolicLink()) {
+      addReason(result, 'skipped', 'symbolic_link')
+      continue
+    }
+    if (!stat.isFile()) {
+      addReason(result, 'skipped', entry.isDirectory() ? 'unknown_directory' : 'unknown_file_type')
+      continue
+    }
+    if (!Number.isFinite(stat.mtimeMs) || stat.mtimeMs <= 0 || stat.mtimeMs > nowMs + MAX_CLOCK_SKEW_MS) {
+      addReason(result, 'skipped', 'invalid_timestamp')
+      continue
+    }
+
+    const envelopeMatch = PROVENANCE_FILE_PATTERN.exec(entry.name)
+    const tempMatch = PROVENANCE_TEMP_FILE_PATTERN.exec(entry.name)
+    if (!envelopeMatch && !tempMatch) {
+      addReason(result, 'skipped', 'unknown_filename')
+      continue
+    }
+
+    if (envelopeMatch) {
+      if (!Number.isFinite(stat.size) || stat.size <= 0 || stat.size > MAX_PROVENANCE_FILE_BYTES) {
+        addReason(result, 'skipped', 'invalid_file_size')
+        continue
+      }
+      let envelope
+      try {
+        envelope = JSON.parse(io.readFileSync(target, 'utf8'))
+      } catch {
+        addReason(result, 'skipped', 'invalid_envelope')
+        continue
+      }
+      if (!isValidEnvelopeForFile(envelope, envelopeMatch[1], nowMs)) {
+        addReason(result, 'skipped', 'invalid_envelope')
+        continue
+      }
+      if (envelope.issuedAt > cutoffMs || stat.mtimeMs > cutoffMs) {
+        addReason(result, 'skipped', 'not_expired')
+        continue
+      }
+      candidates.push({ target, stat, sortTime: Math.max(envelope.issuedAt, stat.mtimeMs) })
+      continue
+    }
+
+    const createdAt = Number(tempMatch[3])
+    const tempCutoffMs = nowMs - tempRetentionMs
+    if (!Number.isFinite(createdAt) || createdAt <= 0 || createdAt > nowMs + MAX_CLOCK_SKEW_MS || Math.abs(stat.mtimeMs - createdAt) > MAX_CLOCK_SKEW_MS) {
+      addReason(result, 'skipped', 'invalid_timestamp')
+      continue
+    }
+    if (createdAt > tempCutoffMs || stat.mtimeMs > tempCutoffMs) {
+      addReason(result, 'skipped', 'not_expired')
+      continue
+    }
+    candidates.push({ target, stat, sortTime: Math.max(createdAt, stat.mtimeMs) })
+  }
+
+  candidates.sort((left, right) => left.sortTime - right.sortTime || left.target.localeCompare(right.target))
+  const limit = Math.max(0, Math.floor(Number(maxItems) || 0))
+  for (const candidate of candidates.slice(0, limit)) {
+    try {
+      const current = io.lstatSync(candidate.target)
+      if (current.isSymbolicLink() || !current.isFile() || current.dev !== candidate.stat.dev || current.ino !== candidate.stat.ino) {
+        addReason(result, 'skipped', 'entry_changed')
+        continue
+      }
+      io.unlinkSync(candidate.target)
+      result.success += 1
+      result.freedBytes += Number.isFinite(candidate.stat.size) ? candidate.stat.size : 0
+    } catch {
+      addReason(result, 'failed', 'delete_failed')
+    }
+  }
+  for (let index = limit; index < candidates.length; index += 1) addReason(result, 'skipped', 'batch_limit')
+  return result
 }
 
 /**
@@ -109,4 +287,12 @@ export function attachReportProvenance(params = {}, user = null, options = {}) {
   }
 }
 
-export const __test__ = { canonicalPayload, resolveSessionId, persistEnvelope, PROVENANCE_VERSION }
+export const __test__ = {
+  canonicalPayload,
+  resolveSessionId,
+  persistEnvelope,
+  isValidEnvelopeForFile,
+  PROVENANCE_VERSION,
+  PROVENANCE_PHYSICAL_RETENTION_MS,
+  PROVENANCE_TEMP_RETENTION_MS,
+}

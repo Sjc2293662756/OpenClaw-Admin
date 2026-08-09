@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GAIOP Admin retention cleanup daily
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=gaiop-admin-retention-cleanup.service
+
+[Install]
+WantedBy=timers.target
