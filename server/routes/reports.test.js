@@ -226,7 +226,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.equal(payload.reports.length, 3)
     const reportOne = payload.reports.find((report) => report.id === 'report-1')
     assert.deepEqual(reportOne, {
-      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: reportOne.createdAt, updatedAt: reportOne.updatedAt,
+      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', longTermKeep: false, retentionState: 'active', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: reportOne.createdAt, updatedAt: reportOne.updatedAt,
     })
     assert.equal(payload.reports.find((report) => report.id === 'legacy-report-id')?.status, 'ready')
     assert.deepEqual(
@@ -293,6 +293,55 @@ test('report list failures remain JSON responses', async () => {
     server.close()
     if (previousRoot === undefined) delete process.env.GAIOP_REPORTS_DIR
     else process.env.GAIOP_REPORTS_DIR = previousRoot
+  }
+})
+
+test('administrator retention endpoints expose keep, recovery, restore and expiry-only quarantine operations', async () => {
+  const { createReportsRouter } = await import(`./reports.js?report-retention-api-test=${Date.now()}-${Math.random()}`)
+  const calls = []
+  const retentionService = {
+    listRecovery: () => [{ id: 'report-1', name: '报告.docx', retentionState: 'quarantined' }],
+    setLongTermKeep: (id, enabled) => { calls.push(['keep', id, enabled]); return { ok: true, longTermKeep: enabled } },
+    restoreReport: (id) => { calls.push(['restore', id]); return { ok: true } },
+    quarantineReport: (id, options) => { calls.push(['quarantine', id, options]); return { ok: true, recoverableUntil: 123 } },
+  }
+  const db = {
+    prepare(sql) {
+      if (sql.includes('SELECT * FROM report_files WHERE id = ?')) {
+        return { get: () => ({ id: 'report-1', original_name: '报告.docx' }) }
+      }
+      throw new Error(`Unexpected test query: ${sql}`)
+    },
+  }
+  const app = express()
+  app.use(express.json())
+  app.use('/reports', createReportsRouter({
+    db,
+    retentionService,
+    authMiddleware: (_req, _res, next) => next(),
+    adminMiddleware: (req, _res, next) => { req.user = { id: 'admin', role: 'admin' }; next() },
+    recordAudit: () => {},
+  }))
+  const server = app.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const url = `http://127.0.0.1:${server.address().port}/reports`
+  try {
+    const recovery = await fetch(`${url}/retention/recovery`).then((response) => response.json())
+    assert.equal(recovery.reports[0].retentionState, 'quarantined')
+    const keep = await fetch(`${url}/report-1/retention`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ longTermKeep: true }),
+    }).then((response) => response.json())
+    assert.equal(keep.longTermKeep, true)
+    assert.equal((await fetch(`${url}/report-1/restore`, { method: 'POST' })).status, 200)
+    const quarantine = await fetch(`${url}/report-1`, { method: 'DELETE' }).then((response) => response.json())
+    assert.equal(quarantine.recoverableUntil, 123)
+    assert.deepEqual(calls, [
+      ['keep', 'report-1', true],
+      ['restore', 'report-1'],
+      ['quarantine', 'report-1', undefined],
+    ])
+  } finally {
+    server.close()
   }
 })
 
