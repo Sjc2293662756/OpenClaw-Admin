@@ -39,6 +39,10 @@ components:
   reverseProxy:
     configurationTemplate: GAIOP-Admin/deploy/iso/nginx/gaiop.conf
     validationCommand: nginx -t
+  systemEntryLogRetention:
+    caddyAccessLogTemplate: GAIOP-Admin/deploy/iso/caddy/gaiop-access-log.caddy
+    rawSyslogTemplate: GAIOP-Admin/deploy/iso/logrotate/gaiop-netinside-syslog
+    journalTemplate: GAIOP-Admin/deploy/iso/journald/60-gaiop-retention.conf
 
 controlledFiles:
   environmentExamples:
@@ -55,6 +59,16 @@ controlledFiles:
       target: /etc/systemd/system/gaiop-gateway.service
     - source: GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-syslog-receiver.service
       target: /etc/systemd/system/gaiop-syslog-receiver.service
+  systemEntryLogRetention:
+    - source: GAIOP-Admin/deploy/iso/caddy/gaiop-access-log.caddy
+      target: /etc/caddy/gaiop-access-log.caddy
+      retention: 365 days
+    - source: GAIOP-Admin/deploy/iso/logrotate/gaiop-netinside-syslog
+      target: /etc/logrotate.d/gaiop-netinside-syslog
+      retention: 365 days
+    - source: GAIOP-Admin/deploy/iso/journald/60-gaiop-retention.conf
+      target: /etc/systemd/journald.conf.d/60-gaiop-retention.conf
+      retention: 180 days
   preflight:
     source: GAIOP-Admin/deploy/iso/scripts/gaiop-preflight.sh
     purpose: Read-only post-install validation
@@ -108,5 +122,7 @@ excludedFromIsoRepository:
 deferredDecisions:
   - Exact operating-system, Node.js, and package-version lock
   - TLS certificate issuance and renewal design
-  - Syslog retention, backup frequency, media, encryption, and restore target
+  - Log backup frequency, media, encryption, and restore target
   - Final rsyslog listen address and firewall scope
+  - Live Caddy site merge point, Caddy service account, and access-log directory ownership
+  - Live Syslog file identity/ownership and Syslog receiver service-manager scope

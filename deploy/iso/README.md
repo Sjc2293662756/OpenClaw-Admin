@@ -29,8 +29,22 @@ invalid source/ISO checksums; it does not read environment files or secrets.
 | `GAIOP-latest/deploy/iso/systemd/gaiop-gateway.service` | `/etc/systemd/system/gaiop-gateway.service` |
 | `GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-syslog-receiver.service` | `/etc/systemd/system/gaiop-syslog-receiver.service` |
 | `nginx/gaiop.conf` | deployment-managed Nginx site configuration |
+| `caddy/gaiop-access-log.caddy` | `/etc/caddy/gaiop-access-log.caddy`, imported once inside the GAIOP HTTPS site |
+| `logrotate/gaiop-netinside-syslog` | `/etc/logrotate.d/gaiop-netinside-syslog` |
+| `journald/60-gaiop-retention.conf` | `/etc/systemd/journald.conf.d/60-gaiop-retention.conf` |
 
 The final Linux validation is: `bash -n` for the preflight script,
 `systemd-analyze verify` for unit files, `nginx -t`, then a controlled service
 start and the ISO acceptance matrix. None of those actions are performed by
 this repository.
+
+System and entry log retention inputs are templates, not an authorization to
+change a running host. Run `node deploy/iso/scripts/validate-system-entry-log-retention.mjs`
+for repository-safe checks. On a Linux staging host, run
+`bash deploy/iso/scripts/validate-system-entry-log-retention-linux.sh --templates`
+for native Caddy/logrotate syntax checks. The `--installed` mode is read-only
+and suppresses configuration contents; the deliberately mutating
+`--exercise-syslog-rotation` mode refuses to run unless the operator is root
+and sets `GAIOP_LOG_RETENTION_LIVE_ROTATION_APPROVED=YES` after separate change
+approval. See the [system and entry log retention guide](../../docs/05-部署运维/2026-08-09-GAIOP系统与入口日志留存ISO配置.md)
+before installation, disablement, or rollback.
