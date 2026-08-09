@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
-import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInputNumber, NSelect, NSpace, NTag, NText, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
-import { DownloadOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
+import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInputNumber, NModal, NSelect, NSpace, NTag, NText, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
+import { ArchiveOutline, DownloadOutline, RefreshOutline, ReturnUpBackOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
@@ -28,7 +28,19 @@ type ReportFile = {
   mimeType: string
   size: number
   status: ReportStatus
+  longTermKeep: boolean
+  retentionState: string
   createdAt: number
+}
+
+type RecoveryReport = {
+  id: string
+  name: string
+  reportType: string
+  retentionState: string
+  quarantinedAt?: number | null
+  recoverableUntil?: number | null
+  errorCode?: string | null
 }
 
 const authStore = useAuthStore()
@@ -38,6 +50,9 @@ const dialog = useDialog()
 const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
 const loading = ref(false)
 const reports = ref<ReportFile[]>([])
+const recoveryReports = ref<RecoveryReport[]>([])
+const recoveryVisible = ref(false)
+const recoveryLoading = ref(false)
 const serverNow = ref(Date.now())
 const reportTypeFilter = ref('all')
 const timePreset = ref<TimeRangePreset>('last30days')
@@ -202,21 +217,64 @@ async function download(report: ReportFile) {
   }
 }
 
+async function updateLongTermKeep(report: ReportFile) {
+  try {
+    const response = await fetch(`/api/reports/${report.id}/retention`, {
+      method: 'PATCH',
+      headers: { ...headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ longTermKeep: !report.longTermKeep }),
+    })
+    const data = await readJsonResponse(response, text('更新长期保留标记失败', 'Failed to update long-term retention'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('更新长期保留标记失败', 'Failed to update long-term retention')))
+    report.longTermKeep = Boolean(data.longTermKeep)
+    message.success(report.longTermKeep ? text('已设为长期保留', 'Marked for long-term retention') : text('已取消长期保留', 'Long-term retention removed'))
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : text('更新长期保留标记失败', 'Failed to update long-term retention'))
+  }
+}
+
+async function openRecovery() {
+  recoveryVisible.value = true
+  recoveryLoading.value = true
+  try {
+    const response = await fetch('/api/reports/retention/recovery', { headers: headers() })
+    const data = await readJsonResponse(response, text('获取报告恢复区失败', 'Failed to load report recovery area'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('获取报告恢复区失败', 'Failed to load report recovery area')))
+    recoveryReports.value = data.reports || []
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : text('获取报告恢复区失败', 'Failed to load report recovery area'))
+  } finally {
+    recoveryLoading.value = false
+  }
+}
+
+async function restoreReport(report: RecoveryReport) {
+  try {
+    const response = await fetch(`/api/reports/${report.id}/restore`, { method: 'POST', headers: headers() })
+    const data = await readJsonResponse(response, text('恢复报告失败', 'Failed to restore report'))
+    if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('恢复报告失败', 'Failed to restore report')))
+    message.success(text('报告及配对记录已整体恢复', 'The report and paired records were restored'))
+    await Promise.all([openRecovery(), refresh(false)])
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : text('恢复报告失败', 'Failed to restore report'))
+  }
+}
+
 function remove(report: ReportFile) {
-  dialog.error({
-    title: text('删除报告文件', 'Delete report file'),
-    content: text(`确定删除“${report.name}”吗？此操作不可恢复。`, `Delete “${report.name}”? This cannot be undone.`),
-    positiveText: text('删除', 'Delete'),
+  dialog.warning({
+    title: text('移入7天恢复区', 'Move to 7-day recovery'),
+    content: text(`仅当数据库时间和文件时间都已超过365天时，才会将“${report.name}”及配对记录整体移入恢复区。`, `“${report.name}” and its paired records will move together only when both database and file times exceed 365 days.`),
+    positiveText: text('移入恢复区', 'Move to recovery'),
     negativeText: text('取消', 'Cancel'),
     onPositiveClick: async () => {
       try {
         const response = await fetch(`/api/reports/${report.id}`, { method: 'DELETE', headers: headers() })
         const data = await response.json()
-        if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('报告删除失败', 'Failed to delete report')))
-        message.success(text('报告文件已删除', 'Report file deleted'))
+        if (!response.ok || !data.ok) throw new Error(localizeApiError(data, text('报告移入恢复区失败', 'Failed to move report to recovery')))
+        message.success(text('报告已移入7天恢复区', 'Report moved to 7-day recovery'))
         await refresh(false)
       } catch (error) {
-        message.error(error instanceof Error ? error.message : text('报告删除失败', 'Failed to delete report'))
+        message.error(error instanceof Error ? error.message : text('报告移入恢复区失败', 'Failed to move report to recovery'))
       }
     },
   })
@@ -255,22 +313,32 @@ const columns = computed<DataTableColumns<ReportFile>>(() => [
   { title: text('来源数据源', 'Source data source'), key: 'dataSourceName', minWidth: 180, ellipsis: { tooltip: true }, render: row => row.dataSourceName || row.dataSourceId || text('未记录', 'Not recorded') },
   { title: text('文件大小', 'File size'), key: 'size', width: 110, render: row => formatSize(row.size) },
   { title: text('状态', 'Status'), key: 'status', width: 110, render: row => h(NTag, { type: statusMap.value[row.status]?.type || 'default', bordered: false }, { default: () => statusMap.value[row.status]?.label || row.status }) },
+  { title: text('留存', 'Retention'), key: 'longTermKeep', width: 110, render: row => h(NTag, { type: row.longTermKeep ? 'warning' : 'default', bordered: false }, { default: () => row.longTermKeep ? text('长期保留', 'Long-term') : text('365天', '365 days') }) },
   {
     title: text('操作', 'Actions'),
     key: 'actions',
-    width: 180,
-    minWidth: 180,
+    width: 360,
+    minWidth: 360,
     fixed: 'right',
     render: row => {
       const actions = [
         h(NButton, { size: 'small', type: 'primary', secondary: true, disabled: row.status !== 'ready', onClick: () => download(row) }, { icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }), default: () => text('下载', 'Download') }),
       ]
       if (isAdmin.value) {
-        actions.push(h(NButton, { size: 'small', type: 'error', ghost: true, onClick: () => remove(row) }, { icon: () => h(NIcon, null, { default: () => h(TrashOutline) }), default: () => text('删除', 'Delete') }))
+        actions.push(h(NButton, { size: 'small', type: row.longTermKeep ? 'warning' : 'default', secondary: true, onClick: () => updateLongTermKeep(row) }, { icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }), default: () => row.longTermKeep ? text('取消长期', 'Unpin') : text('长期保留', 'Keep') }))
+        actions.push(h(NButton, { size: 'small', type: 'warning', ghost: true, disabled: row.longTermKeep || Number(row.createdAt) >= serverNow.value - 365 * 24 * 60 * 60 * 1000, onClick: () => remove(row) }, { icon: () => h(NIcon, null, { default: () => h(ArchiveOutline) }), default: () => text('恢复区', 'Recoverable') }))
       }
       return h('div', { style: { display: 'flex', flexWrap: 'nowrap', gap: '10px', whiteSpace: 'nowrap' } }, actions)
     },
   },
+])
+
+const recoveryColumns = computed<DataTableColumns<RecoveryReport>>(() => [
+  { title: text('报告名称', 'Report name'), key: 'name', minWidth: 260, ellipsis: { tooltip: true } },
+  { title: text('移入时间', 'Moved at'), key: 'quarantinedAt', width: 180, render: row => formatTime(row.quarantinedAt || undefined) },
+  { title: text('可恢复截止', 'Recoverable until'), key: 'recoverableUntil', width: 180, render: row => formatTime(row.recoverableUntil || undefined) },
+  { title: text('状态', 'State'), key: 'retentionState', width: 150, render: row => row.errorCode ? `${row.retentionState} (${row.errorCode})` : row.retentionState },
+  { title: text('操作', 'Actions'), key: 'actions', width: 120, render: row => h(NButton, { size: 'small', type: 'primary', secondary: true, onClick: () => restoreReport(row) }, { icon: () => h(NIcon, null, { default: () => h(ReturnUpBackOutline) }), default: () => text('恢复', 'Restore') }) },
 ])
 
 onMounted(() => {
@@ -286,7 +354,7 @@ onBeforeUnmount(() => {
 <template>
   <section class="report-page">
     <NAlert type="info" :bordered="false" class="report-note">
-      {{ text(`报告仅由会话中的 ${platformBranding.productCode} AI 自动生成，不支持手动上传或编辑。当前已导入的早期版本历史报告为本地过渡副本；管理员删除时只删除本地副本，不影响原始报告。历史审计未记录来源用户、会话或数据源时统一显示“未记录”。`, `Reports are generated automatically by ${platformBranding.productCode} AI in sessions and cannot be uploaded or edited manually. Imported legacy historical reports are local transitional copies; administrator deletion removes only the local copy, not the original report. Historical records without a source user, session, or data source show Not recorded.`) }}
+      {{ text(`报告仅由会话中的 ${platformBranding.productCode} AI 自动生成，不支持手动上传或编辑。正式报告在线保存365天；到期后仅能整体移入7天恢复区，长期保留报告不参加自动处理。历史审计未记录来源用户、会话或数据源时统一显示“未记录”。`, `Reports are generated automatically by ${platformBranding.productCode} AI in sessions and cannot be uploaded or edited manually. Formal reports remain online for 365 days, then can only move as a group into a 7-day recovery area. Long-term reports are excluded from automatic processing.`) }}
     </NAlert>
     <NCard :title="text('报告文件管理', 'Report Management')" :bordered="false" class="report-card">
       <template #header-extra>
@@ -299,6 +367,7 @@ onBeforeUnmount(() => {
             placement="bottom-end"
             @apply="applyTimeRange"
           />
+          <NButton v-if="isAdmin" size="small" secondary @click="openRecovery"><template #icon><ArchiveOutline /></template>{{ text('报告恢复区', 'Report recovery') }}</NButton>
           <NButton size="small" :loading="loading" @click="refresh()"><template #icon><RefreshOutline /></template>{{ text('刷新', 'Refresh') }}</NButton>
         </NSpace>
       </template>
@@ -329,6 +398,14 @@ onBeforeUnmount(() => {
         </NSpace>
       </NSpace>
     </NCard>
+    <NModal v-model:show="recoveryVisible" preset="card" :title="text('报告7天恢复区', '7-day Report Recovery')" style="width: min(960px, 92vw)">
+      <NAlert type="warning" :bordered="false" style="margin-bottom: 12px">
+        {{ text('这里只显示已从正常报告列表隐藏的报告。恢复会把正式文件、审计JSON和交付事件整体放回原登记位置。', 'Only reports hidden from the normal list appear here. Restore returns the formal file, audit JSON, and delivery events to their registered locations as one group.') }}
+      </NAlert>
+      <NDataTable :columns="recoveryColumns" :data="recoveryReports" :loading="recoveryLoading" :bordered="false" :single-line="false" :scroll-x="890">
+        <template #empty><NEmpty :description="text('恢复区暂无报告', 'No reports in recovery')" /></template>
+      </NDataTable>
+    </NModal>
   </section>
 </template>
 

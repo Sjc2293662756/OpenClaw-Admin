@@ -1,0 +1,23 @@
+[Unit]
+Description=GAIOP formal report retention cleanup
+After=gaiop-admin.service
+
+[Service]
+Type=oneshot
+User=gaiop
+Group=gaiop
+WorkingDirectory=/opt/gaiop/admin
+EnvironmentFile=/etc/gaiop/admin.env
+ExecStart=/usr/local/bin/node /opt/gaiop/admin/server/report-retention-cleanup.js
+UMask=0027
+RuntimeDirectory=gaiop-report-retention
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gaiop/admin
+ReadWritePaths=/var/lib/gaiop/reports
+ReadWritePaths=/var/lib/gaiop/report-recovery
+ReadWritePaths=/run/gaiop-report-retention

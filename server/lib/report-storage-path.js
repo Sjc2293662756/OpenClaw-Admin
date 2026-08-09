@@ -11,3 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 export function getReportStorageRoot(env = process.env) {
   return resolve(env.GAIOP_REPORTS_DIR || join(__dirname, '../../data/reports'))
 }
+
+export function getReportRecoveryRoot(env = process.env) {
+  return resolve(env.GAIOP_REPORT_RECOVERY_DIR || join(__dirname, '../../data/report-recovery'))
+}
