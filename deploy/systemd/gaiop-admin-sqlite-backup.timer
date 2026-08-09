@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GAIOP Admin SQLite backup daily
+
+[Timer]
+OnCalendar=*-*-* 01:20:00 UTC
+Persistent=true
+RandomizedDelaySec=10m
+Unit=gaiop-admin-sqlite-backup.service
+
+[Install]
+WantedBy=timers.target
