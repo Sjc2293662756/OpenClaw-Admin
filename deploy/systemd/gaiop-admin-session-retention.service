@@ -1,0 +1,21 @@
+[Unit]
+Description=GAIOP Admin session retention
+After=network-online.target gaiop-admin.service
+
+[Service]
+Type=oneshot
+User=gaiop
+Group=gaiop
+WorkingDirectory=/opt/gaiop/admin
+EnvironmentFile=/etc/gaiop/admin.env
+ExecStart=/usr/local/bin/node /opt/gaiop/admin/server/session-retention-cleanup.js
+UMask=0027
+RuntimeDirectory=gaiop-admin-session-retention
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gaiop/admin
+ReadWritePaths=/run/gaiop-admin-session-retention

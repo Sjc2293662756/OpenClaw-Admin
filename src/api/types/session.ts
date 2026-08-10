@@ -15,6 +15,20 @@ export interface Session {
   ownerUsername?: string | null
   channelUserId?: string | null
   channelUserName?: string | null
+  retention?: SessionRetentionInfo
+}
+
+export interface SessionRetentionInfo {
+  mode: 'standard' | 'long_term'
+  status: 'active' | 'pending_delete' | 'deleted'
+  lastActivityAt: number | null
+  markedAt: number | null
+  deleteAfter: number | null
+  deletedAt: number | null
+  attachmentCount: number
+  unverifiedAttachmentCount: number
+  temporaryAttachmentCount: number
+  attachmentCleanupSupported: boolean
 }
 
 export interface SessionDetail extends Session {

@@ -444,6 +444,15 @@ export class RPCClient {
       row.sessionStartedAt ??
       row.createdAt
     )
+    const retentionRow = this.asRecord(row.retention)
+    const retentionMode = retentionRow.mode === 'long_term' ? 'long_term' : 'standard'
+    const retentionStatus = ['active', 'pending_delete', 'deleted'].includes(this.asString(retentionRow.status))
+      ? this.asString(retentionRow.status) as 'active' | 'pending_delete' | 'deleted'
+      : 'active'
+    const nullableNumber = (input: unknown) => {
+      const number = this.asNumber(input, Number.NaN)
+      return Number.isFinite(number) && number > 0 ? number : null
+    }
     return {
       key,
       agentId: this.asString(row.agentId || row.agent || parsed.agentId, 'main'),
@@ -463,6 +472,18 @@ export class RPCClient {
       ownerUsername: this.asString(row.ownerUsername) || null,
       channelUserId: this.asString(row.channelUserId) || null,
       channelUserName: this.asString(row.channelUserName) || null,
+      retention: Object.keys(retentionRow).length > 0 ? {
+        mode: retentionMode,
+        status: retentionStatus,
+        lastActivityAt: nullableNumber(retentionRow.lastActivityAt),
+        markedAt: nullableNumber(retentionRow.markedAt),
+        deleteAfter: nullableNumber(retentionRow.deleteAfter),
+        deletedAt: nullableNumber(retentionRow.deletedAt),
+        attachmentCount: this.asNumber(retentionRow.attachmentCount, 0),
+        unverifiedAttachmentCount: this.asNumber(retentionRow.unverifiedAttachmentCount, 0),
+        temporaryAttachmentCount: this.asNumber(retentionRow.temporaryAttachmentCount, 0),
+        attachmentCleanupSupported: retentionRow.attachmentCleanupSupported === true,
+      } : undefined,
     }
   }
 

@@ -32,6 +32,7 @@ import { createReportsRouter } from './routes/reports.js'
 import { createAlertsRouter } from './routes/alerts.js'
 import { createReportStorageRouter } from './routes/report-storage.js'
 import { createSessionSettingsRouter } from './routes/session-settings.js'
+import { createSessionRetentionRouter } from './routes/session-retention.js'
 import { createBrandingSettingsRouter } from './routes/branding-settings.js'
 import { createWorkspaceSessionsRouter } from './routes/workspace-sessions.js'
 import { createGAIOPServiceRouter } from './routes/gaiop-service.js'
@@ -46,6 +47,11 @@ import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
 import { readSessionSettings } from './lib/session-settings.js'
+import {
+  enrichSessionRetentionPayload,
+  getSessionAttachmentDeletionBlock,
+  markManualGatewaySessionDeleted,
+} from './lib/session-retention-service.js'
 import {
   SESSION_LIST_METHODS,
   SESSION_SCOPED_READ_METHODS,
@@ -64,7 +70,6 @@ import {
   isLegacySharedWebSessionKey,
   isConversationSessionSend,
   listOwnedWorkspaceSessionKeys,
-  markWorkspaceSessionDeleted,
   setWorkspaceSessionTitleIfEmpty,
 } from './lib/session-ownership-service.js'
 
@@ -109,6 +114,10 @@ function loadEnvConfig() {
     GAIOP_UPGRADE_SERVICE_URL: value('GAIOP_UPGRADE_SERVICE_URL'),
     GAIOP_UPGRADE_INTERNAL_TOKEN: value('GAIOP_UPGRADE_INTERNAL_TOKEN'),
     GAIOP_ALLOWED_ORIGINS: value('GAIOP_ALLOWED_ORIGINS'),
+    GAIOP_SESSION_RETENTION_AUTO_MARK: value('GAIOP_SESSION_RETENTION_AUTO_MARK', 'false'),
+    GAIOP_SESSION_RETENTION_AUTO_DELETE: value('GAIOP_SESSION_RETENTION_AUTO_DELETE', 'false'),
+    GAIOP_SESSION_RETENTION_DAYS: value('GAIOP_SESSION_RETENTION_DAYS', '180'),
+    GAIOP_SESSION_RETENTION_GRACE_DAYS: value('GAIOP_SESSION_RETENTION_GRACE_DAYS', '7'),
   }
 }
 
@@ -498,6 +507,18 @@ app.use('/api/system-settings/sessions', createSessionSettingsRouter({
   recordAudit,
   gateway,
   getGateway: () => gateway,
+}))
+app.use('/api/session-retention', createSessionRetentionRouter({
+  db,
+  viewerMiddleware: auditViewerMiddleware,
+  adminMiddleware,
+  recordAudit,
+  policy: {
+    retentionDays: Number.parseInt(envConfig.GAIOP_SESSION_RETENTION_DAYS, 10) || 180,
+    graceDays: Number.parseInt(envConfig.GAIOP_SESSION_RETENTION_GRACE_DAYS, 10) || 7,
+    automaticMarkingEnabled: String(envConfig.GAIOP_SESSION_RETENTION_AUTO_MARK).trim().toLowerCase() === 'true',
+    automaticDeletionEnabled: String(envConfig.GAIOP_SESSION_RETENTION_AUTO_DELETE).trim().toLowerCase() === 'true',
+  },
 }))
 app.use('/api/system-config/gaiop-service', createGAIOPServiceRouter({
   adminMiddleware,
@@ -1586,6 +1607,16 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
       recordAudit(req.user, '移出历史共享会话', sessionKey, '已从 GAIOP 会话列表隐藏；未修改 Gateway 历史')
       return res.json({ ok: true, payload: { key: sessionKey, retired: true } })
     }
+    if (method === 'sessions.delete' || method === 'session.delete') {
+      const attachmentBlock = getSessionAttachmentDeletionBlock(db, sessionKey)
+      if (attachmentBlock.blocked) {
+        return sendError(res, {
+          status: 409,
+          code: 'SESSION_ATTACHMENT_CLEANUP_UNAVAILABLE',
+          message: '会话存在已登记附件，当前 Gateway 缺少正式附件删除能力，已保护会话不被删除',
+        })
+      }
+    }
     const activeDataSource = method === 'chat.send'
       ? db.prepare('SELECT id FROM data_sources WHERE is_active = 1 LIMIT 1').get()
       : null
@@ -1620,15 +1651,26 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
       payload = filterSessionListPayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))
       payload = filterHiddenLegacySessions(db, payload)
       payload = enrichSessionPayload(db, payload)
+      payload = enrichSessionRetentionPayload(db, payload)
     } else if (method === 'sessions.get' || method === 'session.get') {
       payload = enrichSessionPayload(db, payload)
+      payload = enrichSessionRetentionPayload(db, payload)
     }
     if (method === 'sessions.delete' || method === 'session.delete') {
-      markWorkspaceSessionDeleted(db, sessionKey)
+      markManualGatewaySessionDeleted(db, sessionKey)
+      recordAudit(req.user, '会话删除完成', sessionKey, '', {
+        category: 'session_retention', source: 'rpc', rpcMethod: method,
+      })
     }
     if (!isReadOnlyRpcMethod(method)) recordAudit(req.user, '执行业务操作', method)
     res.json({ ok: true, payload })
   } catch (err) {
+    if (method === 'sessions.delete' || method === 'session.delete') {
+      recordAudit(req.user, '会话删除失败', sessionKey, '', {
+        category: 'session_retention', result: 'failed', source: 'rpc',
+        rpcMethod: method, errorCode: 'SESSION_DELETE_FAILED',
+      })
+    }
     res.status(500).json({ ok: false, error: { message: err.message }, code: 'RPC_CALL_FAILED' })
   }
 })

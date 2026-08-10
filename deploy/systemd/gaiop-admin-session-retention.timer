@@ -1,0 +1,11 @@
+[Unit]
+Description=Run GAIOP Admin session retention daily
+
+[Timer]
+OnCalendar=*-*-* 02:45:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=gaiop-admin-session-retention.service
+
+[Install]
+WantedBy=timers.target
