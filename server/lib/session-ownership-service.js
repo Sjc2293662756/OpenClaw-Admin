@@ -86,7 +86,7 @@ function normalizeTimestamp(value) {
  * maintenance. updatedAt can change because of delivery retries, compaction,
  * cache accounting, or other background work.
  */
-function resolveConversationLastActivity(value) {
+function resolveConversationActivityEvidence(value) {
   const row = asRecord(value)
   for (const key of [
     'lastInteractionAt',
@@ -98,7 +98,7 @@ function resolveConversationLastActivity(value) {
     'createdAt',
   ]) {
     const timestamp = normalizeTimestamp(row[key])
-    if (timestamp) return new Date(timestamp).toISOString()
+    if (timestamp) return { timestamp, source: key }
   }
   // Current Gateway session lists expose updatedAt as the only activity field
   // for regular WebChat and channel conversations. Its protected default
@@ -106,9 +106,14 @@ function resolveConversationLastActivity(value) {
   // record without a real conversation.
   if (!isLegacySharedWebSessionKey(extractRowSessionKey(row))) {
     const updatedAt = normalizeTimestamp(row.updatedAt)
-    if (updatedAt) return new Date(updatedAt).toISOString()
+    if (updatedAt) return { timestamp: updatedAt, source: 'updatedAt' }
   }
-  return null
+  return { timestamp: null, source: null }
+}
+
+function resolveConversationLastActivity(value) {
+  const { timestamp } = resolveConversationActivityEvidence(value)
+  return timestamp ? new Date(timestamp).toISOString() : null
 }
 
 export function getSessionKeyFromParams(params) {
@@ -640,6 +645,7 @@ function readOwnerDisplayName(db, ownerUserId) {
 export function enrichSessionPayload(db, payload) {
   const enrich = (value) => {
     const row = asRecord(value)
+    const conversationActivity = resolveConversationActivityEvidence(row)
     const { key, channel, peer } = parseSessionChannelAndPeer(row)
     const workspace = key ? findWorkspaceSession(db, key) : null
     const legacySharedWeb = isLegacySharedWebSessionKey(key)
@@ -665,7 +671,10 @@ export function enrichSessionPayload(db, payload) {
       ownerUserId: ownerUserId || null,
       ownerUsername: ownerUsername || null,
       sessionTitle: isWeb ? (findDisplaySessionTitle(db, key) || null) : null,
-      conversationLastActivity: resolveConversationLastActivity(row),
+      conversationLastActivity: conversationActivity.timestamp
+        ? new Date(conversationActivity.timestamp).toISOString()
+        : null,
+      conversationLastActivitySource: conversationActivity.source,
       channelUserId: channelUserId || null,
       channelUserName: channelUserName || null,
     }
@@ -719,4 +728,5 @@ export const __test__ = {
   enrichSessionPayload,
   extractSessionKeyFromEvent,
   resolveConversationLastActivity,
+  resolveConversationActivityEvidence,
 }

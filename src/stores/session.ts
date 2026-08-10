@@ -350,6 +350,36 @@ export const useSessionStore = defineStore('session', () => {
     return { deletedCount: deletedKeys.size, failedCount }
   }
 
+  async function updateSessionRetention(
+    key: string,
+    request: { method: 'POST' | 'PUT'; path: string; body?: Record<string, unknown> }
+  ) {
+    const response = await fetch(`/api/session-retention${request.path}`, {
+      method: request.method,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authStore.getToken() || ''}`,
+      },
+      body: JSON.stringify({ sessionKey: key, ...(request.body || {}) }),
+    })
+    const data = await response.json()
+    if (!response.ok || !data?.ok || !data?.retention) {
+      throw new Error(data?.error || '会话留存状态更新失败')
+    }
+    sessions.value = sessions.value.map((session) => session.key === key
+      ? { ...session, retention: data.retention }
+      : session)
+    return data.retention
+  }
+
+  function cancelPendingDeletion(key: string) {
+    return updateSessionRetention(key, { method: 'POST', path: '/cancel' })
+  }
+
+  function setLongTermRetention(key: string, enabled: boolean) {
+    return updateSessionRetention(key, { method: 'PUT', path: '/long-term', body: { enabled } })
+  }
+
   async function spawnSession(params: {
     agentId?: string
     channel?: string
@@ -408,6 +438,8 @@ export const useSessionStore = defineStore('session', () => {
     newSession,
     deleteSession,
     deleteSessions,
+    cancelPendingDeletion,
+    setLongTermRetention,
     spawnSession,
     createWorkspaceSession,
     createSession,

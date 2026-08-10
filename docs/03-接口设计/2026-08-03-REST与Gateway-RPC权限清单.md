@@ -20,6 +20,7 @@
 | `src/api/rpc-client.ts`、`src/stores/**`、`src/views/**` | 确定前端和 BFF 实际调用的 RPC 及兼容别名 |
 | `server/lib/permissions.js` | 权威的 RPC 正式集合、四角色决策和默认拒绝规则 |
 | `server/lib/session-ownership-service.js` | 会话归属、事件隔离、本人 Usage 重聚合和历史默认会话隐藏 |
+| `server/lib/session-retention-service.js` | 会话真实活动证据、180 天期限、7 天缓冲、长期保留、附件保护和删除后本地事务 |
 | Node/Vitest 直接测试 | 验证绕过前端时 REST/RPC 仍受限，测试数据与生产用户隔离 |
 | 237 回环生产探针 | 验证未登录 401、遗留入口 410、健康状态和回环监听 |
 
@@ -29,7 +30,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 
 1. `cors`、`compression`、`express.json()` 全局中间件。`/api/events` 不进入压缩，避免 SSE 缓冲。
 2. `registerRetiredApiBarriers(app)` 立即注册九组遗留前缀；这一层早于任何正式 Router 和遗留 handler。
-3. 认证、系统设置、系统配置、升级、仪表盘、频道、工作台会话、告警、用户、审计、数据源、报告和媒体等正式 Router。
+3. 认证、系统设置、系统配置、升级、仪表盘、频道、工作台会话、会话留存、告警、用户、审计、数据源、报告和媒体等正式 Router。
 4. `/api/health`、`/api/system/metrics`、`/api/status`、`/api/rpc`、`/api/events` 等直接正式路由。
 5. terminal、desktop、Hermes、files、config、backup 等遗留 handler 仍保留在文件后部，但已被第 2 层截断。
 6. Wizard 正式管理路由、生产静态资源和 SPA fallback。
@@ -42,6 +43,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | 401 | 未携带 Bearer、Token 无效或登录过期 | `UNAUTHORIZED` | 否 |
 | 403 | 已登录，但角色或 RPC 正式集合不允许 | `PERMISSION_DENIED`、`RPC_METHOD_NOT_SUPPORTED`、`AUDITOR_READ_ONLY` | 否 |
 | 404 | 资源不存在或不能证明归属；两者故意统一 | `SESSION_NOT_FOUND`、`MEDIA_NOT_FOUND`、`REPORT_NOT_FOUND` | 否 |
+| 409 | 当前资源状态或安全依赖不允许操作 | `SESSION_NOT_PENDING_DELETE`、`SESSION_ATTACHMENT_CLEANUP_UNAVAILABLE` | 否 |
 | 410 | 接口已从正式产品退役，不应再试 | `ENDPOINT_RETIRED` | 仅表明前缀已退役 |
 | 503 | 正式能力存在，但 Gateway 或依赖服务暂不可用 | `GATEWAY_UNAVAILABLE` 等 | 否 |
 
@@ -49,7 +51,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 
 | 对象 | 数量 | 说明 |
 |---|---:|---|
-| 正式 REST 方法+路径 | 64 | 第 2 节逐项列出，不把同一路径的不同 HTTP 方法合并 |
+| 正式 REST 方法+路径 | 68 | 第 2 节逐项列出，不把同一路径的不同 HTTP 方法合并；2026-08-10 新增 4 个会话留存接口 |
 | 统一退役前缀 | 9 | 对任意方法和子路径前置返回 410；详见第 3 节 |
 | 正式 Gateway RPC 方法 | 106 | 均在 `FORMAL_RPC_METHODS` 中逐字登记，没有管理员通配 |
 | 管理员诊断 RPC | 8 | 上述 106 项的子集，单独列出并说明正式使用理由 |
@@ -77,6 +79,10 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | GET `/api/channels/feishu/onboarding/:id` | 频道接入 | 是 | — | 403 | 403 | 403 | 管理 | 仅返回短期流程状态 | 管理员专属 |
 | DELETE `/api/channels/feishu/onboarding/:id` | 频道接入 | 是 | — | 403 | 403 | 403 | 管理 | 取消接入流程 | 管理员专属 |
 | POST `/api/workspace/sessions` | 工作台会话 | 是 | — | 本人创建 | 本人创建 | 403 | 管理 | 会话归属 | 基础/标准/管理员；服务端登记 owner_user_id |
+| GET `/api/session-retention` | 会话留存 | 是 | — | 403 | 403 | 全量只读 | 管理读取 | 策略、待删除/长期保留和附件计数；无附件路径 | 审计/管理员可读 |
+| POST `/api/session-retention/cancel` | 会话留存 | 是 | — | 403 | 403 | 403 | 管理 | 取消待删除状态 | 管理员专属；同一活动快照保持取消 |
+| PUT `/api/session-retention/long-term` | 会话留存 | 是 | — | 403 | 403 | 403 | 管理 | 设置或取消长期保留 | 管理员专属；不调用 Gateway 删除 |
+| POST `/api/session-retention/attachments` | 会话附件留存 | 是 | — | 403 | 403 | 403 | 管理 | 登记相对引用、类别和到期元数据 | 管理员专属；响应和审计不返回附件路径，不删除文件 |
 | GET `/api/alerts` | 告警 | 是 | — | 403 | 只读 | 全量只读 | 全量 | 告警业务数据 | 基础用户不进入管理控制台 |
 | GET `/api/alerts/time` | 告警 | 是 | — | 403 | 只读 | 只读 | 只读 | 服务器时间 | 基础用户不进入管理控制台 |
 | POST `/api/alerts/export` | 告警 | 是 | — | 403 | 当前页导出 | 当前页导出 | 当前页导出 | 告警业务数据 | 基础用户不进入管理控制台 |
@@ -143,6 +149,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 |---|---|---|---|---|
 | WebChat 会话列表、历史、用量 | 仅 `workspace_sessions.owner_user_id` 归属的 active 会话 | 全量只读 | 全量 | `listOwnedWorkspaceSessionKeys`、`ensureWorkspaceSessionAccess`、`filterSessionListPayload` |
 | WebChat 会话删除/发送/停止 | 基础和标准均可在本人会话中执行工作台对话、停止和删除 | 全部拒绝 | 允许 | `/api/rpc` 在转发 Gateway 前先解析 sessionKey 并查归属 |
+| 会话留存状态与附件登记 | 基础/标准拒绝 | 全量安全摘要只读 | 管理 | `createSessionRetentionRouter`；取消、长期保留和附件登记使用管理员中间件 |
 | Usage | 先过滤本人会话，再重算消息、Token、趋势、模型、工具和分组聚合 | 全量只读 | 全量 | `filterSessionUsagePayload`；不是全局数据透传，也不是简单清零 |
 | 报告列表、预览、下载 | 基础拒绝；标准仅 `source_user_id` 匹配本人 | 全量只读 | 全量 | 基础 REST 边界 + `resolveReportOrError`和报告列表 SQL 条件 |
 | 实时 SSE 会话事件 | 仅能接收可访问 sessionKey 的事件 | 全量只读 | 全量 | `extractSessionKeyFromEvent` + `canAccessWorkspaceSession` |
@@ -192,7 +199,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | 方法组 | 基础 | 标准 | 审计 | 管理员 | 数据范围/投影 |
 |---|---|---|---|---|---|
 | `sessions.list/get/history/usage`、`session.*` 读别名、`chat.history` | 本人 | 本人 | 全量只读 | 全量 | BFF 校验归属；Usage 按本人完整重聚合 |
-| `sessions.delete`、`session.delete` | 本人 | 本人 | 拒绝 | 全量 | 本人归属校验；审计只读 |
+| `sessions.delete`、`session.delete` | 本人 | 本人 | 拒绝 | 全量 | 本人归属校验；有登记附件时统一 409；Gateway 成功后才更新 Admin 元数据 |
 | `chat.send`、`agent` 对话回退、`chat.abort`、`agent.abort` | 本人 | 本人 | 拒绝 | 允许 | 基础/标准必须携带并通过本人 sessionKey |
 | `sessions.reset/spawn/send/patch` 及单数别名 | 拒绝 | 本人 | 拒绝 | 允许 | 标准必须通过本人归属校验 |
 | `usage.cost`、`cost.usage` | 拒绝 | 拒绝 | 全量只读 | 全量 | 全局成本不下放基础/标准 |
@@ -216,8 +223,9 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 3. 再应用四角色决策；管理员只对“已登记方法”放行，不是先行通配。
 4. 检查 Gateway 连接状态。未登记/越权方法在此之前已经 403，不会因 Gateway 离线变成 503，也不会被转发。
 5. 对会话范围方法解析 `sessionKey`/`key`/`session`，检查历史默认会话隐藏和本人归属。
-6. 仅在以上检查全部通过后调用 `gateway.call(method, params)`。
-7. 对非管理员结果执行安全字段投影，对会话列表/Usage 执行数据范围过滤，然后才返回浏览器。
+6. 对 `sessions.delete`/`session.delete` 检查登记附件；存在附件时在 Gateway 调用前返回 409，不回退到文件删除。
+7. 仅在以上检查全部通过后调用 `gateway.call(method, params)`。
+8. 会话删除只在 Gateway 成功后以本地事务更新 `workspace_sessions` 和留存元数据；失败保持不变。对非管理员结果执行安全字段投影，对会话列表/Usage 执行数据范围过滤，然后才返回浏览器。
 
 ### 4.2 精确的正式 RPC 方法集
 
@@ -323,6 +331,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | Node | `server/routes/media.test.js` | 未登录 401；本人 200；他人 404；绝对/穿越/非图片 400；管理员正常读取 |
 | Node | `server/lib/permissions.test.js` | 四角色对 `FORMAL_RPC_METHODS` 每一个方法的 allow/deny 全量矩阵；未知后缀方法全拒绝 |
 | Node/HTTP | `server/lib/permissions.test.js` | 直接 POST `/api/rpc` 不能绕过标准写限制、审计只读或管理员方法登记 |
+| Node/HTTP | `server/lib/session-retention-service.test.js`、`server/routes/session-retention.test.js` | 180 天严格边界、7 天缓冲、关闭开关零 Gateway 调用、取消/长期保留、附件阻断、Gateway 失败零元数据变化、REST 角色边界和直接 RPC 顺序 |
 | Node | session/projection/dashboard/reports/users/channels 相关用例 | 本人会话和 Usage、报告归属、审计账户只读、安全字段投影 |
 | Vitest | `src/api/http-client.test.ts` | Bearer 请求头、URL 无 Token、分 chunk/CRLF、心跳、401、Abort、重复连接和断线恢复 |
 | 237 未登录探针 | `gateway237-admin-security-probe.cjs` | health 200；events/media/rpc/upgrade 401；遗留入口 410 |

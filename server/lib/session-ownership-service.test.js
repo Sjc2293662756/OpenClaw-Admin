@@ -366,6 +366,7 @@ describe('workspace session ownership service', () => {
       originKind: 'web',
       sourceChannel: 'web',
       conversationLastActivity: '2026-07-09T08:06:30.254Z',
+      conversationLastActivitySource: 'lastInteractionAt',
     })
   })
 
@@ -385,6 +386,10 @@ describe('workspace session ownership service', () => {
       updatedAt: 1785131704158,
       pendingFinalDeliveryLastAttemptAt: 1785131704158,
     })).toBeNull()
+    expect(__test__.resolveConversationActivityEvidence({
+      key: 'agent:main:wecom:direct:yangs',
+      updatedAt: 1785131704158,
+    })).toEqual({ timestamp: 1785131704158, source: 'updatedAt' })
     expect(__test__.resolveConversationLastActivity({
       key: 'agent:main:wecom:direct:yangs',
       updatedAt: 1785131704158,
