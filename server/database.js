@@ -6,6 +6,7 @@ import { migrateUserSecurityColumns } from './lib/account-security.js'
 import { migrateAuditLogColumns } from './lib/audit-service.js'
 import { migratePersonalWechatMetadata } from './lib/personal-wechat-metadata.js'
 import { migrateReportRetention } from './lib/report-retention-schema.js'
+import { migrateSessionRetentionTables } from './lib/session-retention-service.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -238,6 +239,7 @@ migrateUserSecurityColumns(db)
 migrateAuditLogColumns(db)
 migratePersonalWechatMetadata(db)
 migrateReportRetention(db)
+migrateSessionRetentionTables(db)
 
 try {
   db.exec('ALTER TABLE scenarios ADD COLUMN execution_log TEXT DEFAULT \'[]\'')

@@ -24,6 +24,8 @@ import { platformBranding } from '@/branding/platform'
 import {
   AddOutline,
   ChatbubblesOutline,
+  CloseCircleOutline,
+  BookmarkOutline,
   RefreshOutline,
   RemoveOutline,
   SearchOutline,
@@ -72,6 +74,7 @@ const {
   canUseFunctions,
   canDeleteSessions,
   canContinueSessions,
+  canManageSecurity,
 } = usePermissions()
 
 const searchQuery = ref('')
@@ -88,6 +91,7 @@ const createForm = ref({
 })
 const allSelectedKeys = ref<string[]>([])
 const batchDeleting = ref(false)
+const retentionUpdatingKeys = ref(new Set<string>())
 const currentPage = ref(1)
 const pageSize = 12
 const serverNow = ref(Date.now())
@@ -363,6 +367,15 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
           row.active24h
             ? h(NTag, { size: 'small', bordered: false, type: 'success', round: true }, { default: () => t('pages.sessions.list.badges.active24h') })
             : null,
+          row.retention?.status === 'pending_delete'
+            ? h(NTag, { size: 'small', bordered: false, type: 'warning', round: true }, { default: () => t('pages.sessions.list.badges.pendingDelete') })
+            : null,
+          row.retention?.mode === 'long_term'
+            ? h(NTag, { size: 'small', bordered: false, type: 'success', round: true }, { default: () => t('pages.sessions.list.badges.longTerm') })
+            : null,
+          (row.retention?.attachmentCount || 0) > 0
+            ? h(NTag, { size: 'small', bordered: false, type: 'warning', round: true }, { default: () => t('pages.sessions.list.badges.attachmentsProtected', { count: row.retention?.attachmentCount || 0 }) })
+            : null,
         ]),
         // Gateway's historical label is internal transport metadata (for
         // example “OpenClaw Web Backend”), not a GAIOP-facing session name.
@@ -426,7 +439,7 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
   {
     title: t('pages.sessions.list.columns.actions'),
     key: 'actions',
-    width: canDeleteSessions.value ? 220 : 130,
+    width: canManageSecurity.value ? 420 : (canDeleteSessions.value ? 220 : 130),
     render(row) {
       const actions = [
         h(
@@ -467,6 +480,55 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
               }
             ),
             default: () => t('pages.sessions.detail.confirmDelete'),
+          }
+        ))
+      }
+      if (canManageSecurity.value && row.retention?.status === 'pending_delete') {
+        actions.push(h(
+          NPopconfirm,
+          { onPositiveClick: () => handleCancelPendingDeletion(row) },
+          {
+            trigger: () => h(
+              NButton,
+              {
+                size: 'small',
+                type: 'warning',
+                secondary: true,
+                loading: isRetentionUpdating(row.key),
+              },
+              {
+                icon: () => h(NIcon, { component: CloseCircleOutline }),
+                default: () => t('pages.sessions.list.retention.cancelPending'),
+              }
+            ),
+            default: () => t('pages.sessions.list.retention.confirmCancelPending'),
+          }
+        ))
+      }
+      if (canManageSecurity.value) {
+        const longTerm = row.retention?.mode === 'long_term'
+        actions.push(h(
+          NPopconfirm,
+          { onPositiveClick: () => handleToggleLongTerm(row, !longTerm) },
+          {
+            trigger: () => h(
+              NButton,
+              {
+                size: 'small',
+                type: longTerm ? 'default' : 'success',
+                secondary: true,
+                loading: isRetentionUpdating(row.key),
+              },
+              {
+                icon: () => h(NIcon, { component: BookmarkOutline }),
+                default: () => longTerm
+                  ? t('pages.sessions.list.retention.disableLongTerm')
+                  : t('pages.sessions.list.retention.enableLongTerm'),
+              }
+            ),
+            default: () => longTerm
+              ? t('pages.sessions.list.retention.confirmDisableLongTerm')
+              : t('pages.sessions.list.retention.confirmEnableLongTerm'),
           }
         ))
       }
@@ -598,6 +660,42 @@ async function handleBatchDelete() {
     message.error(t('pages.sessions.list.batchDeleteFailed'))
   } finally {
     batchDeleting.value = false
+  }
+}
+
+function isRetentionUpdating(sessionKey: string) {
+  return retentionUpdatingKeys.value.has(sessionKey)
+}
+
+async function withRetentionUpdate(sessionKey: string, action: () => Promise<unknown>) {
+  if (isRetentionUpdating(sessionKey)) return
+  retentionUpdatingKeys.value = new Set([...retentionUpdatingKeys.value, sessionKey])
+  try {
+    await action()
+  } finally {
+    const next = new Set(retentionUpdatingKeys.value)
+    next.delete(sessionKey)
+    retentionUpdatingKeys.value = next
+  }
+}
+
+async function handleCancelPendingDeletion(session: SessionRow) {
+  try {
+    await withRetentionUpdate(session.key, () => sessionStore.cancelPendingDeletion(session.key))
+    message.success(t('pages.sessions.list.retention.cancelSuccess'))
+  } catch {
+    message.error(t('pages.sessions.list.retention.updateFailed'))
+  }
+}
+
+async function handleToggleLongTerm(session: SessionRow, enabled: boolean) {
+  try {
+    await withRetentionUpdate(session.key, () => sessionStore.setLongTermRetention(session.key, enabled))
+    message.success(enabled
+      ? t('pages.sessions.list.retention.enableSuccess')
+      : t('pages.sessions.list.retention.disableSuccess'))
+  } catch {
+    message.error(t('pages.sessions.list.retention.updateFailed'))
   }
 }
 
@@ -781,7 +879,7 @@ async function handleCreateSession() {
         :bordered="false"
         :row-key="(row: SessionRow) => row.key"
         :pagination="{ pageSize, page: currentPage, onChange: handlePageChange }"
-        :scroll-x="1310"
+        :scroll-x="1510"
         :max-height="600"
         striped
         @update:checked-row-keys="onUpdateCheckedRowKeys"
