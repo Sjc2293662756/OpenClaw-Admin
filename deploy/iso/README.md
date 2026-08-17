@@ -26,8 +26,12 @@ invalid source/ISO checksums; it does not read environment files or secrets.
 | `GAIOP-latest/deploy/iso/env/gateway.env.example` | `/etc/gaiop/gateway.env` |
 | `GAIOP-latest/deploy/iso/env/alert-receiver.env.example` | `/etc/gaiop/alert-receiver.env` |
 | `systemd/gaiop-admin.service` | `/etc/systemd/system/gaiop-admin.service` |
+| `../systemd/gaiop-admin-retention-cleanup.service` | `/etc/systemd/system/gaiop-admin-retention-cleanup.service` |
+| `../systemd/gaiop-admin-retention-cleanup.timer` | `/etc/systemd/system/gaiop-admin-retention-cleanup.timer` |
 | `../systemd/gaiop-report-retention-cleanup.service` | `/etc/systemd/system/gaiop-report-retention-cleanup.service` |
 | `../systemd/gaiop-report-retention-cleanup.timer` | `/etc/systemd/system/gaiop-report-retention-cleanup.timer` |
+| `../systemd/gaiop-admin-session-retention.service` | `/etc/systemd/system/gaiop-admin-session-retention.service` |
+| `../systemd/gaiop-admin-session-retention.timer` | `/etc/systemd/system/gaiop-admin-session-retention.timer` |
 | `../systemd/gaiop-admin-sqlite-backup.service` | `/etc/systemd/system/gaiop-admin-sqlite-backup.service` |
 | `../systemd/gaiop-admin-sqlite-backup.timer` | `/etc/systemd/system/gaiop-admin-sqlite-backup.timer` |
 | `GAIOP-latest/deploy/iso/systemd/gaiop-gateway.service` | `/etc/systemd/system/gaiop-gateway.service` |

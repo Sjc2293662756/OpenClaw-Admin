@@ -9,8 +9,8 @@ release:
   id: REPLACE_WITH_RELEASE_ID
   builtFrom: 237-derived-baseline-image
   notes: >-
-    The ISO build must pin the exact Admin and Gateway source revisions in its
-    build record. This manifest deliberately does not name a developer machine.
+    The ISO build must pin the exact Admin, Upgrade, and Gateway source revisions
+    in its build record. This manifest deliberately does not name a developer machine.
 
 serviceAccount:
   user: gaiop
@@ -22,13 +22,33 @@ components:
     targetDirectory: /opt/gaiop/admin
     requiredPaths:
       - server/index.js
+      - server/admin-retention-cleanup.js
+      - server/report-retention-cleanup.js
+      - server/session-retention-cleanup.js
+      - server/sqlite-backup.js
+      - server/sqlite-restore-test.js
+      - server/storage-watermark-monitor.js
+      - deploy/iso/storage-watermark/managed-roots.json
       - dist/index.html
     serviceUnit: gaiop-admin.service
+  upgrade:
+    sourceRepository: GAIOP-upgrade
+    targetDirectory: /opt/gaiop/upgrade
+    requiredPaths:
+      - src/index.js
+      - src/retention-cleanup.js
+      - src/sqlite-backup.js
+      - src/sqlite-restore-test.js
+    serviceUnit: gaiop-upgrade.service
   gateway:
     sourceRepository: GAIOP-latest
     targetDirectory: /opt/gaiop/gateway
     requiredPaths:
       - package.json
+      - scripts/run_application_log_retention.js
+      - skills/openclaw-napm-packet-analysis/scripts/run_packet_retention.js
+      - skills/openclaw-napm-syslog-receiver/scripts/import_alerts_jsonl.js
+      - skills/openclaw-napm-syslog-receiver/scripts/run_alert_retention.js
       - skills/openclaw-napm-report
       - skills/openclaw-napm-syslog-receiver
     serviceUnit: gaiop-gateway.service
@@ -52,6 +72,8 @@ controlledFiles:
       target: /etc/gaiop/gateway.env
     - source: GAIOP-latest/deploy/iso/env/alert-receiver.env.example
       target: /etc/gaiop/alert-receiver.env
+    - source: GAIOP-upgrade/deploy/env/gaiop-upgrade.env.example
+      target: /etc/gaiop/upgrade.env
   serviceUnits:
     - source: GAIOP-Admin/deploy/iso/systemd/gaiop-admin.service
       target: /etc/systemd/system/gaiop-admin.service
@@ -59,6 +81,48 @@ controlledFiles:
       target: /etc/systemd/system/gaiop-gateway.service
     - source: GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-syslog-receiver.service
       target: /etc/systemd/system/gaiop-syslog-receiver.service
+    - source: GAIOP-Admin/deploy/systemd/gaiop-admin-retention-cleanup.service
+      target: /etc/systemd/system/gaiop-admin-retention-cleanup.service
+    - source: GAIOP-Admin/deploy/systemd/gaiop-admin-retention-cleanup.timer
+      target: /etc/systemd/system/gaiop-admin-retention-cleanup.timer
+    - source: GAIOP-Admin/deploy/systemd/gaiop-report-retention-cleanup.service
+      target: /etc/systemd/system/gaiop-report-retention-cleanup.service
+    - source: GAIOP-Admin/deploy/systemd/gaiop-report-retention-cleanup.timer
+      target: /etc/systemd/system/gaiop-report-retention-cleanup.timer
+    - source: GAIOP-Admin/deploy/systemd/gaiop-admin-session-retention.service
+      target: /etc/systemd/system/gaiop-admin-session-retention.service
+    - source: GAIOP-Admin/deploy/systemd/gaiop-admin-session-retention.timer
+      target: /etc/systemd/system/gaiop-admin-session-retention.timer
+    - source: GAIOP-Admin/deploy/systemd/gaiop-admin-sqlite-backup.service
+      target: /etc/systemd/system/gaiop-admin-sqlite-backup.service
+    - source: GAIOP-Admin/deploy/systemd/gaiop-admin-sqlite-backup.timer
+      target: /etc/systemd/system/gaiop-admin-sqlite-backup.timer
+    - source: GAIOP-Admin/deploy/systemd/gaiop-storage-watermark-monitor.service
+      target: /etc/systemd/system/gaiop-storage-watermark-monitor.service
+    - source: GAIOP-Admin/deploy/systemd/gaiop-storage-watermark-monitor.timer
+      target: /etc/systemd/system/gaiop-storage-watermark-monitor.timer
+    - source: GAIOP-upgrade/deploy/systemd/gaiop-upgrade-retention-cleanup.service
+      target: /etc/systemd/system/gaiop-upgrade-retention-cleanup.service
+    - source: GAIOP-upgrade/deploy/systemd/gaiop-upgrade-retention-cleanup.timer
+      target: /etc/systemd/system/gaiop-upgrade-retention-cleanup.timer
+    - source: GAIOP-upgrade/deploy/systemd/gaiop-upgrade-sqlite-backup.service
+      target: /etc/systemd/system/gaiop-upgrade-sqlite-backup.service
+    - source: GAIOP-upgrade/deploy/systemd/gaiop-upgrade-sqlite-backup.timer
+      target: /etc/systemd/system/gaiop-upgrade-sqlite-backup.timer
+    - source: GAIOP-latest/deploy/systemd/gaiop-backend-packet-retention.service
+      target: /etc/systemd/system/gaiop-backend-packet-retention.service
+    - source: GAIOP-latest/deploy/systemd/gaiop-backend-packet-retention.timer
+      target: /etc/systemd/system/gaiop-backend-packet-retention.timer
+    - source: GAIOP-latest/deploy/systemd/gaiop-backend-application-log-retention.service
+      target: /etc/systemd/system/gaiop-backend-application-log-retention.service
+    - source: GAIOP-latest/deploy/systemd/gaiop-backend-application-log-retention.timer
+      target: /etc/systemd/system/gaiop-backend-application-log-retention.timer
+    - source: GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-alert-retention.service
+      target: /etc/systemd/system/gaiop-alert-retention.service
+    - source: GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-alert-retention.timer
+      target: /etc/systemd/system/gaiop-alert-retention.timer
+    - source: GAIOP-latest/skills/openclaw-napm-syslog-receiver/scripts/gaiop-alert-jsonl-import.service
+      target: /etc/systemd/system/gaiop-alert-jsonl-import.service
   systemEntryLogRetention:
     - source: GAIOP-Admin/deploy/iso/caddy/gaiop-access-log.caddy
       target: /etc/caddy/gaiop-access-log.caddy
@@ -86,6 +150,15 @@ persistentData:
   - path: /var/lib/gaiop/runtime
     purpose: Runtime data-source bridge; may contain protected credentials
     backup: required
+  - path: /var/lib/gaiop/report-recovery
+    purpose: Recoverable formal-report quarantine controlled by Admin metadata
+    backup: required
+  - path: /var/lib/gaiop/upgrade
+    purpose: Upgrade SQLite, packages, staging, and component-owned SQLite backups
+    backup: required
+  - path: /var/backups/gaiop/upgrade
+    purpose: Component upgrade rollback backups, separate from upgrade SQLite backups
+    backup: required
   - path: /var/log/gaiop
     purpose: Application logs
     backup: retention-policy
@@ -95,6 +168,7 @@ firstBoot:
     - /etc/gaiop/admin.env
     - /etc/gaiop/gateway.env
     - /etc/gaiop/alert-receiver.env
+    - /etc/gaiop/upgrade.env
   generatedOnTarget:
     - Linux-target Node.js dependencies and production frontend build, unless the ISO pipeline provides target-compatible artifacts
     - TLS certificate/key material and reverse-proxy activation
