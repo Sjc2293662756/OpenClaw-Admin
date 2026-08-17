@@ -27,7 +27,14 @@ import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { platformBranding } from '@/branding/platform'
 import { formatRelativeTime } from '@/utils/format'
-import type { SystemMetrics, SystemPresenceEntry } from '@/api/types'
+import type {
+  StorageWatermarkAlert,
+  StorageWatermarkOverview,
+  StorageWatermarkState,
+  StorageWatermarkStatus,
+  SystemMetrics,
+  SystemPresenceEntry,
+} from '@/api/types'
 
 const { t } = useI18n()
 const router = useRouter()
@@ -37,6 +44,9 @@ const loading = ref(false)
 const error = ref('')
 const metrics = ref<SystemMetrics | null>(null)
 const presenceEntries = ref<SystemPresenceEntry[]>([])
+const watermarkStatuses = ref<StorageWatermarkStatus[]>([])
+const watermarkAlerts = ref<StorageWatermarkAlert[]>([])
+const watermarkError = ref('')
 const lastUpdatedAt = ref<number | null>(null)
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
@@ -44,6 +54,12 @@ let refreshTimer: ReturnType<typeof setInterval> | null = null
 const cpuUsage = computed(() => metrics.value?.cpu?.usage ?? 0)
 const memoryUsage = computed(() => metrics.value?.memory?.usagePercent ?? 0)
 const diskUsage = computed(() => metrics.value?.disk?.usagePercent ?? 0)
+const watermarkAlertType = computed<'success' | 'warning' | 'error' | 'info'>(() => {
+  if (watermarkError.value || watermarkStatuses.value.some((item) => !item.detectionSuccess || item.state === 'emergency')) return 'error'
+  if (watermarkStatuses.value.some((item) => item.state === 'cleanup_required' || item.state === 'warning')) return 'warning'
+  return watermarkStatuses.value.length > 0 ? 'success' : 'info'
+})
+const latestWatermarkAlert = computed(() => watermarkAlerts.value[0] || null)
 const displayHostname = computed(() => {
   const hostname = metrics.value?.hostname?.trim() || ''
   return hostname.toLowerCase() === 'netinsideopenclaw'
@@ -91,6 +107,39 @@ function formatUptime(seconds: number): string {
   return parts.join(' ') || '< 1m'
 }
 
+function watermarkTagType(state: StorageWatermarkState): 'default' | 'success' | 'warning' | 'error' {
+  if (state === 'normal') return 'success'
+  if (state === 'warning' || state === 'cleanup_required') return 'warning'
+  if (state === 'emergency' || state === 'unknown') return 'error'
+  return 'default'
+}
+
+function watermarkStateLabel(state: StorageWatermarkState) {
+  return t(`pages.system.storageWatermark.states.${state}`)
+}
+
+function managedRootLabel(label: string) {
+  return t(`pages.system.storageWatermark.roots.${label}`)
+}
+
+async function fetchStorageWatermarks(token: string) {
+  watermarkError.value = ''
+  try {
+    const response = await fetch('/api/system/storage-watermarks', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const data = await response.json() as StorageWatermarkOverview & { ok?: boolean }
+    if (!data.ok || !Array.isArray(data.statuses) || !Array.isArray(data.recentAlerts)) throw new Error('invalid_response')
+    watermarkStatuses.value = data.statuses
+    watermarkAlerts.value = data.recentAlerts
+  } catch {
+    watermarkStatuses.value = []
+    watermarkAlerts.value = []
+    watermarkError.value = t('pages.system.storageWatermark.loadFailed')
+  }
+}
+
 async function fetchMetrics() {
   loading.value = true
   error.value = ''
@@ -125,6 +174,7 @@ async function fetchMetrics() {
 
     metrics.value = data.metrics
     presenceEntries.value = Array.isArray(data.presence) ? data.presence : []
+    await fetchStorageWatermarks(token)
     lastUpdatedAt.value = Date.now()
   } catch (e: any) {
     error.value = e?.message || t('pages.system.loadFailed')
@@ -169,6 +219,43 @@ onUnmounted(() => {
       <NText depth="3" style="font-size: 12px; display: block; margin-bottom: 16px;">
         {{ t('pages.system.subtitle') }}
       </NText>
+
+      <NAlert
+        v-if="watermarkError || watermarkStatuses.length > 0"
+        :type="watermarkAlertType"
+        :title="t('pages.system.storageWatermark.title')"
+        :bordered="false"
+        style="margin-bottom: 16px;"
+      >
+        <NText v-if="watermarkError">{{ watermarkError }}</NText>
+        <NSpace v-else vertical :size="8">
+          <NSpace
+            v-for="status in watermarkStatuses"
+            :key="status.filesystemId"
+            align="center"
+            :size="8"
+            wrap
+          >
+            <NTag
+              v-for="label in status.managedRootLabels"
+              :key="label"
+              size="small"
+              :bordered="false"
+            >
+              {{ managedRootLabel(label) }}
+            </NTag>
+            <NTag size="small" :bordered="false" :type="watermarkTagType(status.state)">
+              {{ watermarkStateLabel(status.state) }}
+            </NTag>
+            <NText v-if="status.usagePercent !== null" strong>
+              {{ status.usagePercent.toFixed(2) }}%
+            </NText>
+          </NSpace>
+          <NText v-if="latestWatermarkAlert" depth="3" style="font-size: 12px;">
+            {{ t('pages.system.storageWatermark.lastAlert', { time: formatRelativeTime(Date.parse(latestWatermarkAlert.utcTime)) }) }}
+          </NText>
+        </NSpace>
+      </NAlert>
 
       <NSpin :show="loading && !metrics">
         <NGrid cols="1 s:2 m:4" responsive="screen" :x-gap="16" :y-gap="16">

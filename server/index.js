@@ -43,6 +43,7 @@ import { createSystemUpgradeRouter } from './routes/system-upgrade.js'
 import { createDashboardUsageRouter } from './routes/dashboard-usage.js'
 import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
 import { createMediaRouter } from './routes/media.js'
+import { createStorageWatermarkRouter } from './routes/storage-watermark.js'
 import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
@@ -499,6 +500,7 @@ app.use('/api/system-settings/branding', createBrandingSettingsRouter({
   recordAudit,
 }))
 app.use('/api', createBasicWorkspaceOnlyMiddleware(authMiddleware, recordAudit))
+app.use('/api/system/storage-watermarks', createStorageWatermarkRouter({ db, systemMonitorMiddleware }))
 app.use('/api/system-settings/report-storage', createReportStorageRouter({ adminMiddleware, recordAudit }))
 app.use('/api/system-settings/sessions', createSessionSettingsRouter({
   db,

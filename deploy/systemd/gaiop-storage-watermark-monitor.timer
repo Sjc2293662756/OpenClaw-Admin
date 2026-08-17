@@ -1,0 +1,12 @@
+[Unit]
+Description=Run GAIOP managed storage watermark monitor every five minutes
+
+[Timer]
+OnCalendar=*-*-* *:0/5:00 UTC
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=30s
+Unit=gaiop-storage-watermark-monitor.service
+
+[Install]
+WantedBy=timers.target

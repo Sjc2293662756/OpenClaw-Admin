@@ -36,6 +36,9 @@ invalid source/ISO checksums; it does not read environment files or secrets.
 | `caddy/gaiop-access-log.caddy` | `/etc/caddy/gaiop-access-log.caddy`, imported once inside the GAIOP HTTPS site |
 | `logrotate/gaiop-netinside-syslog` | `/etc/logrotate.d/gaiop-netinside-syslog` |
 | `journald/60-gaiop-retention.conf` | `/etc/systemd/journald.conf.d/60-gaiop-retention.conf` |
+| `storage-watermark/managed-roots.json` | `/etc/gaiop/storage-watermark-roots.json` |
+| `../systemd/gaiop-storage-watermark-monitor.service` | `/etc/systemd/system/gaiop-storage-watermark-monitor.service` |
+| `../systemd/gaiop-storage-watermark-monitor.timer` | `/etc/systemd/system/gaiop-storage-watermark-monitor.timer` |
 
 The final Linux validation is: `bash -n` for the preflight script,
 `systemd-analyze verify` for unit files, `nginx -t`, then a controlled service
@@ -52,3 +55,12 @@ and suppresses configuration contents; the deliberately mutating
 and sets `GAIOP_LOG_RETENTION_LIVE_ROTATION_APPROVED=YES` after separate change
 approval. See the [system and entry log retention guide](../../docs/05-部署运维/2026-08-09-GAIOP系统与入口日志留存ISO配置.md)
 before installation, disablement, or rollback.
+
+The storage watermark inputs are monitor-only templates. Before installation,
+verify every configured managed root with `stat` as the intended service account
+and verify the units with `systemd-analyze verify`. A missing or unreadable root
+must remain a failed check; do not replace it with a parent directory or `/`.
+The one-shot writes only current state and rate-limited alert events to the Admin
+SQLite database. It does not traverse managed roots, invoke retention cleaners,
+delete data, or block writes. See the [storage watermark implementation
+baseline](../../docs/05-部署运维/2026-08-17-GAIOP磁盘水位监测与告警实现基线.md).
