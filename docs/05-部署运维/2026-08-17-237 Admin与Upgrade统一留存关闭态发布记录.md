@@ -21,7 +21,7 @@ Upgrade 使用 `/var/lib/gaiop-upgrade/napm-upgrade.db` 的受控 SQLite 在线�
 
 - `gaiop-admin.service`、`gaiop-upgrade.service`、Gateway 和 Caddy 均为 `active`。
 - Admin 监听 `127.0.0.1:3000`，Upgrade 监听 `127.0.0.1:18900`；Admin/Upgrade/Gateway 内部健康均为 `200`，Upgrade 未认证接口为 `401`，公网 HTTPS 为 `200`。
-- `wizard.db` 完整性为 `ok`，总行数 `1903`；用户 `6`、会话 `63`、报告文件 `222`、交付 `9`、审计 `1572`。
+- `wizard.db` 完整性为 `ok`；最终核查总行数 `1906`，用户 `6`、会话 `63`、报告文件 `222`、交付 `9`、审计 `1575`。相对发布后首轮核查仅新增 `3` 条验证审计，四项业务计数不变。
 - `napm-upgrade.db` 完整性为 `ok`，总行数 `19`；升级任务 `2`、组件 `14`、SQLite 备份 `0`。
 - 发布前后目录计数不变：报告来源信封 `63`、Admin staging `0`、升级包 `2`、升级 staging `0`、升级回滚目录 `3`、正式报告根目录 `11`。
 - Admin/Upgrade 第一批清理、报告留存、会话留存和 SQLite 备份 one-shot 均返回关闭态；没有调用清理器。

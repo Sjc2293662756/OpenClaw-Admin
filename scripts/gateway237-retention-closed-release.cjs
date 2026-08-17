@@ -1123,7 +1123,7 @@ const [moduleRoot, databasePath] = process.argv.slice(2)
 const Database = require(moduleRoot)
 const db = new Database(databasePath, { readonly: true, fileMustExist: true })
 try {
-  const expected = ['report_retention_plans', 'session_retention_records', 'storage_watermark_status']
+  const expected = ['report_retention_artifacts', 'session_retention_records', 'storage_watermark_status']
   const count = expected.filter((name) => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name)).length
   process.stdout.write(String(count))
 } finally { db.close() }
