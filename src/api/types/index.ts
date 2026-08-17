@@ -658,6 +658,37 @@ export interface SystemMetrics {
   hostname?: string
 }
 
+export type StorageWatermarkState = 'normal' | 'warning' | 'cleanup_required' | 'emergency' | 'unknown'
+
+export interface StorageWatermarkStatus {
+  filesystemId: string
+  state: StorageWatermarkState
+  usagePercent: number | null
+  thresholdPercent: number | null
+  checkedAt: string
+  detectionSuccess: boolean
+  reasonCode: string
+  managedRootLabels: string[]
+}
+
+export interface StorageWatermarkAlert {
+  policyVersion: string
+  filesystemId: string
+  state: StorageWatermarkState
+  usagePercent: number | null
+  thresholdPercent: number | null
+  utcTime: string
+  detectionSuccess: boolean
+  reasonCode: string
+}
+
+export interface StorageWatermarkOverview {
+  policyVersion: string
+  thresholds: { warning: number; cleanupRequired: number; emergency: number }
+  statuses: StorageWatermarkStatus[]
+  recentAlerts: StorageWatermarkAlert[]
+}
+
 export interface FileEntry {
   name: string
   path: string

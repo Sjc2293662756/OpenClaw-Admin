@@ -1,0 +1,14 @@
+{
+  "version": "gaiop_storage_watermark_roots.v1",
+  "managedRoots": [
+    { "label": "admin_state", "path": "/var/lib/gaiop/admin" },
+    { "label": "runtime_state", "path": "/var/lib/gaiop/runtime" },
+    { "label": "formal_reports", "path": "/var/lib/gaiop/reports" },
+    { "label": "upgrade_state", "path": "/var/lib/gaiop-upgrade" },
+    { "label": "upgrade_rollback", "path": "/var/backups/gaiop/upgrade" },
+    { "label": "admin_upgrade_staging", "path": "/opt/gaiop/admin/data/upgrade-upload-staging" },
+    { "label": "gateway_state", "path": "/home/netinside/.openclaw" },
+    { "label": "raw_syslog", "path": "/var/log/netinside" },
+    { "label": "caddy_access_logs", "path": "/var/log/caddy" }
+  ]
+}
