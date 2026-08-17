@@ -1,0 +1,30 @@
+[Unit]
+Description=GAIOP managed storage watermark monitor
+After=gaiop-admin.service
+
+[Service]
+Type=oneshot
+User=gaiop
+Group=gaiop
+WorkingDirectory=/opt/gaiop/admin
+Environment=GAIOP_ADMIN_DATA_DIR=/var/lib/gaiop/admin
+Environment=GAIOP_STORAGE_WATERMARK_CONFIG=/etc/gaiop/storage-watermark-roots.json
+Environment=GAIOP_STORAGE_WATERMARK_REMINDER_MINUTES=360
+ExecStart=/usr/local/bin/node /opt/gaiop/admin/server/storage-watermark-monitor.js
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=-/home/netinside/.openclaw
+ReadOnlyPaths=-/etc/gaiop/storage-watermark-roots.json
+ReadOnlyPaths=-/var/lib/gaiop
+ReadOnlyPaths=-/var/backups/gaiop
+ReadOnlyPaths=-/opt/gaiop/admin/data/upgrade-upload-staging
+ReadOnlyPaths=-/var/log/netinside
+ReadOnlyPaths=-/var/log/caddy
+ReadWritePaths=/var/lib/gaiop/admin
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+LockPersonality=true

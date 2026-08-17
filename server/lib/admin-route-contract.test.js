@@ -18,6 +18,10 @@ test('system metrics uses the dedicated monitor role boundary', () => {
     source,
     /app\.get\('\/api\/system\/metrics',\s*systemMonitorMiddleware/
   )
+  assert.match(
+    source,
+    /app\.use\('\/api\/system\/storage-watermarks',\s*createStorageWatermarkRouter\(\{ db, systemMonitorMiddleware \}\)\)/
+  )
 })
 
 test('public branding read is explicit and protected business routers stay behind the basic boundary', () => {
