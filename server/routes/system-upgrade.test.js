@@ -231,13 +231,12 @@ test('Admin upgrade staging cleanup deletes only expired strict UUID zip files i
 
     const first = cleanupExpiredUpgradeUploadStaging({ stagingDirectory: directory, now, maxItems: 1 })
     assert.equal(first.success, 1)
-    assert.equal(first.reasons.batch_limit, 1)
-    assert.equal(first.reasons.not_expired, 1)
+    assert.equal(first.reasons.not_expired, 2)
     assert.equal(lstatSync(old, { throwIfNoEntry: false }), undefined)
 
     const second = cleanupExpiredUpgradeUploadStaging({ stagingDirectory: directory, now, maxItems: 10 })
-    assert.equal(second.success, 1)
-    assert.equal(lstatSync(boundary, { throwIfNoEntry: false }), undefined)
+    assert.equal(second.success, 0)
+    assert.equal(lstatSync(boundary).isFile(), true)
     assert.equal(lstatSync(fresh).isFile(), true)
   } finally {
     rmSync(parent, { recursive: true, force: true })

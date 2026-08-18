@@ -5,8 +5,10 @@ function isEnabled(value) {
   return String(value || '').trim().toLowerCase() === 'true'
 }
 
+const enabled = isEnabled(process.env.GAIOP_ADMIN_RETENTION_AUTO_DELETE)
 const result = runAdminRetentionCleanup({
-  enabled: isEnabled(process.env.GAIOP_ADMIN_RETENTION_AUTO_DELETE),
+  enabled,
+  dryRun: !enabled,
   maxItems: process.env.GAIOP_ADMIN_RETENTION_MAX_ITEMS,
   reportProvenanceDirectory: process.env.GAIOP_REPORT_PROVENANCE_STORE_DIR || '/var/lib/gaiop/runtime/report-provenance',
   upgradeUploadStagingDirectory: process.env.GAIOP_ADMIN_UPGRADE_UPLOAD_STAGING_DIR || resolve(process.cwd(), 'data', 'upgrade-upload-staging'),

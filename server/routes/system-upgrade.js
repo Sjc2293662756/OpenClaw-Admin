@@ -38,11 +38,35 @@ function addCleanupReason(result, outcome, reason) {
   result.reasons[reason] = (result.reasons[reason] || 0) + 1
 }
 
-export function cleanupExpiredUpgradeUploadStaging({
+function recordCleanupCandidate(result, candidate) {
+  result.candidateCount += 1
+  result.candidateBytes += Number.isFinite(candidate.stat.size) ? Math.max(0, candidate.stat.size) : 0
+  const timestamp = new Date(candidate.stat.mtimeMs).toISOString()
+  if (!result.earliestCandidateTime || timestamp < result.earliestCandidateTime) result.earliestCandidateTime = timestamp
+  if (!result.latestCandidateTime || timestamp > result.latestCandidateTime) result.latestCandidateTime = timestamp
+}
+
+function attachCleanupPlan(result, candidates) {
+  Object.defineProperty(result, '_candidatePlan', { value: candidates, enumerable: false, configurable: true, writable: true })
+  return result
+}
+
+function revalidateUploadCandidate(candidate, options, io) {
+  const root = resolve(String(options.stagingDirectory || ''))
+  const cutoffMs = Number(options.now) - Number(options.retentionMs)
+  if (basename(root) !== 'upgrade-upload-staging' || candidate.target === root || !candidate.target.startsWith(`${root}/`) && !candidate.target.startsWith(`${root}\\`)) return false
+  try {
+    const current = io.lstatSync(candidate.target)
+    return current.isFile() && !current.isSymbolicLink() && current.dev === candidate.stat.dev && current.ino === candidate.stat.ino && Number.isFinite(current.mtimeMs) && current.mtimeMs < cutoffMs && OWNED_UPLOAD_PATTERN.test(basename(candidate.target))
+  } catch {
+    return false
+  }
+}
+
+export function discoverExpiredUpgradeUploadStaging({
   stagingDirectory = uploadStagingDir,
   now = Date.now(),
   retentionMs = ADMIN_UPLOAD_RETENTION_MS,
-  maxItems = 100,
   fs = {},
 } = {}) {
   const nowMs = Number(now)
@@ -54,35 +78,38 @@ export function cleanupExpiredUpgradeUploadStaging({
     skipped: 0,
     failed: 0,
     freedBytes: 0,
+    candidateCount: 0,
+    candidateBytes: 0,
+    earliestCandidateTime: null,
+    latestCandidateTime: null,
     reasons: {},
   }
   const io = {
     existsSync: fs.existsSync || existsSync,
     lstatSync: fs.lstatSync || lstatSync,
     readdirSync: fs.readdirSync || readdirSync,
-    unlinkSync: fs.unlinkSync || unlinkSync,
   }
   if (!Number.isFinite(nowMs) || !Number.isFinite(retentionMs) || retentionMs < 0) {
     addCleanupReason(result, 'failed', 'invalid_policy')
-    return result
+    return { result: attachCleanupPlan(result, []), candidates: [] }
   }
 
   const root = resolve(String(stagingDirectory || ''))
   if (basename(root) !== 'upgrade-upload-staging') {
     addCleanupReason(result, 'failed', 'unexpected_root_name')
-    return result
+    return { result: attachCleanupPlan(result, []), candidates: [] }
   }
-  if (!stagingDirectory || !io.existsSync(root)) return result
+  if (!stagingDirectory || !io.existsSync(root)) return { result: attachCleanupPlan(result, []), candidates: [] }
   let rootStat
   try {
     rootStat = io.lstatSync(root)
   } catch {
     addCleanupReason(result, 'failed', 'root_stat_failed')
-    return result
+    return { result: attachCleanupPlan(result, []), candidates: [] }
   }
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     addCleanupReason(result, 'failed', 'unsafe_root')
-    return result
+    return { result: attachCleanupPlan(result, []), candidates: [] }
   }
 
   let entries
@@ -90,7 +117,7 @@ export function cleanupExpiredUpgradeUploadStaging({
     entries = io.readdirSync(root, { withFileTypes: true })
   } catch {
     addCleanupReason(result, 'failed', 'root_read_failed')
-    return result
+    return { result: attachCleanupPlan(result, []), candidates: [] }
   }
   const candidates = []
   for (const entry of entries) {
@@ -122,30 +149,54 @@ export function cleanupExpiredUpgradeUploadStaging({
       addCleanupReason(result, 'skipped', 'invalid_timestamp')
       continue
     }
-    if (stat.mtimeMs > cutoffMs) {
+    if (stat.mtimeMs >= cutoffMs) {
       addCleanupReason(result, 'skipped', 'not_expired')
       continue
     }
-    candidates.push({ target, stat })
+    const candidate = { target, stat }
+    candidates.push(candidate)
+    recordCleanupCandidate(result, candidate)
   }
 
-  candidates.sort((left, right) => left.stat.mtimeMs - right.stat.mtimeMs || left.target.localeCompare(right.target))
+  return { result: attachCleanupPlan(result, candidates), candidates }
+}
+
+export function cleanupExpiredUpgradeUploadStaging({
+  stagingDirectory = uploadStagingDir,
+  now = Date.now(),
+  retentionMs = ADMIN_UPLOAD_RETENTION_MS,
+  maxItems = 100,
+  fs = {},
+  dryRun = false,
+  plan,
+} = {}) {
+  const io = {
+    existsSync: fs.existsSync || existsSync,
+    lstatSync: fs.lstatSync || lstatSync,
+    readdirSync: fs.readdirSync || readdirSync,
+    unlinkSync: fs.unlinkSync || unlinkSync,
+  }
+  const discovered = plan ? { result: plan.result, candidates: plan.candidates || [] } : discoverExpiredUpgradeUploadStaging({ stagingDirectory, now, retentionMs, fs })
+  const result = discovered.result
+  const candidates = [...discovered.candidates].sort((left, right) => left.stat.mtimeMs - right.stat.mtimeMs || left.target.localeCompare(right.target))
   const limit = Math.max(0, Math.floor(Number(maxItems) || 0))
-  for (const candidate of candidates.slice(0, limit)) {
-    try {
-      const current = io.lstatSync(candidate.target)
-      if (current.isSymbolicLink() || !current.isFile() || current.dev !== candidate.stat.dev || current.ino !== candidate.stat.ino) {
+  if (!dryRun) {
+    for (const candidate of candidates.slice(0, limit)) {
+      if (!revalidateUploadCandidate(candidate, { stagingDirectory, now, retentionMs }, io)) {
         addCleanupReason(result, 'skipped', 'entry_changed')
         continue
       }
-      io.unlinkSync(candidate.target)
-      result.success += 1
-      result.freedBytes += Number.isFinite(candidate.stat.size) ? candidate.stat.size : 0
-    } catch {
-      addCleanupReason(result, 'failed', 'delete_failed')
+      try {
+        io.unlinkSync(candidate.target)
+        result.success += 1
+        result.freedBytes += Number.isFinite(candidate.stat.size) ? candidate.stat.size : 0
+      } catch {
+        addCleanupReason(result, 'failed', 'delete_failed')
+      }
     }
   }
   for (let index = limit; index < candidates.length; index += 1) addCleanupReason(result, 'skipped', 'batch_limit')
+  attachCleanupPlan(result, candidates)
   return result
 }
 

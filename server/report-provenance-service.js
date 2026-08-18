@@ -55,6 +55,10 @@ function createCleanupResult(cutoffMs) {
     skipped: 0,
     failed: 0,
     freedBytes: 0,
+    candidateCount: 0,
+    candidateBytes: 0,
+    earliestCandidateTime: null,
+    latestCandidateTime: null,
     reasons: {},
   }
 }
@@ -75,49 +79,100 @@ function isValidEnvelopeForFile(envelope, digest, nowMs) {
   return expected === digest
 }
 
-/**
- * Delete only expired files owned by the dedicated report-provenance store.
- * The function is intentionally non-recursive and never follows symlinks.
- */
-export function cleanupExpiredReportProvenance({
+function recordCandidate(result, candidate) {
+  result.candidateCount += 1
+  result.candidateBytes += Number.isFinite(candidate.stat.size) ? Math.max(0, candidate.stat.size) : 0
+  const timestamp = new Date(candidate.sortTime).toISOString()
+  if (!result.earliestCandidateTime || timestamp < result.earliestCandidateTime) result.earliestCandidateTime = timestamp
+  if (!result.latestCandidateTime || timestamp > result.latestCandidateTime) result.latestCandidateTime = timestamp
+}
+
+function attachPlan(result, candidates) {
+  Object.defineProperty(result, '_candidatePlan', { value: candidates, enumerable: false, configurable: true, writable: true })
+  return result
+}
+
+function revalidateCandidate(candidate, options, io) {
+  const nowMs = Number(options.now)
+  const cutoffMs = nowMs - Number(options.retentionMs)
+  const root = resolve(String(options.storeDirectory || ''))
+  if (basename(root) !== 'report-provenance' || candidate.target === root || !candidate.target.startsWith(`${root}/`) && !candidate.target.startsWith(`${root}\\`)) return false
+  let current
+  try {
+    current = io.lstatSync(candidate.target)
+    if (current.isSymbolicLink() || !current.isFile() || current.dev !== candidate.stat.dev || current.ino !== candidate.stat.ino) return false
+    if (!Number.isFinite(current.mtimeMs) || current.mtimeMs >= cutoffMs) return false
+    const match = PROVENANCE_FILE_PATTERN.exec(basename(candidate.target))
+    if (match) {
+      const envelope = JSON.parse(io.readFileSync(candidate.target, 'utf8'))
+      return isValidEnvelopeForFile(envelope, match[1], nowMs) && Number(envelope.issuedAt) < cutoffMs
+    }
+    const tempMatch = PROVENANCE_TEMP_FILE_PATTERN.exec(basename(candidate.target))
+    if (!tempMatch) return false
+    const createdAt = Number(tempMatch[3])
+    const tempCutoffMs = nowMs - Number(options.tempRetentionMs)
+    return Number.isFinite(createdAt) && createdAt < tempCutoffMs && current.mtimeMs < tempCutoffMs && Math.abs(current.mtimeMs - createdAt) <= MAX_CLOCK_SKEW_MS
+  } catch {
+    return false
+  }
+}
+
+function deleteCandidates(candidates, options, io, result) {
+  const limit = Math.max(0, Math.floor(Number(options.maxItems) || 0))
+  const ordered = [...candidates].sort((left, right) => left.sortTime - right.sortTime || left.target.localeCompare(right.target))
+  for (const candidate of ordered.slice(0, limit)) {
+    if (!revalidateCandidate(candidate, options, io)) {
+      addReason(result, 'skipped', 'entry_changed')
+      continue
+    }
+    try {
+      io.unlinkSync(candidate.target)
+      result.success += 1
+      result.freedBytes += Number.isFinite(candidate.stat.size) ? candidate.stat.size : 0
+    } catch {
+      addReason(result, 'failed', 'delete_failed')
+    }
+  }
+  for (let index = limit; index < ordered.length; index += 1) addReason(result, 'skipped', 'batch_limit')
+}
+
+export function discoverExpiredReportProvenance({
   storeDirectory,
   now = Date.now(),
   retentionMs = PROVENANCE_PHYSICAL_RETENTION_MS,
   tempRetentionMs = PROVENANCE_TEMP_RETENTION_MS,
-  maxItems = 100,
   fs = {},
 } = {}) {
   const nowMs = Number(now)
-  const cutoffMs = nowMs - retentionMs
+  const cutoffMs = nowMs - Number(retentionMs)
   const result = createCleanupResult(cutoffMs)
   const io = {
     existsSync: fs.existsSync || existsSync,
     lstatSync: fs.lstatSync || lstatSync,
     readFileSync: fs.readFileSync || readFileSync,
     readdirSync: fs.readdirSync || readdirSync,
-    unlinkSync: fs.unlinkSync || unlinkSync,
   }
   if (!Number.isFinite(nowMs) || !Number.isFinite(retentionMs) || retentionMs < 0 || !Number.isFinite(tempRetentionMs) || tempRetentionMs < 0) {
     addReason(result, 'failed', 'invalid_policy')
-    return result
+    return { result: attachPlan(result, []), candidates: [] }
   }
 
   const root = resolve(String(storeDirectory || ''))
   if (basename(root) !== 'report-provenance') {
     addReason(result, 'failed', 'unexpected_root_name')
-    return result
+    return { result: attachPlan(result, []), candidates: [] }
   }
-  if (!storeDirectory || !io.existsSync(root)) return result
+  if (!storeDirectory || !io.existsSync(root)) return { result: attachPlan(result, []), candidates: [] }
   let rootStat
   try {
     rootStat = io.lstatSync(root)
   } catch {
     addReason(result, 'failed', 'root_stat_failed')
-    return result
+    return { result: attachPlan(result, []), candidates: [] }
   }
   if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
     addReason(result, 'failed', 'unsafe_root')
-    return result
+    return { result: attachPlan(result, []), candidates: [] }
   }
 
   let entries
@@ -125,7 +180,7 @@ export function cleanupExpiredReportProvenance({
     entries = io.readdirSync(root, { withFileTypes: true })
   } catch {
     addReason(result, 'failed', 'root_read_failed')
-    return result
+    return { result: attachPlan(result, []), candidates: [] }
   }
 
   const candidates = []
@@ -150,11 +205,6 @@ export function cleanupExpiredReportProvenance({
       addReason(result, 'skipped', entry.isDirectory() ? 'unknown_directory' : 'unknown_file_type')
       continue
     }
-    if (!Number.isFinite(stat.mtimeMs) || stat.mtimeMs <= 0 || stat.mtimeMs > nowMs + MAX_CLOCK_SKEW_MS) {
-      addReason(result, 'skipped', 'invalid_timestamp')
-      continue
-    }
-
     const envelopeMatch = PROVENANCE_FILE_PATTERN.exec(entry.name)
     const tempMatch = PROVENANCE_TEMP_FILE_PATTERN.exec(entry.name)
     if (!envelopeMatch && !tempMatch) {
@@ -178,44 +228,68 @@ export function cleanupExpiredReportProvenance({
         addReason(result, 'skipped', 'invalid_envelope')
         continue
       }
-      if (envelope.issuedAt > cutoffMs || stat.mtimeMs > cutoffMs) {
+      if (!Number.isFinite(stat.mtimeMs) || stat.mtimeMs <= 0 || stat.mtimeMs > nowMs + MAX_CLOCK_SKEW_MS) {
+        addReason(result, 'skipped', 'invalid_timestamp')
+        continue
+      }
+      if (envelope.issuedAt >= cutoffMs || stat.mtimeMs >= cutoffMs) {
         addReason(result, 'skipped', 'not_expired')
         continue
       }
-      candidates.push({ target, stat, sortTime: Math.max(envelope.issuedAt, stat.mtimeMs) })
+      const candidate = { target, stat, sortTime: Math.max(envelope.issuedAt, stat.mtimeMs) }
+      candidates.push(candidate)
+      recordCandidate(result, candidate)
       continue
     }
 
+    if (!Number.isFinite(stat.mtimeMs) || stat.mtimeMs <= 0 || stat.mtimeMs > nowMs + MAX_CLOCK_SKEW_MS) {
+      addReason(result, 'skipped', 'invalid_timestamp')
+      continue
+    }
     const createdAt = Number(tempMatch[3])
     const tempCutoffMs = nowMs - tempRetentionMs
     if (!Number.isFinite(createdAt) || createdAt <= 0 || createdAt > nowMs + MAX_CLOCK_SKEW_MS || Math.abs(stat.mtimeMs - createdAt) > MAX_CLOCK_SKEW_MS) {
       addReason(result, 'skipped', 'invalid_timestamp')
       continue
     }
-    if (createdAt > tempCutoffMs || stat.mtimeMs > tempCutoffMs) {
+    if (createdAt >= tempCutoffMs || stat.mtimeMs >= tempCutoffMs) {
       addReason(result, 'skipped', 'not_expired')
       continue
     }
-    candidates.push({ target, stat, sortTime: Math.max(createdAt, stat.mtimeMs) })
+    const candidate = { target, stat, sortTime: Math.max(createdAt, stat.mtimeMs) }
+    candidates.push(candidate)
+    recordCandidate(result, candidate)
   }
+  return { result: attachPlan(result, candidates), candidates }
+}
 
-  candidates.sort((left, right) => left.sortTime - right.sortTime || left.target.localeCompare(right.target))
-  const limit = Math.max(0, Math.floor(Number(maxItems) || 0))
-  for (const candidate of candidates.slice(0, limit)) {
-    try {
-      const current = io.lstatSync(candidate.target)
-      if (current.isSymbolicLink() || !current.isFile() || current.dev !== candidate.stat.dev || current.ino !== candidate.stat.ino) {
-        addReason(result, 'skipped', 'entry_changed')
-        continue
-      }
-      io.unlinkSync(candidate.target)
-      result.success += 1
-      result.freedBytes += Number.isFinite(candidate.stat.size) ? candidate.stat.size : 0
-    } catch {
-      addReason(result, 'failed', 'delete_failed')
-    }
+/**
+ * Delete only expired files owned by the dedicated report-provenance store.
+ * The function is intentionally non-recursive and never follows symlinks.
+ */
+export function cleanupExpiredReportProvenance({
+  storeDirectory,
+  now = Date.now(),
+  retentionMs = PROVENANCE_PHYSICAL_RETENTION_MS,
+  tempRetentionMs = PROVENANCE_TEMP_RETENTION_MS,
+  maxItems = 100,
+  fs = {},
+  dryRun = false,
+  plan,
+} = {}) {
+  const io = {
+    existsSync: fs.existsSync || existsSync,
+    lstatSync: fs.lstatSync || lstatSync,
+    readFileSync: fs.readFileSync || readFileSync,
+    readdirSync: fs.readdirSync || readdirSync,
+    unlinkSync: fs.unlinkSync || unlinkSync,
   }
-  for (let index = limit; index < candidates.length; index += 1) addReason(result, 'skipped', 'batch_limit')
+  const discovered = plan ? { result: plan.result, candidates: plan.candidates || [] } : discoverExpiredReportProvenance({ storeDirectory, now, retentionMs, tempRetentionMs, fs })
+  const result = discovered.result
+  const candidates = discovered.candidates
+  if (!dryRun) deleteCandidates(candidates, { storeDirectory, now, retentionMs, tempRetentionMs, maxItems }, io, result)
+  else for (let index = Math.max(0, Math.floor(Number(maxItems) || 0)); index < candidates.length; index += 1) addReason(result, 'skipped', 'batch_limit')
+  attachPlan(result, candidates)
   return result
 }
 

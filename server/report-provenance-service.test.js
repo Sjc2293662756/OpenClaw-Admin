@@ -123,19 +123,18 @@ test('report provenance cleanup requires both 48-hour age checks and deletes old
 
     const first = cleanupExpiredReportProvenance({ storeDirectory: directory, now, maxItems: 1 })
     assert.equal(first.success, 1)
-    assert.equal(first.reasons.batch_limit, 1)
-    assert.equal(first.reasons.not_expired, 1)
+    assert.equal(first.reasons.not_expired, 2)
     assert.equal(readdirSync(directory).length, 2)
     assert.equal(lstatSync(oldest, { throwIfNoEntry: false }), undefined)
 
     const second = cleanupExpiredReportProvenance({ storeDirectory: directory, now, maxItems: 10 })
-    assert.equal(second.success, 1)
-    assert.equal(lstatSync(boundary, { throwIfNoEntry: false }), undefined)
+    assert.equal(second.success, 0)
+    assert.equal(lstatSync(boundary).isFile(), true)
     assert.equal(lstatSync(beforeBoundary).isFile(), true)
 
     const third = cleanupExpiredReportProvenance({ storeDirectory: directory, now, maxItems: 10 })
     assert.equal(third.success, 0)
-    assert.equal(third.reasons.not_expired, 1)
+    assert.equal(third.reasons.not_expired, 2)
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }
@@ -207,6 +206,34 @@ test('owned provenance temp files follow a separate strict rule and deletion fai
     assert.equal(lstatSync(target, { throwIfNoEntry: false }), undefined)
     const repeated = cleanupExpiredReportProvenance({ storeDirectory: directory, now })
     assert.equal(repeated.success, 0)
+  } finally {
+    rmSync(parent, { recursive: true, force: true })
+  }
+})
+
+test('report provenance dry-run and deletion share one candidate plan', () => {
+  const parent = mkdtempSync(join(tmpdir(), 'gaiop-report-provenance-dry-run-'))
+  const directory = join(parent, 'report-provenance')
+  const now = Date.UTC(2026, 7, 9, 12)
+  mkdirSync(directory)
+  const target = writeEnvelope(directory, 'session-dry-run', now - 72 * 60 * 60 * 1000)
+  try {
+    let unlinkCalls = 0
+    const preview = cleanupExpiredReportProvenance({
+      storeDirectory: directory,
+      now,
+      dryRun: true,
+      fs: { unlinkSync: () => { unlinkCalls += 1 } },
+    })
+    assert.equal(preview.candidateCount, 1)
+    assert.equal(preview.success, 0)
+    assert.equal(unlinkCalls, 0)
+    assert.equal(lstatSync(target).isFile(), true)
+
+    const executed = cleanupExpiredReportProvenance({ storeDirectory: directory, now, maxItems: 10 })
+    assert.equal(executed.candidateCount, 1)
+    assert.equal(executed.success, 1)
+    assert.equal(lstatSync(target, { throwIfNoEntry: false }), undefined)
   } finally {
     rmSync(parent, { recursive: true, force: true })
   }

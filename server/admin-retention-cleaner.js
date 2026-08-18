@@ -17,12 +17,17 @@ function auditProjection(result, startedAt, completedAt) {
   }
   return {
     policyVersion: ADMIN_RETENTION_POLICY_VERSION,
+    phase: result.phase === 'reserved' ? 'reserved' : 'completed',
     category: String(result.category || 'unknown').slice(0, 80),
     cutoffTime: typeof result.cutoffTime === 'string' ? result.cutoffTime : null,
     success: Math.max(0, Number(result.success) || 0),
     skipped: Math.max(0, Number(result.skipped) || 0),
     failed: Math.max(0, Number(result.failed) || 0),
     freedBytes: Math.max(0, Number(result.freedBytes) || 0),
+    candidateCount: Math.max(0, Number(result.candidateCount) || 0),
+    candidateBytes: Math.max(0, Number(result.candidateBytes) || 0),
+    earliestCandidateTime: typeof result.earliestCandidateTime === 'string' ? result.earliestCandidateTime : null,
+    latestCandidateTime: typeof result.latestCandidateTime === 'string' ? result.latestCandidateTime : null,
     failureReasons: allowedReasons,
     startedAt,
     completedAt,
@@ -55,6 +60,7 @@ export function acquireSingleInstanceLock(lockPath) {
 
 export function runAdminRetentionCleanup({
   enabled = false,
+  dryRun = false,
   now = Date.now(),
   maxItems = 100,
   reportProvenanceDirectory,
@@ -70,24 +76,32 @@ export function runAdminRetentionCleanup({
 
   const startedAt = new Date(now).toISOString()
   try {
-    const results = enabled
-      ? [
-          cleanupProvenance({ storeDirectory: reportProvenanceDirectory, now, maxItems: positiveInteger(maxItems, 100) }),
-          cleanupUpgradeStaging({ stagingDirectory: upgradeUploadStagingDirectory, now, maxItems: positiveInteger(maxItems, 100) }),
-        ]
-      : [{
-          category: 'admin_retention_all',
-          cutoffTime: null,
-          success: 0,
-          skipped: 1,
-          failed: 0,
-          freedBytes: 0,
-          reasons: { auto_delete_disabled: 1 },
-        }]
+    const preview = [
+      cleanupProvenance({ storeDirectory: reportProvenanceDirectory, now, maxItems: positiveInteger(maxItems, 100), dryRun: true }),
+      cleanupUpgradeStaging({ stagingDirectory: upgradeUploadStagingDirectory, now, maxItems: positiveInteger(maxItems, 100), dryRun: true }),
+    ]
+    if (dryRun || !enabled) {
+      const completedAt = new Date().toISOString()
+      return { acquired: true, dryRun: true, records: preview.map((result) => auditProjection(result, startedAt, completedAt)) }
+    }
+
+    const reservationAt = new Date().toISOString()
+    const reservation = preview.map((result) => auditProjection({ ...result, phase: 'reserved' }, startedAt, reservationAt))
+    try {
+      appendAudit(auditLogPath, reservation)
+    } catch {
+      const failed = preview.map((result) => auditProjection({ ...result, failed: 1, reasons: { ...(result.reasons || {}), audit_reservation_failed: 1 } }, startedAt, reservationAt))
+      return { acquired: true, dryRun: false, records: failed, auditReserved: false }
+    }
+
+    const results = [
+      cleanupProvenance({ storeDirectory: reportProvenanceDirectory, now, maxItems: positiveInteger(maxItems, 100), plan: { result: preview[0], candidates: preview[0]._candidatePlan || [] } }),
+      cleanupUpgradeStaging({ stagingDirectory: upgradeUploadStagingDirectory, now, maxItems: positiveInteger(maxItems, 100), plan: { result: preview[1], candidates: preview[1]._candidatePlan || [] } }),
+    ]
     const completedAt = new Date().toISOString()
     const records = results.map((result) => auditProjection(result, startedAt, completedAt))
     appendAudit(auditLogPath, records)
-    return { acquired: true, records }
+    return { acquired: true, dryRun: false, auditReserved: true, records }
   } finally {
     releaseLock()
   }
