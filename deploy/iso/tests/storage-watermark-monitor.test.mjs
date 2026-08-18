@@ -21,21 +21,14 @@ test('storage watermark service is a hardened Node one-shot with monitor-only fi
   assert.match(service, /^NoNewPrivileges=true$/m)
   assert.match(service, /^ReadWritePaths=\/var\/lib\/gaiop\/admin$/m)
   assert.doesNotMatch(service, /^EnvironmentFile=/m)
+  assert.doesNotMatch(service, /\/home\/netinside\/\.openclaw|\/var\/backups\/gaiop|upgrade-upload-staging|\/var\/log\/netinside|\/var\/log\/caddy/)
   assert.doesNotMatch(service, /admin-retention|upgrade-retention|clean(?:er|up)|\brm\b|unlink|find\s|sh\s+-c|bash\s+-c/i)
 })
 
-test('managed root template is explicit, bounded and contains only approved labels', () => {
+test('managed root template uses one safe probe for the single production data filesystem', () => {
   assert.equal(config.version, 'gaiop_storage_watermark_roots.v1')
-  assert.deepEqual(config.managedRoots.map((item) => item.label), [
-    'admin_state',
-    'runtime_state',
-    'formal_reports',
-    'upgrade_state',
-    'upgrade_rollback',
-    'admin_upgrade_staging',
-    'gateway_state',
-    'raw_syslog',
-    'caddy_access_logs',
+  assert.deepEqual(config.managedRoots, [
+    { label: 'admin_state', path: '/var/lib/gaiop/admin' },
   ])
   assert.equal(config.managedRoots.every((item) => typeof item.path === 'string' && item.path.startsWith('/') && item.path !== '/'), true)
   assert.equal(new Set(config.managedRoots.map((item) => item.path)).size, config.managedRoots.length)

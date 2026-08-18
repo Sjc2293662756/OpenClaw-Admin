@@ -9,6 +9,7 @@ const mode = String(process.env.GAIOP_RETENTION_RELEASE_MODE || '').trim()
 const releaseId = String(process.env.GAIOP_RETENTION_RELEASE_ID || '').trim()
 const adminArchive = String(process.env.GAIOP_RETENTION_RELEASE_ADMIN_ARCHIVE || '').trim()
 const upgradeArchive = String(process.env.GAIOP_RETENTION_RELEASE_UPGRADE_ARCHIVE || '').trim()
+const watermarkArchive = String(process.env.GAIOP_RETENTION_RELEASE_WATERMARK_ARCHIVE || '').trim()
 const connection = {
   host: String(process.env.GAIOP_RETENTION_RELEASE_SSH_HOST || '').trim(),
   username: String(process.env.GAIOP_RETENTION_RELEASE_SSH_USERNAME || '').trim(),
@@ -16,7 +17,7 @@ const connection = {
   readyTimeout: 20_000,
 }
 
-if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark'].includes(mode)) {
+if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark'].includes(mode)) {
   throw new Error('The controlled retention release mode is not available.')
 }
 if (mode === 'verify-units'
@@ -33,6 +34,13 @@ if (mode === 'deploy-admin'
 }
 if (mode === 'diagnose-admin' && !/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId)) {
   throw new Error('The controlled Admin diagnosis inputs are incomplete.')
+}
+if (['deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark'].includes(mode)
+  && !/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId)) {
+  throw new Error('The storage watermark filesystem release inputs are incomplete.')
+}
+if (mode === 'deploy-watermark-probes' && !watermarkArchive) {
+  throw new Error('The storage watermark probe archive is incomplete.')
 }
 if (!connection.host || !connection.username || !connection.password) {
   throw new Error('The controlled retention release connection is incomplete.')
@@ -1156,6 +1164,221 @@ async function diagnoseAdmin(client) {
   }
 }
 
+const watermarkFilesystemInspectionScript = String.raw`set -euo pipefail
+admin_root=/opt/gaiop/admin
+database=/var/lib/gaiop/admin/wizard.db
+
+timer_state() {
+  unit="$1"
+  active=$(systemctl is-active "$unit" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$unit" 2>/dev/null || true)
+  printf '%s|%s' "$active" "$enabled"
+}
+
+http_status() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || printf '000'
+}
+
+roots_file=$(mktemp)
+trap 'rm -f -- "$roots_file"' EXIT
+cat >"$roots_file" <<'ROOTS'
+admin_state|/var/lib/gaiop/admin
+runtime_state|/var/lib/gaiop/runtime
+formal_reports|/var/lib/gaiop/reports
+upgrade_state|/var/lib/gaiop-upgrade
+upgrade_rollback|/var/backups/gaiop/upgrade
+admin_upgrade_staging|/opt/gaiop/admin/data/upgrade-upload-staging
+gateway_state|/home/netinside/.openclaw
+raw_syslog|/var/log/netinside
+caddy_access_logs|/var/log/caddy
+ROOTS
+
+inspection=$(
+  while IFS='|' read -r label path; do
+    root_device=$(stat -Lc '%d' -- "$path" 2>/dev/null || printf 'unavailable')
+    mount_info=$(findmnt -n -T "$path" -o TARGET,SOURCE,FSTYPE,MAJ:MIN --raw 2>/dev/null || true)
+    if [ -n "$mount_info" ]; then
+      mount_point=$(printf '%s\n' "$mount_info" | awk '{print $1}')
+      mount_source=$(printf '%s\n' "$mount_info" | awk '{print $2}')
+      filesystem_type=$(printf '%s\n' "$mount_info" | awk '{print $3}')
+      major_minor=$(printf '%s\n' "$mount_info" | awk '{print $4}')
+    else
+      mount_point=unavailable
+      mount_source=unavailable
+      filesystem_type=unavailable
+      major_minor=unavailable
+    fi
+    df_info=$(df -P -- "$path" 2>/dev/null | awk 'NR == 2 { print $2 "|" $3 "|" $4 "|" $5 }' || true)
+    if [ -n "$df_info" ]; then
+      df_total=$(printf '%s' "$df_info" | cut -d '|' -f 1)
+      df_used=$(printf '%s' "$df_info" | cut -d '|' -f 2)
+      df_available=$(printf '%s' "$df_info" | cut -d '|' -f 3)
+      df_percent=$(printf '%s' "$df_info" | cut -d '|' -f 4)
+    else
+      df_total=unavailable
+      df_used=unavailable
+      df_available=unavailable
+      df_percent=unavailable
+    fi
+    gaiop_stat=$(runuser -u gaiop -- stat -Lc '%d' -- "$path" 2>/dev/null || printf 'unavailable')
+    if runuser -u gaiop -- /usr/local/bin/node - "$path" <<'NODE' >/dev/null 2>&1
+const fs = require('node:fs')
+const path = process.argv[2]
+const stat = fs.statSync(path, { bigint: true })
+if (!stat.isDirectory()) process.exit(2)
+const statfs = fs.statfsSync(path, { bigint: true })
+if (statfs.blocks <= 0n || statfs.bavail < 0n || statfs.bfree < 0n) process.exit(3)
+NODE
+    then
+      gaiop_statfs=ok
+    else
+      gaiop_statfs=unavailable
+    fi
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+      "$label" "$path" "$root_device" "$mount_point" "$mount_source" "$filesystem_type" \
+      "$major_minor" "$df_total" "$df_used" "$df_available" "$df_percent" "$gaiop_stat" "$gaiop_statfs" \
+      "$(test "$root_device" != unavailable -a "$mount_point" != unavailable -a "$df_total" != unavailable && printf ok || printf inspection_failed)"
+  done <"$roots_file"
+)
+
+database_summary=$(/usr/local/bin/node - "$admin_root/node_modules/better-sqlite3" "$database" <<'NODE'
+const [moduleRoot, databasePath] = process.argv.slice(2)
+const Database = require(moduleRoot)
+const db = new Database(databasePath, { readonly: true, fileMustExist: true })
+try {
+  const selected = {}
+  for (const name of ['users', 'workspace_sessions', 'report_files', 'report_deliveries']) {
+    const quoted = '"' + name.replaceAll('"', '""') + '"'
+    selected[name] = Number(db.prepare('SELECT COUNT(*) AS count FROM ' + quoted).get().count)
+  }
+  const watermark = {
+    statuses: Number(db.prepare('SELECT COUNT(*) AS count FROM storage_watermark_status WHERE is_current=1').get().count),
+    events: Number(db.prepare('SELECT COUNT(*) AS count FROM storage_watermark_events').get().count),
+  }
+  process.stdout.write(JSON.stringify({
+    integrity: db.pragma('integrity_check', { simple: true }),
+    selected,
+    watermark,
+  }))
+} finally { db.close() }
+NODE
+)
+
+current_status=$(/usr/local/bin/node - "$admin_root/node_modules/better-sqlite3" "$database" <<'NODE'
+const [moduleRoot, databasePath] = process.argv.slice(2)
+const Database = require(moduleRoot)
+const db = new Database(databasePath, { readonly: true, fileMustExist: true })
+try {
+  const rows = db.prepare(
+    'SELECT filesystem_id, state, detection_success, usage_percent, threshold_percent, reason_code, managed_root_labels, checked_at ' +
+    'FROM storage_watermark_status WHERE is_current=1 ORDER BY filesystem_id'
+  ).all().map((row) => ({
+    filesystemId: row.filesystem_id,
+    state: row.state,
+    detectionSuccess: row.detection_success === 1,
+    usagePercent: row.usage_percent,
+    thresholdPercent: row.threshold_percent,
+    reasonCode: row.reason_code,
+    managedRootLabels: JSON.parse(row.managed_root_labels),
+    checkedAt: row.checked_at,
+  }))
+  process.stdout.write(JSON.stringify(rows))
+} finally { db.close() }
+NODE
+)
+
+gateway_uid=$(id -u netinside)
+gateway_state=$(runuser -u netinside -- env XDG_RUNTIME_DIR="/run/user/$gateway_uid" systemctl --user is-active openclaw-gateway.service 2>/dev/null || true)
+printf 'INSPECTION_COMPLETE=1\n'
+printf 'UTC=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf 'FILESYSTEMS_B64=%s\n' "$(printf '%s' "$inspection" | base64 -w 0)"
+printf 'DATABASE_B64=%s\n' "$(printf '%s' "$database_summary" | base64 -w 0)"
+printf 'CURRENT_STATUS_B64=%s\n' "$(printf '%s' "$current_status" | base64 -w 0)"
+printf 'CONFIG_SHA256=%s\n' "$(sha256sum /etc/gaiop/storage-watermark-roots.json | awk '{print $1}')"
+printf 'SERVICE_SHA256=%s\n' "$(sha256sum /etc/systemd/system/gaiop-storage-watermark-monitor.service | awk '{print $1}')"
+printf 'TIMER_SHA256=%s\n' "$(sha256sum /etc/systemd/system/gaiop-storage-watermark-monitor.timer | awk '{print $1}')"
+printf 'ADMIN_SERVICE=%s\n' "$(systemctl is-active gaiop-admin.service 2>/dev/null || true)"
+printf 'UPGRADE_SERVICE=%s\n' "$(systemctl is-active gaiop-upgrade.service 2>/dev/null || true)"
+printf 'GATEWAY_SERVICE=%s\n' "$gateway_state"
+printf 'CADDY_SERVICE=%s\n' "$(systemctl is-active caddy.service 2>/dev/null || true)"
+printf 'ADMIN_HEALTH=%s\n' "$(http_status http://127.0.0.1:3000/api/health)"
+printf 'UPGRADE_HEALTH=%s\n' "$(http_status http://127.0.0.1:18900/health)"
+printf 'GATEWAY_HEALTH=%s\n' "$(http_status http://127.0.0.1:18789/health)"
+printf 'HTTPS_LOOPBACK=%s\n' "$(curl -k -sS -o /dev/null -w '%{http_code}' --max-time 5 https://127.0.0.1/ 2>/dev/null || printf '000')"
+printf 'ADMIN_LISTENER=%s\n' "$(ss -ltnH 'sport = :3000' 2>/dev/null | awk '{print $4}' | head -n 1)"
+printf 'UPGRADE_LISTENER=%s\n' "$(ss -ltnH 'sport = :18900' 2>/dev/null | awk '{print $4}' | head -n 1)"
+printf 'ADMIN_RETENTION_TIMER=%s\n' "$(timer_state gaiop-admin-retention-cleanup.timer)"
+printf 'UPGRADE_RETENTION_TIMER=%s\n' "$(timer_state gaiop-upgrade-retention-cleanup.timer)"
+printf 'REPORT_RETENTION_TIMER=%s\n' "$(timer_state gaiop-report-retention-cleanup.timer)"
+printf 'SESSION_RETENTION_TIMER=%s\n' "$(timer_state gaiop-admin-session-retention.timer)"
+printf 'ADMIN_SQLITE_TIMER=%s\n' "$(timer_state gaiop-admin-sqlite-backup.timer)"
+printf 'UPGRADE_SQLITE_TIMER=%s\n' "$(timer_state gaiop-upgrade-sqlite-backup.timer)"
+printf 'WATERMARK_TIMER=%s\n' "$(timer_state gaiop-storage-watermark-monitor.timer)"
+`
+
+function parseFilesystemInspection(value) {
+  const decoded = Buffer.from(String(value || ''), 'base64').toString('utf8')
+  return decoded.split(/\r?\n/).filter(Boolean).map((line) => {
+    const [label, path, device, mountPoint, mountSource, filesystemType, majorMinor,
+      totalBlocks, usedBlocks, availableBlocks, usePercent, gaiopDevice, gaiopStatfs, reasonCode] = line.split('|')
+    return {
+      label,
+      path,
+      device,
+      mountPoint,
+      mountSource,
+      filesystemType,
+      majorMinor,
+      df: { totalBlocks, usedBlocks, availableBlocks, usePercent },
+      gaiop: { device: gaiopDevice, statfs: gaiopStatfs },
+      reasonCode,
+    }
+  })
+}
+
+async function inspectWatermarkFilesystems(client) {
+  const remote = await runSudoScript(client, watermarkFilesystemInspectionScript)
+  const values = parseKeyValues(remote.output)
+  return {
+    completed: remote.ok && values.INSPECTION_COMPLETE === '1',
+    mode: 'inspect-watermark-filesystems',
+    checkedAt: values.UTC || null,
+    filesystems: parseFilesystemInspection(values.FILESYSTEMS_B64),
+    database: parseBase64Json(values.DATABASE_B64, null),
+    currentStatus: parseBase64Json(values.CURRENT_STATUS_B64, []),
+    hashes: {
+      config: values.CONFIG_SHA256 || null,
+      service: values.SERVICE_SHA256 || null,
+      timer: values.TIMER_SHA256 || null,
+    },
+    services: {
+      admin: values.ADMIN_SERVICE || null,
+      upgrade: values.UPGRADE_SERVICE || null,
+      gateway: values.GATEWAY_SERVICE || null,
+      caddy: values.CADDY_SERVICE || null,
+    },
+    listeners: {
+      admin: values.ADMIN_LISTENER || null,
+      upgrade: values.UPGRADE_LISTENER || null,
+    },
+    health: {
+      admin: Number(values.ADMIN_HEALTH || 0),
+      upgrade: Number(values.UPGRADE_HEALTH || 0),
+      gateway: Number(values.GATEWAY_HEALTH || 0),
+      httpsLoopback: Number(values.HTTPS_LOOPBACK || 0),
+    },
+    timers: {
+      adminRetention: parseTimer(values.ADMIN_RETENTION_TIMER),
+      upgradeRetention: parseTimer(values.UPGRADE_RETENTION_TIMER),
+      reportRetention: parseTimer(values.REPORT_RETENTION_TIMER),
+      sessionRetention: parseTimer(values.SESSION_RETENTION_TIMER),
+      adminSqlite: parseTimer(values.ADMIN_SQLITE_TIMER),
+      upgradeSqlite: parseTimer(values.UPGRADE_SQLITE_TIMER),
+      watermark: parseTimer(values.WATERMARK_TIMER),
+    },
+  }
+}
+
 function watermarkVerificationScript() {
   return String.raw`set -euo pipefail
 verification_phase=initial_checks
@@ -1374,6 +1597,607 @@ async function verifyWatermark(client) {
   }
 }
 
+function watermarkRollbackScript() {
+  return String.raw`set -euo pipefail
+backup_root='/var/backups/gaiop/storage-watermark-probes-${releaseId}'
+service=gaiop-storage-watermark-monitor.service
+timer=gaiop-storage-watermark-monitor.timer
+test -d "$backup_root"
+test -f "$backup_root/storage-watermark-roots.json"
+test -f "$backup_root/$service"
+test -f "$backup_root/$timer"
+systemctl disable --now "$timer" >/dev/null 2>&1 || true
+cp -a -- "$backup_root/storage-watermark-roots.json" /etc/gaiop/storage-watermark-roots.json
+cp -a -- "$backup_root/$service" "/etc/systemd/system/$service"
+cp -a -- "$backup_root/$timer" "/etc/systemd/system/$timer"
+systemctl daemon-reload
+systemd-analyze verify \
+  /etc/systemd/system/gaiop-admin.service \
+  "/etc/systemd/system/$service" \
+  "/etc/systemd/system/$timer"
+test "$(systemctl is-enabled "$timer" 2>/dev/null || true)" != enabled
+test "$(systemctl is-active "$timer" 2>/dev/null || true)" != active
+test "$(systemctl is-active gaiop-admin.service)" = active
+test "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/api/health)" = 200
+printf 'WATERMARK_ROLLBACK_COMPLETE=1\n'
+printf 'BACKUP_ROOT=%s\n' "$backup_root"
+`
+}
+
+function watermarkProbeDeploymentScript({ remoteArchive, archiveSha }) {
+  return String.raw`set -euo pipefail
+release_id='${releaseId}'
+remote_archive='${remoteArchive}'
+expected_sha='${archiveSha}'
+backup_root="/var/backups/gaiop/storage-watermark-probes-$release_id"
+service=gaiop-storage-watermark-monitor.service
+timer=gaiop-storage-watermark-monitor.timer
+phase=initial
+backup_created=0
+complete=0
+candidate=$(mktemp -d /run/gaiop-watermark-probe.XXXXXX)
+
+rollback() {
+  set +e
+  systemctl disable --now "$timer" >/dev/null 2>&1 || true
+  if [ "$backup_created" = 1 ]; then
+    cp -a -- "$backup_root/storage-watermark-roots.json" /etc/gaiop/storage-watermark-roots.json
+    cp -a -- "$backup_root/$service" "/etc/systemd/system/$service"
+    cp -a -- "$backup_root/$timer" "/etc/systemd/system/$timer"
+    systemctl daemon-reload
+  fi
+}
+
+finish() {
+  status=$?
+  rm -rf -- "$candidate"
+  rm -f -- "$remote_archive"
+  if [ "$status" -ne 0 ] || [ "$complete" != 1 ]; then
+    rollback
+    printf 'FAILED_PHASE=%s\n' "$phase"
+    printf 'ROLLBACK_COMPLETE=%s\n' "$(test "$backup_created" = 1 && printf 1 || printf 0)"
+  fi
+  exit "$status"
+}
+trap finish EXIT
+
+phase=archive_hash
+test "$(sha256sum "$remote_archive" | awk '{print $1}')" = "$expected_sha"
+phase=archive_extract
+tar -xzf "$remote_archive" -C "$candidate"
+test -f "$candidate/managed-roots.json"
+test -f "$candidate/$service"
+test -f "$candidate/$timer"
+archive_entries=$(tar -tzf "$remote_archive" | sed 's#^\./##' | LC_ALL=C sort)
+expected_entries=$(printf '%s\n' managed-roots.json "$service" "$timer" | LC_ALL=C sort)
+test "$archive_entries" = "$expected_entries"
+
+phase=config_contract
+/usr/local/bin/node - "$candidate/managed-roots.json" <<'NODE'
+const fs = require('node:fs')
+const path = process.argv[2]
+const config = JSON.parse(fs.readFileSync(path, 'utf8'))
+if (config.version !== 'gaiop_storage_watermark_roots.v1') process.exit(1)
+if (JSON.stringify(config.managedRoots) !== JSON.stringify([
+  { label: 'admin_state', path: '/var/lib/gaiop/admin' },
+])) process.exit(2)
+NODE
+
+phase=candidate_systemd_verify
+systemd-analyze verify \
+  /etc/systemd/system/gaiop-admin.service \
+  "$candidate/$service" \
+  "$candidate/$timer"
+phase=backup
+test ! -e "$backup_root"
+install -d -o root -g root -m 0700 "$backup_root"
+cp -a -- /etc/gaiop/storage-watermark-roots.json "$backup_root/storage-watermark-roots.json"
+cp -a -- "/etc/systemd/system/$service" "$backup_root/$service"
+cp -a -- "/etc/systemd/system/$timer" "$backup_root/$timer"
+backup_created=1
+
+phase=install
+systemctl disable --now "$timer" >/dev/null 2>&1 || true
+install -o root -g root -m 0644 "$candidate/managed-roots.json" /etc/gaiop/storage-watermark-roots.json
+install -o root -g root -m 0644 "$candidate/$service" "/etc/systemd/system/$service"
+install -o root -g root -m 0644 "$candidate/$timer" "/etc/systemd/system/$timer"
+systemctl daemon-reload
+phase=installed_systemd_verify
+systemd-analyze verify \
+  /etc/systemd/system/gaiop-admin.service \
+  "/etc/systemd/system/$service" \
+  "/etc/systemd/system/$timer"
+test "$(systemctl is-enabled "$timer" 2>/dev/null || true)" != enabled
+test "$(systemctl is-active "$timer" 2>/dev/null || true)" != active
+complete=1
+trap - EXIT
+rm -rf -- "$candidate"
+rm -f -- "$remote_archive"
+printf 'WATERMARK_PROBE_DEPLOY_COMPLETE=1\n'
+printf 'RELEASE_ID=%s\n' "$release_id"
+printf 'BACKUP_ROOT=%s\n' "$backup_root"
+printf 'ARCHIVE_SHA256=%s\n' "$expected_sha"
+printf 'CONFIG_SHA256=%s\n' "$(sha256sum /etc/gaiop/storage-watermark-roots.json | awk '{print $1}')"
+printf 'SERVICE_SHA256=%s\n' "$(sha256sum "/etc/systemd/system/$service" | awk '{print $1}')"
+printf 'TIMER_SHA256=%s\n' "$(sha256sum "/etc/systemd/system/$timer" | awk '{print $1}')"
+printf 'NATIVE_SYSTEMD_VERIFY=ok\n'
+printf 'TIMER_STATE=inactive|disabled\n'
+`
+}
+
+async function deployWatermarkProbes(client) {
+  const remoteArchive = `/tmp/gaiop-storage-watermark-probes-${releaseId}.tgz`
+  const archiveSha = await sha256(watermarkArchive)
+  await upload(client, watermarkArchive, remoteArchive)
+  const remote = await runSudoScript(client, watermarkProbeDeploymentScript({ remoteArchive, archiveSha }))
+  const values = parseKeyValues(remote.output)
+  const completed = remote.ok && values.WATERMARK_PROBE_DEPLOY_COMPLETE === '1'
+  return {
+    completed,
+    mode: 'deploy-watermark-probes',
+    errorCode: completed ? null : 'WATERMARK_PROBE_DEPLOY_FAILED',
+    failedPhase: completed ? null : (values.FAILED_PHASE || 'remote_script'),
+    rollbackComplete: values.ROLLBACK_COMPLETE === '1',
+    releaseId: values.RELEASE_ID || releaseId,
+    backupRoot: values.BACKUP_ROOT || null,
+    archiveSha256: archiveSha,
+    hashes: {
+      config: values.CONFIG_SHA256 || null,
+      service: values.SERVICE_SHA256 || null,
+      timer: values.TIMER_SHA256 || null,
+    },
+    nativeSystemdVerify: values.NATIVE_SYSTEMD_VERIFY || null,
+    timer: parseTimer(values.TIMER_STATE),
+  }
+}
+
+function watermarkVerifyEnableScript() {
+  return String.raw`set -euo pipefail
+phase=initial
+backup_root='/var/backups/gaiop/storage-watermark-probes-${releaseId}'
+admin_root=/opt/gaiop/admin
+database=/var/lib/gaiop/admin/wizard.db
+probe=/var/lib/gaiop/admin
+service=gaiop-storage-watermark-monitor.service
+timer=gaiop-storage-watermark-monitor.timer
+before_events=unknown
+after_first_events=unknown
+after_second_events=unknown
+after_third_events=unknown
+
+rollback() {
+  set +e
+  systemctl disable --now "$timer" >/dev/null 2>&1 || true
+  cp -a -- "$backup_root/storage-watermark-roots.json" /etc/gaiop/storage-watermark-roots.json
+  cp -a -- "$backup_root/$service" "/etc/systemd/system/$service"
+  cp -a -- "$backup_root/$timer" "/etc/systemd/system/$timer"
+  systemctl daemon-reload
+}
+fail() {
+  status=$?
+  rollback
+  printf 'WATERMARK_ENABLE_FAILURE_PHASE=%s\n' "$phase"
+  printf 'ROLLBACK_COMPLETE=1\n'
+  printf 'EVENTS=%s/%s/%s/%s\n' "$before_events" "$after_first_events" "$after_second_events" "$after_third_events"
+  exit "$status"
+}
+trap fail ERR
+
+timer_state() {
+  unit="$1"
+  printf '%s|%s' \
+    "$(systemctl is-active "$unit" 2>/dev/null || true)" \
+    "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+}
+
+db_summary() {
+  /usr/local/bin/node - "$admin_root/node_modules/better-sqlite3" "$database" <<'NODE'
+const [moduleRoot, databasePath] = process.argv.slice(2)
+const Database = require(moduleRoot)
+const db = new Database(databasePath, { readonly: true, fileMustExist: true })
+try {
+  const selected = {}
+  for (const name of ['users', 'workspace_sessions', 'report_files', 'report_deliveries']) {
+    const quoted = '"' + name.replaceAll('"', '""') + '"'
+    selected[name] = Number(db.prepare('SELECT COUNT(*) AS count FROM ' + quoted).get().count)
+  }
+  const statuses = db.prepare(
+    'SELECT filesystem_id, state, detection_success, usage_percent, threshold_percent, reason_code, managed_root_labels, checked_at ' +
+    'FROM storage_watermark_status WHERE is_current=1 ORDER BY filesystem_id'
+  ).all().map((row) => ({
+    filesystemId: row.filesystem_id,
+    state: row.state,
+    detectionSuccess: row.detection_success === 1,
+    usagePercent: row.usage_percent,
+    thresholdPercent: row.threshold_percent,
+    reasonCode: row.reason_code,
+    managedRootLabels: JSON.parse(row.managed_root_labels),
+    checkedAt: row.checked_at,
+  }))
+  process.stdout.write(JSON.stringify({
+    integrity: db.pragma('integrity_check', { simple: true }),
+    selected,
+    events: Number(db.prepare('SELECT COUNT(*) AS count FROM storage_watermark_events').get().count),
+    statuses,
+  }))
+} finally { db.close() }
+NODE
+}
+
+events_from() {
+  /usr/local/bin/node -e "process.stdout.write(String(JSON.parse(process.argv[1]).events))" "$1"
+}
+
+validate_status() {
+  df_values=$(df -P -- "$probe" | awk 'NR == 2 { print $3 ":" $4 ":" $5 }')
+  /usr/local/bin/node - "$1" "$df_values" <<'NODE'
+const [summary, dfValues] = process.argv.slice(2)
+const value = JSON.parse(summary)
+if (value.integrity !== 'ok' || value.statuses.length !== 1) process.exit(1)
+const row = value.statuses[0]
+if (!row.detectionSuccess || row.reasonCode === 'managed_root_permission_denied') process.exit(2)
+if (JSON.stringify(row).includes('/')) process.exit(3)
+if (JSON.stringify(row.managedRootLabels) !== JSON.stringify(['admin_state'])) process.exit(4)
+const [used, available] = dfValues.split(':').map((item) => Number.parseInt(item, 10))
+const rawPercent = used * 100 / (used + available)
+if (!Number.isFinite(rawPercent) || Math.abs(rawPercent - row.usagePercent) > 0.2) process.exit(5)
+const expected = rawPercent >= 90 ? 'emergency' : rawPercent >= 80 ? 'cleanup_required' : rawPercent >= 75 ? 'warning' : 'normal'
+if (row.state !== expected) process.exit(6)
+NODE
+}
+
+phase=preconditions
+test -d "$backup_root"
+test "$(systemctl is-active gaiop-admin.service)" = active
+test "$(timer_state "$timer")" = 'inactive|disabled'
+phase=systemd_verify
+systemd-analyze verify \
+  /etc/systemd/system/gaiop-admin.service \
+  "/etc/systemd/system/$service" \
+  "/etc/systemd/system/$timer"
+phase=probe_access
+probe_device=$(stat -Lc '%d' -- "$probe")
+test "$(runuser -u gaiop -- stat -Lc '%d' -- "$probe")" = "$probe_device"
+runuser -u gaiop -- /usr/local/bin/node - "$probe" "$probe_device" <<'NODE'
+const fs = require('node:fs')
+const [path, expectedDevice] = process.argv.slice(2)
+const stat = fs.statSync(path, { bigint: true })
+if (!stat.isDirectory() || stat.dev.toString() !== expectedDevice) process.exit(1)
+const statfs = fs.statfsSync(path, { bigint: true })
+if (statfs.blocks <= 0n || statfs.bavail < 0n || statfs.bfree < 0n) process.exit(2)
+NODE
+phase=unit_scope
+grep -Fq 'ReadWritePaths=/var/lib/gaiop/admin' "/etc/systemd/system/$service"
+if grep -Eq '/home/netinside/\.openclaw|/var/backups/gaiop|upgrade-upload-staging|/var/log/netinside|/var/log/caddy' "/etc/systemd/system/$service"; then
+  exit 31
+fi
+phase=database_baseline
+before=$(db_summary)
+before_events=$(events_from "$before")
+
+phase=oneshot_first
+systemctl start "$service"
+test "$(systemctl show "$service" -p Result --value)" = success
+after_first=$(db_summary)
+after_first_events=$(events_from "$after_first")
+validate_status "$after_first"
+phase=oneshot_second
+systemctl start "$service"
+test "$(systemctl show "$service" -p Result --value)" = success
+after_second=$(db_summary)
+after_second_events=$(events_from "$after_second")
+validate_status "$after_second"
+test "$after_second_events" = "$after_first_events"
+phase=oneshot_third
+systemctl start "$service"
+test "$(systemctl show "$service" -p Result --value)" = success
+after_third=$(db_summary)
+after_third_events=$(events_from "$after_third")
+validate_status "$after_third"
+test "$after_third_events" = "$after_second_events"
+
+phase=database_invariants
+/usr/local/bin/node - "$before" "$after_third" <<'NODE'
+const [before, after] = process.argv.slice(2).map(JSON.parse)
+if (before.integrity !== 'ok' || after.integrity !== 'ok') process.exit(1)
+for (const name of ['users', 'workspace_sessions', 'report_files', 'report_deliveries']) {
+  if (before.selected[name] !== after.selected[name]) process.exit(2)
+}
+NODE
+phase=role_and_redaction_tests
+test_log=$(mktemp)
+if ! (cd "$admin_root" && runuser -u gaiop -- env NODE_ENV=test /usr/local/bin/node --test \
+  server/lib/storage-watermark-service.test.js \
+  server/routes/storage-watermark.test.js) >"$test_log" 2>&1; then
+  rm -f -- "$test_log"
+  exit 41
+fi
+grep -Fq '# fail 0' "$test_log"
+rm -f -- "$test_log"
+phase=closed_timers
+for closed_timer in \
+  gaiop-admin-retention-cleanup.timer \
+  gaiop-upgrade-retention-cleanup.timer \
+  gaiop-report-retention-cleanup.timer \
+  gaiop-admin-session-retention.timer \
+  gaiop-admin-sqlite-backup.timer \
+  gaiop-upgrade-sqlite-backup.timer
+do
+  test "$(timer_state "$closed_timer")" = 'inactive|disabled'
+done
+phase=enable_timer
+systemctl enable --now "$timer" >/dev/null
+test "$(timer_state "$timer")" = 'active|enabled'
+trap - ERR
+printf 'WATERMARK_ENABLE_COMPLETE=1\n'
+printf 'NATIVE_SYSTEMD_VERIFY=ok\n'
+printf 'PROBE_DEVICE=%s\n' "$probe_device"
+printf 'EVENTS=%s/%s/%s/%s\n' "$before_events" "$after_first_events" "$after_second_events" "$after_third_events"
+printf 'DATABASE_B64=%s\n' "$(printf '%s' "$after_third" | base64 -w 0)"
+printf 'ROLE_AND_REDACTION_TESTS=pass\n'
+printf 'TIMER_STATE=%s\n' "$(timer_state "$timer")"
+printf 'LAST_TRIGGER=%s\n' "$(systemctl show "$timer" -p LastTriggerUSec --value)"
+printf 'NEXT_TRIGGER=%s\n' "$(systemctl show "$timer" -p NextElapseUSecRealtime --value)"
+`
+}
+
+async function verifyEnableWatermark(client) {
+  const remote = await runSudoScript(client, watermarkVerifyEnableScript())
+  const values = parseKeyValues(remote.output)
+  const completed = remote.ok && values.WATERMARK_ENABLE_COMPLETE === '1'
+  const [before, afterFirst, afterSecond, afterThird] = String(values.EVENTS || '').split('/')
+  return {
+    completed,
+    mode: 'verify-enable-watermark',
+    errorCode: completed ? null : 'WATERMARK_ENABLE_FAILED',
+    failedPhase: completed ? null : (values.WATERMARK_ENABLE_FAILURE_PHASE || 'remote_script'),
+    rollbackComplete: values.ROLLBACK_COMPLETE === '1',
+    nativeSystemdVerify: values.NATIVE_SYSTEMD_VERIFY || null,
+    probeDevice: values.PROBE_DEVICE || null,
+    eventCounts: { before, afterFirst, afterSecond, afterThird },
+    database: parseBase64Json(values.DATABASE_B64, null),
+    roleAndRedactionTests: values.ROLE_AND_REDACTION_TESTS || null,
+    timer: {
+      ...parseTimer(values.TIMER_STATE),
+      lastTrigger: values.LAST_TRIGGER || null,
+      nextTrigger: values.NEXT_TRIGGER || null,
+    },
+  }
+}
+
+function watermarkObservationScript() {
+  return String.raw`set -euo pipefail
+phase=initial
+backup_root='/var/backups/gaiop/storage-watermark-probes-${releaseId}'
+admin_root=/opt/gaiop/admin
+database=/var/lib/gaiop/admin/wizard.db
+probe=/var/lib/gaiop/admin
+service=gaiop-storage-watermark-monitor.service
+timer=gaiop-storage-watermark-monitor.timer
+start_epoch=$(date +%s)
+initial_checked=unknown
+first_checked=unknown
+second_checked=unknown
+
+rollback() {
+  set +e
+  systemctl disable --now "$timer" >/dev/null 2>&1 || true
+  cp -a -- "$backup_root/storage-watermark-roots.json" /etc/gaiop/storage-watermark-roots.json
+  cp -a -- "$backup_root/$service" "/etc/systemd/system/$service"
+  cp -a -- "$backup_root/$timer" "/etc/systemd/system/$timer"
+  systemctl daemon-reload
+}
+fail() {
+  status=$?
+  rollback
+  printf 'WATERMARK_OBSERVE_FAILURE_PHASE=%s\n' "$phase"
+  printf 'ROLLBACK_COMPLETE=1\n'
+  printf 'CHECKED=%s/%s/%s\n' "$initial_checked" "$first_checked" "$second_checked"
+  exit "$status"
+}
+trap fail ERR
+
+timer_state() {
+  unit="$1"
+  printf '%s|%s' \
+    "$(systemctl is-active "$unit" 2>/dev/null || true)" \
+    "$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+}
+
+db_snapshot() {
+  /usr/local/bin/node - "$admin_root/node_modules/better-sqlite3" "$database" <<'NODE'
+const [moduleRoot, databasePath] = process.argv.slice(2)
+const Database = require(moduleRoot)
+const db = new Database(databasePath, { readonly: true, fileMustExist: true })
+try {
+  const selected = {}
+  for (const name of ['users', 'workspace_sessions', 'report_files', 'report_deliveries']) {
+    const quoted = '"' + name.replaceAll('"', '""') + '"'
+    selected[name] = Number(db.prepare('SELECT COUNT(*) AS count FROM ' + quoted).get().count)
+  }
+  const statuses = db.prepare(
+    'SELECT filesystem_id, state, detection_success, usage_percent, threshold_percent, reason_code, managed_root_labels, checked_at ' +
+    'FROM storage_watermark_status WHERE is_current=1 ORDER BY filesystem_id'
+  ).all().map((row) => ({
+    filesystemId: row.filesystem_id,
+    state: row.state,
+    detectionSuccess: row.detection_success === 1,
+    usagePercent: row.usage_percent,
+    thresholdPercent: row.threshold_percent,
+    reasonCode: row.reason_code,
+    managedRootLabels: JSON.parse(row.managed_root_labels),
+    checkedAt: row.checked_at,
+  }))
+  process.stdout.write(JSON.stringify({
+    integrity: db.pragma('integrity_check', { simple: true }),
+    selected,
+    events: Number(db.prepare('SELECT COUNT(*) AS count FROM storage_watermark_events').get().count),
+    statuses,
+    checkedAt: statuses.length === 1 ? Number(statuses[0].checkedAt) : null,
+  }))
+} finally { db.close() }
+NODE
+}
+
+checked_from() {
+  /usr/local/bin/node -e "process.stdout.write(String(JSON.parse(process.argv[1]).checkedAt || 0))" "$1"
+}
+
+phase=preconditions
+test -d "$backup_root"
+test "$(timer_state "$timer")" = 'active|enabled'
+before=$(db_snapshot)
+initial_checked=$(checked_from "$before")
+test "$initial_checked" -gt 0
+deadline=$(( $(date +%s) + 780 ))
+
+phase=wait_first_cycle
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  current=$(db_snapshot)
+  candidate=$(checked_from "$current")
+  if [ "$candidate" -gt "$initial_checked" ]; then
+    first="$current"
+    first_checked="$candidate"
+    break
+  fi
+  sleep 15
+done
+test "$first_checked" != unknown
+test "$(systemctl show "$service" -p Result --value)" = success
+
+phase=wait_second_cycle
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  current=$(db_snapshot)
+  candidate=$(checked_from "$current")
+  if [ "$candidate" -gt "$first_checked" ]; then
+    second="$current"
+    second_checked="$candidate"
+    break
+  fi
+  sleep 15
+done
+test "$second_checked" != unknown
+test "$(systemctl show "$service" -p Result --value)" = success
+
+phase=database_and_event_invariants
+df_values=$(df -P -- "$probe" | awk 'NR == 2 { print $3 ":" $4 ":" $5 }')
+/usr/local/bin/node - "$before" "$first" "$second" "$df_values" <<'NODE'
+const [before, first, second] = process.argv.slice(2, 5).map(JSON.parse)
+const dfValues = process.argv[5]
+for (const value of [before, first, second]) {
+  if (value.integrity !== 'ok' || value.statuses.length !== 1) process.exit(1)
+  const row = value.statuses[0]
+  if (!row.detectionSuccess || JSON.stringify(row.managedRootLabels) !== JSON.stringify(['admin_state'])) process.exit(2)
+  if (JSON.stringify(row).includes('/')) process.exit(3)
+}
+for (const name of ['users', 'workspace_sessions', 'report_files', 'report_deliveries']) {
+  if (before.selected[name] !== second.selected[name]) process.exit(4)
+}
+if (before.events !== first.events || first.events !== second.events) process.exit(5)
+const [used, available] = dfValues.split(':').map((item) => Number.parseInt(item, 10))
+const rawPercent = used * 100 / (used + available)
+if (!Number.isFinite(rawPercent) || Math.abs(rawPercent - second.statuses[0].usagePercent) > 0.2) process.exit(6)
+NODE
+
+phase=closed_timers
+for closed_timer in \
+  gaiop-admin-retention-cleanup.timer \
+  gaiop-upgrade-retention-cleanup.timer \
+  gaiop-report-retention-cleanup.timer \
+  gaiop-admin-session-retention.timer \
+  gaiop-admin-sqlite-backup.timer \
+  gaiop-upgrade-sqlite-backup.timer
+do
+  test "$(timer_state "$closed_timer")" = 'inactive|disabled'
+done
+phase=service_health
+test "$(timer_state "$timer")" = 'active|enabled'
+test "$(systemctl is-active gaiop-admin.service)" = active
+test "$(systemctl is-active gaiop-upgrade.service)" = active
+gateway_uid=$(id -u netinside)
+test "$(runuser -u netinside -- env XDG_RUNTIME_DIR="/run/user/$gateway_uid" systemctl --user is-active openclaw-gateway.service)" = active
+test "$(systemctl is-active caddy.service)" = active
+test "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/api/health)" = 200
+test "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18900/health)" = 200
+test "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18789/health)" = 200
+test "$(curl -k -sS -o /dev/null -w '%{http_code}' --max-time 5 https://127.0.0.1/)" = 200
+test "$(ss -ltnH 'sport = :3000' | awk '{print $4}' | head -n 1)" = '127.0.0.1:3000'
+test "$(ss -ltnH 'sport = :18900' | awk '{print $4}' | head -n 1)" = '127.0.0.1:18900'
+phase=logs
+if journalctl -u "$service" -u gaiop-admin.service --since "@$start_epoch" --no-pager -o cat \
+  | grep -Eqi 'SyntaxError|SQLITE_(CORRUPT|ERROR)|migration failed|Cannot find module|UnhandledPromiseRejection|monitor_failed'; then
+  exit 51
+fi
+trap - ERR
+printf 'WATERMARK_OBSERVE_COMPLETE=1\n'
+printf 'CHECKED=%s/%s/%s\n' "$initial_checked" "$first_checked" "$second_checked"
+printf 'DATABASE_B64=%s\n' "$(printf '%s' "$second" | base64 -w 0)"
+printf 'TIMER_STATE=%s\n' "$(timer_state "$timer")"
+printf 'LAST_TRIGGER=%s\n' "$(systemctl show "$timer" -p LastTriggerUSec --value)"
+printf 'NEXT_TRIGGER=%s\n' "$(systemctl show "$timer" -p NextElapseUSecRealtime --value)"
+printf 'ADMIN_SERVICE=active\n'
+printf 'UPGRADE_SERVICE=active\n'
+printf 'GATEWAY_SERVICE=active\n'
+printf 'CADDY_SERVICE=active\n'
+printf 'ADMIN_HEALTH=200\n'
+printf 'UPGRADE_HEALTH=200\n'
+printf 'GATEWAY_HEALTH=200\n'
+printf 'HTTPS_LOOPBACK=200\n'
+`
+}
+
+async function rollbackWatermark(client) {
+  const remote = await runSudoScript(client, watermarkRollbackScript())
+  const values = parseKeyValues(remote.output)
+  return {
+    completed: remote.ok && values.WATERMARK_ROLLBACK_COMPLETE === '1',
+    mode: 'rollback-watermark',
+    backupRoot: values.BACKUP_ROOT || null,
+  }
+}
+
+async function observeWatermark(client) {
+  const [remote, publicStatus] = await Promise.all([
+    runSudoScript(client, watermarkObservationScript()),
+    publicHttpsStatus(),
+  ])
+  const values = parseKeyValues(remote.output)
+  let completed = remote.ok && values.WATERMARK_OBSERVE_COMPLETE === '1' && publicStatus === 200
+  let rollbackComplete = values.ROLLBACK_COMPLETE === '1'
+  if (!completed && remote.ok) {
+    const rollback = await rollbackWatermark(client)
+    rollbackComplete = rollback.completed
+  }
+  const [initial, first, second] = String(values.CHECKED || '').split('/')
+  return {
+    completed,
+    mode: 'observe-watermark',
+    errorCode: completed ? null : 'WATERMARK_OBSERVE_FAILED',
+    failedPhase: completed ? null : (values.WATERMARK_OBSERVE_FAILURE_PHASE || (publicStatus === 200 ? 'remote_script' : 'public_https')),
+    rollbackComplete,
+    checkedAt: { initial, first, second },
+    database: parseBase64Json(values.DATABASE_B64, null),
+    timer: {
+      ...parseTimer(values.TIMER_STATE),
+      lastTrigger: values.LAST_TRIGGER || null,
+      nextTrigger: values.NEXT_TRIGGER || null,
+    },
+    services: {
+      admin: values.ADMIN_SERVICE || null,
+      upgrade: values.UPGRADE_SERVICE || null,
+      gateway: values.GATEWAY_SERVICE || null,
+      caddy: values.CADDY_SERVICE || null,
+    },
+    health: {
+      admin: Number(values.ADMIN_HEALTH || 0),
+      upgrade: Number(values.UPGRADE_HEALTH || 0),
+      gateway: Number(values.GATEWAY_HEALTH || 0),
+      httpsLoopback: Number(values.HTTPS_LOOPBACK || 0),
+      httpsPublic: publicStatus,
+    },
+  }
+}
+
 function publicHttpsStatus() {
   return new Promise((resolve) => {
     const request = https.get({
@@ -1535,6 +2359,41 @@ client.on('ready', async () => {
     }
     if (mode === 'verify-watermark') {
       const summary = await verifyWatermark(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
+    if (mode === 'inspect-watermark-filesystems') {
+      const summary = await inspectWatermarkFilesystems(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
+    if (mode === 'deploy-watermark-probes') {
+      const summary = await deployWatermarkProbes(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
+    if (mode === 'verify-enable-watermark') {
+      const summary = await verifyEnableWatermark(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
+    if (mode === 'observe-watermark') {
+      const summary = await observeWatermark(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
+    if (mode === 'rollback-watermark') {
+      const summary = await rollbackWatermark(client)
       finished = true
       process.stdout.write(`${JSON.stringify(summary)}\n`)
       if (!summary.completed) process.exitCode = 1

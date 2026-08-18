@@ -2,12 +2,13 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark')]
+  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark')]
   [string]$Mode = 'preflight',
   [ValidatePattern('^[0-9]{8}T[0-9]{6}Z$')]
   [string]$ReleaseId,
   [string]$AdminArchivePath,
-  [string]$UpgradeArchivePath
+  [string]$UpgradeArchivePath,
+  [string]$WatermarkArchivePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,6 +37,12 @@ if ($Mode -eq 'deploy-admin') {
 if ($Mode -eq 'diagnose-admin' -and -not $ReleaseId) {
   throw 'ReleaseId is required for Admin diagnosis.'
 }
+if ($Mode -in @('deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark') -and -not $ReleaseId) {
+  throw 'ReleaseId is required for the storage watermark filesystem release.'
+}
+if ($Mode -eq 'deploy-watermark-probes' -and -not (Test-Path -LiteralPath $WatermarkArchivePath -PathType Leaf)) {
+  throw 'The storage watermark probe archive is unavailable.'
+}
 
 $stored = Import-Clixml -LiteralPath $credentialPath
 if (-not $stored.Host -or -not $stored.Username -or $stored.Password -isnot [System.Security.SecureString]) {
@@ -62,6 +69,9 @@ try {
   }
   if ($UpgradeArchivePath) {
     $start.EnvironmentVariables['GAIOP_RETENTION_RELEASE_UPGRADE_ARCHIVE'] = (Resolve-Path -LiteralPath $UpgradeArchivePath).Path
+  }
+  if ($WatermarkArchivePath) {
+    $start.EnvironmentVariables['GAIOP_RETENTION_RELEASE_WATERMARK_ARCHIVE'] = (Resolve-Path -LiteralPath $WatermarkArchivePath).Path
   }
 
   $process = [System.Diagnostics.Process]::Start($start)
