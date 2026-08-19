@@ -115,7 +115,10 @@ try {
     } else { 'events=not-applicable' }
     $statusErrors = if ($result.statusErrors) { "status=$($result.statusErrors)" } else { 'status=not-applicable' }
     $testFailure = if ($result.testFailure) { "test=$($result.testFailure -replace "`r?`n", ' | ')" } else { 'test=not-applicable' }
-    throw "The controlled retention release runner failed: $errorCode; phase=$failurePhase; rollback=$rollbackState; $eventCounts; $statusErrors; $testFailure"
+    $unitDiagnostics = if ($result.diagnostics) {
+      "unit_workdir=$($result.diagnostics.workingDirectory); dropins=$($result.diagnostics.dropInPaths); exec=$($result.diagnostics.execStart); env_files=$($result.diagnostics.environmentFiles); rw_paths=$($result.diagnostics.readWritePaths)"
+    } else { 'unit_diagnostics=not-applicable' }
+    throw "The controlled retention release runner failed: $errorCode; phase=$failurePhase; rollback=$rollbackState; $eventCounts; $statusErrors; $testFailure; $unitDiagnostics"
   }
   $result | ConvertTo-Json -Depth 10
 } finally {
