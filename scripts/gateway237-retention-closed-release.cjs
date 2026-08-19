@@ -2465,6 +2465,14 @@ unit_shape() {
   } | sha256sum | awk '{print $1}'
 }
 
+print_unit_diagnostics() {
+  printf 'DIAG_WORKING_DIRECTORY=%s\n' "$(systemctl show "$service" -p WorkingDirectory --value 2>/dev/null || true)"
+  printf 'DIAG_DROPIN_PATHS=%s\n' "$(systemctl show "$service" -p DropInPaths --value 2>/dev/null || true)"
+  printf 'DIAG_EXEC_START=%s\n' "$(systemctl show "$service" -p ExecStart --value 2>/dev/null || true)"
+  printf 'DIAG_ENVIRONMENT_FILES=%s\n' "$(systemctl show "$service" -p EnvironmentFiles --value 2>/dev/null || true)"
+  printf 'DIAG_READ_WRITE_PATHS=%s\n' "$(systemctl show "$service" -p ReadWritePaths --value 2>/dev/null || true)"
+}
+
 verify_audit_file() {
   test -f "$audit_log"
   test ! -L "$audit_log"
@@ -2909,6 +2917,7 @@ write_policy false
 systemctl daemon-reload
 
 phase=verify_unit
+print_unit_diagnostics
 systemd-analyze verify "$service_file" "$timer_file" /etc/systemd/system/gaiop-upgrade.service
 verify_effective_unit
 test "$(timer_state "$timer")" = 'inactive|disabled'
@@ -3221,6 +3230,13 @@ async function repairEnableUpgradeRetention(client) {
       policySha256: values.POLICY_SHA256 || null,
       nativeSystemdVerify: values.NATIVE_SYSTEMD_VERIFY || null,
       sourceHashes: expectedHashes,
+    },
+    diagnostics: {
+      workingDirectory: values.DIAG_WORKING_DIRECTORY || null,
+      dropInPaths: values.DIAG_DROPIN_PATHS || null,
+      execStart: values.DIAG_EXEC_START || null,
+      environmentFiles: values.DIAG_ENVIRONMENT_FILES || null,
+      readWritePaths: values.DIAG_READ_WRITE_PATHS || null,
     },
     validation: {
       closedRecords: parseBase64Json(values.CLOSED_RECORDS_B64, []),
