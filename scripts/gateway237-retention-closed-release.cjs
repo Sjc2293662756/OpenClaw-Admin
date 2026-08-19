@@ -2421,7 +2421,15 @@ verify_effective_unit() {
   test "$(printf '%s' "$effective_exec" | grep -o 'argv\[\]=' | wc -l | tr -d '[:space:]')" = 1
   printf '%s' "$effective_exec" | grep -F -- 'path=/usr/local/bin/node' >/dev/null
   printf '%s' "$effective_exec" | grep -F -- "argv[]=/usr/local/bin/node $current_root/src/retention-cleanup.js ;" >/dev/null
-  test "$(systemctl show "$service" -p EnvironmentFiles --value)" = "$main_env (ignore_errors=no) $policy_env (ignore_errors=no)"
+  effective_environment_files=$(systemctl show "$service" -p EnvironmentFiles --value)
+  printf '%s\n' "$effective_environment_files" | grep -F -- "$main_env (ignore_errors=no)" >/dev/null
+  if printf '%s\n' "$effective_environment_files" | grep -F -- '/etc/gaiop/upgrade.env' >/dev/null; then
+    return 1
+  fi
+  cmp -s "$work_root/99-gaiop-retention-production.conf" "$dropin_file"
+  test -f "$policy_env"
+  test ! -L "$policy_env"
+  test "$(stat -c '%u:%a' "$policy_env")" = '0:600'
   test "$(systemctl show "$service" -p ReadWritePaths --value)" = '/var/lib/gaiop-upgrade /var/lib/gaiop-upgrade-retention /var/backups/gaiop/upgrade /run/gaiop-upgrade-retention'
 }
 
@@ -2914,6 +2922,7 @@ ReadWritePaths=/run/gaiop-upgrade-retention
 EOF
 install -o root -g root -m 0644 "$work_root/99-gaiop-retention-production.conf" "$dropin_file"
 write_policy false
+cmp -s "$work_root/99-gaiop-retention-production.conf" "$dropin_file"
 systemctl daemon-reload
 
 phase=verify_unit

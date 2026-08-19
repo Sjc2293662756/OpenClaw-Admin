@@ -111,7 +111,9 @@ test('Upgrade retention production enablement repairs the live unit before start
     runner.indexOf('async function repairEnableUpgradeRetention'),
   )
   assert.match(enablement, /seq 1 960/)
-  assert.match(enablement, /test "\$\(systemctl show "\$service" -p EnvironmentFiles --value\)" = "\$main_env \(ignore_errors=no\) \$policy_env \(ignore_errors=no\)"/)
+  assert.match(enablement, /effective_environment_files=\$\(systemctl show "\$service" -p EnvironmentFiles --value\)/)
+  assert.match(enablement, /if printf '%s\\n' "\$effective_environment_files" \| grep -F -- '\/etc\/gaiop\/upgrade\.env'[\s\S]+return 1/)
+  assert.match(enablement, /cmp -s "\$work_root\/99-gaiop-retention-production\.conf" "\$dropin_file"/)
   assert.match(enablement, /test "\$\(systemctl show "\$service" -p ReadWritePaths --value\)" = '\/var\/lib\/gaiop-upgrade \/var\/lib\/gaiop-upgrade-retention \/var\/backups\/gaiop\/upgrade \/run\/gaiop-upgrade-retention'/)
   assert.match(enablement, /test "\$\(systemctl is-active "\$service"[^\n]+" = inactive/)
   assert.match(enablement, /expected_retention_runner[\s\S]+sha256sum "\$current_root\/src\/services\/RetentionRunner\.js"/)
