@@ -85,3 +85,59 @@ test('every Admin retention service, timer and runtime script is uniquely packag
   assert.match(releaseManifest, /^      - server\/sqlite-restore-test\.js$/m)
   assert.match(releaseManifest, /^      - deploy\/iso\/storage-watermark\/managed-roots\.json$/m)
 })
+
+test('Upgrade retention production enablement repairs the live unit before starting its timer', () => {
+  const wrapper = read('scripts/Invoke-237RetentionClosedRelease.ps1')
+  const runner = read('scripts/gateway237-retention-closed-release.cjs')
+
+  assert.match(wrapper, /repair-enable-upgrade-retention/)
+  assert.match(wrapper, /UpgradeSourceRootPath/)
+  assert.match(runner, /function upgradeRetentionRepairEnableScript\(expectedHashes\)/)
+  assert.match(runner, /function runValidatedSudoScript\(client, script\)[\s\S]+bash -n "\$script_path"/)
+  assert.match(runner, /runValidatedSudoScript\(client, upgradeRetentionRepairEnableScript\(expectedHashes\)\)/)
+  assert.match(runner, /if \(mode === 'repair-enable-upgrade-retention'\)/)
+  assert.match(runner, /EnvironmentFile=\nEnvironmentFile=\$main_env\nEnvironmentFile=\$policy_env/)
+  assert.match(runner, /ExecStart=\nExecStart=\/usr\/local\/bin\/node \$current_root\/src\/retention-cleanup\.js/)
+  assert.match(runner, /ReadWritePaths=\nReadWritePaths=\/var\/lib\/gaiop-upgrade\nReadWritePaths=\/var\/lib\/gaiop-upgrade-retention\nReadWritePaths=\/var\/backups\/gaiop\/upgrade\nReadWritePaths=\/run\/gaiop-upgrade-retention/)
+  assert.match(runner, /write_policy false[\s\S]+run_and_validate closed[\s\S]+write_policy true[\s\S]+run_and_validate enabled[\s\S]+systemctl enable --now "\$timer"/)
+  assert.match(runner, /_SYSTEMD_INVOCATION_ID="\$invocation"/)
+  assert.match(runner, /records\.length !== 3/)
+  assert.match(runner, /records\.length !== 6/)
+  assert.match(runner, /candidateCount !== 0/)
+  assert.match(runner, /systemctl disable --now "\$timer"[\s\S]+original-dropin\.conf[\s\S]+original-policy\.policy/)
+
+  const enablement = runner.slice(
+    runner.indexOf('function upgradeRetentionRepairEnableScript(expectedHashes)'),
+    runner.indexOf('async function repairEnableUpgradeRetention'),
+  )
+  assert.match(enablement, /seq 1 960/)
+  assert.match(enablement, /test "\$\(systemctl show "\$service" -p EnvironmentFiles --value\)" = "\$main_env \(ignore_errors=no\) \$policy_env \(ignore_errors=no\)"/)
+  assert.match(enablement, /test "\$\(systemctl show "\$service" -p ReadWritePaths --value\)" = '\/var\/lib\/gaiop-upgrade \/var\/lib\/gaiop-upgrade-retention \/var\/backups\/gaiop\/upgrade \/run\/gaiop-upgrade-retention'/)
+  assert.match(enablement, /test "\$\(systemctl is-active "\$service"[^\n]+" = inactive/)
+  assert.match(enablement, /expected_retention_runner[\s\S]+sha256sum "\$current_root\/src\/services\/RetentionRunner\.js"/)
+  assert.match(enablement, /expected_retention_qualification[\s\S]+sha256sum "\$current_root\/src\/services\/RetentionQualification\.js"/)
+  assert.match(enablement, /expected_database_connection[\s\S]+sha256sum "\$current_root\/src\/database\/connection\.js"/)
+  assert.match(enablement, /expected_config[\s\S]+sha256sum "\$current_root\/src\/config\.js"/)
+  assert.match(enablement, /expected_timer_unit[\s\S]+sed 's\/\\r\$\/\/' "\$timer_file"/)
+  assert.match(enablement, /service_template_b64[\s\S]+cmp -s "\$work_root\/expected-cleanup\.service"/)
+  assert.match(enablement, /test ! -L "\$audit_log"/)
+  assert.match(enablement, /audit_root=\/var\/lib\/gaiop-upgrade-retention/)
+  assert.match(enablement, /verify_trusted_tree "\$trusted_tree"/)
+  assert.match(enablement, /code-permissions-before[\s\S]+chmod go-w/)
+  assert.match(enablement, /rollback_ok=1[\s\S]+systemctl stop "\$service"[\s\S]+unit_shape/)
+  assert.match(enablement, /ROLLBACK_COMPLETE=0/)
+  assert.match(runner, /function upgradeRetentionPostcheckRollbackScript\(\)/)
+  assert.match(runner, /POSTCHECK_ROLLBACK_COMPLETE=1/)
+
+  const upgradeDeployment = runner.slice(
+    runner.indexOf('function upgradeDeploymentScript'),
+    runner.indexOf('async function deployUpgrade'),
+  )
+  assert.match(upgradeDeployment, /systemctl disable --now "\$retention_timer"/)
+  assert.match(upgradeDeployment, /restore_retention_timer/)
+  assert.match(upgradeDeployment, /verify_retention_unit/)
+  assert.doesNotMatch(upgradeDeployment, /systemctl start gaiop-upgrade-retention-cleanup\.service/)
+  assert.doesNotMatch(enablement, /(?:cat|sed)\s+[^\n]*\$main_env/)
+  assert.doesNotMatch(enablement, /grep\s+-E\s+[^\n]*\$main_env/)
+  assert.doesNotMatch(enablement, /\.env[^\n]*base64/)
+})

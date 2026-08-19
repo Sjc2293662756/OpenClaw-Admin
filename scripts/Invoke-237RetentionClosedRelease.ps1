@@ -2,13 +2,14 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark')]
+  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention')]
   [string]$Mode = 'preflight',
   [ValidatePattern('^[0-9]{8}T[0-9]{6}Z$')]
   [string]$ReleaseId,
   [string]$AdminArchivePath,
   [string]$UpgradeArchivePath,
-  [string]$WatermarkArchivePath
+  [string]$WatermarkArchivePath,
+  [string]$UpgradeSourceRootPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +40,29 @@ if ($Mode -eq 'diagnose-admin' -and -not $ReleaseId) {
 }
 if ($Mode -in @('deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark') -and -not $ReleaseId) {
   throw 'ReleaseId is required for the storage watermark filesystem release.'
+}
+if ($Mode -eq 'repair-enable-upgrade-retention' -and -not $ReleaseId) {
+  throw 'ReleaseId is required for Upgrade retention repair and enablement.'
+}
+if ($Mode -eq 'repair-enable-upgrade-retention') {
+  if (-not (Test-Path -LiteralPath $UpgradeSourceRootPath -PathType Container)) {
+    throw 'The verified Upgrade source root is unavailable.'
+  }
+  foreach ($relativePath in @(
+    'src\retention-cleanup.js',
+    'src\services\RetentionRunner.js',
+    'src\services\PackageCleaner.js',
+    'src\services\BackupCleaner.js',
+    'src\services\RetentionQualification.js',
+    'src\database\connection.js',
+    'src\config.js',
+    'deploy\systemd\gaiop-upgrade-retention-cleanup.service',
+    'deploy\systemd\gaiop-upgrade-retention-cleanup.timer'
+  )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $UpgradeSourceRootPath $relativePath) -PathType Leaf)) {
+      throw "The verified Upgrade retention source is incomplete: $relativePath"
+    }
+  }
 }
 if ($Mode -eq 'deploy-watermark-probes' -and -not (Test-Path -LiteralPath $WatermarkArchivePath -PathType Leaf)) {
   throw 'The storage watermark probe archive is unavailable.'
@@ -72,6 +96,9 @@ try {
   }
   if ($WatermarkArchivePath) {
     $start.EnvironmentVariables['GAIOP_RETENTION_RELEASE_WATERMARK_ARCHIVE'] = (Resolve-Path -LiteralPath $WatermarkArchivePath).Path
+  }
+  if ($UpgradeSourceRootPath) {
+    $start.EnvironmentVariables['GAIOP_RETENTION_RELEASE_UPGRADE_SOURCE_ROOT'] = (Resolve-Path -LiteralPath $UpgradeSourceRootPath).Path
   }
 
   $process = [System.Diagnostics.Process]::Start($start)

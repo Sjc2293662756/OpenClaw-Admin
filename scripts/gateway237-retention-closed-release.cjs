@@ -1,8 +1,9 @@
 'use strict'
 
 const { createHash } = require('node:crypto')
-const { createReadStream } = require('node:fs')
+const { createReadStream, readFileSync } = require('node:fs')
 const https = require('node:https')
+const { join } = require('node:path')
 const { Client } = require('ssh2')
 
 const mode = String(process.env.GAIOP_RETENTION_RELEASE_MODE || '').trim()
@@ -10,6 +11,7 @@ const releaseId = String(process.env.GAIOP_RETENTION_RELEASE_ID || '').trim()
 const adminArchive = String(process.env.GAIOP_RETENTION_RELEASE_ADMIN_ARCHIVE || '').trim()
 const upgradeArchive = String(process.env.GAIOP_RETENTION_RELEASE_UPGRADE_ARCHIVE || '').trim()
 const watermarkArchive = String(process.env.GAIOP_RETENTION_RELEASE_WATERMARK_ARCHIVE || '').trim()
+const upgradeSourceRoot = String(process.env.GAIOP_RETENTION_RELEASE_UPGRADE_SOURCE_ROOT || '').trim()
 const connection = {
   host: String(process.env.GAIOP_RETENTION_RELEASE_SSH_HOST || '').trim(),
   username: String(process.env.GAIOP_RETENTION_RELEASE_SSH_USERNAME || '').trim(),
@@ -17,7 +19,7 @@ const connection = {
   readyTimeout: 20_000,
 }
 
-if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark'].includes(mode)) {
+if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention'].includes(mode)) {
   throw new Error('The controlled retention release mode is not available.')
 }
 if (mode === 'verify-units'
@@ -38,6 +40,12 @@ if (mode === 'diagnose-admin' && !/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId)) {
 if (['deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark'].includes(mode)
   && !/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId)) {
   throw new Error('The storage watermark filesystem release inputs are incomplete.')
+}
+if (mode === 'repair-enable-upgrade-retention' && !/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId)) {
+  throw new Error('The Upgrade retention enablement inputs are incomplete.')
+}
+if (mode === 'repair-enable-upgrade-retention' && !upgradeSourceRoot) {
+  throw new Error('The verified Upgrade retention source is incomplete.')
 }
 if (mode === 'deploy-watermark-probes' && !watermarkArchive) {
   throw new Error('The storage watermark probe archive is incomplete.')
@@ -268,6 +276,21 @@ function runSudoScript(client, script) {
   })
 }
 
+function runValidatedSudoScript(client, script) {
+  const payload = Buffer.from(script, 'utf8').toString('base64')
+  return runSudoScript(client, String.raw`set -euo pipefail
+script_path=$(mktemp /run/gaiop-retention-release.XXXXXX)
+cleanup() { rm -f -- "$script_path"; }
+trap cleanup EXIT
+base64 -d > "$script_path" <<'GAIOP_RETENTION_SCRIPT'
+${payload}
+GAIOP_RETENTION_SCRIPT
+chmod 0700 "$script_path"
+bash -n "$script_path"
+bash "$script_path"
+`)
+}
+
 function sha256(filePath) {
   return new Promise((resolve, reject) => {
     const hash = createHash('sha256')
@@ -276,6 +299,12 @@ function sha256(filePath) {
     input.on('data', (chunk) => hash.update(chunk))
     input.on('end', () => resolve(hash.digest('hex')))
   })
+}
+
+function sha256NormalizedText(filePath) {
+  return createHash('sha256')
+    .update(readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n'))
+    .digest('hex')
 }
 
 function upload(client, localPath, remotePath) {
@@ -424,13 +453,51 @@ database_root=$(dirname "$database")
 database_backup="$backup_root/$(basename "$database").before-release"
 sqlite_service=/etc/systemd/system/gaiop-upgrade-sqlite-backup.service
 sqlite_timer=/etc/systemd/system/gaiop-upgrade-sqlite-backup.timer
+retention_service=gaiop-upgrade-retention-cleanup.service
+retention_timer=gaiop-upgrade-retention-cleanup.timer
+retention_dropin=/etc/systemd/system/gaiop-upgrade-retention-cleanup.service.d/99-gaiop-retention-production.conf
+retention_policy=/etc/gaiop/upgrade-retention.policy
 phase=precheck
 mutation_started=0
 complete=0
+retention_timer_captured=0
+original_retention_timer_active=unknown
+original_retention_timer_enabled=unknown
 
 cleanup_transfer() {
   rm -f -- "$archive"
   rm -rf -- "$stage_root"
+}
+
+retention_timer_state() {
+  active=$(systemctl is-active "$retention_timer" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$retention_timer" 2>/dev/null || true)
+  printf '%s|%s' "$active" "$enabled"
+}
+
+verify_retention_unit() {
+  test "$(systemctl show "$retention_service" -p WorkingDirectory --value)" = "$current_root"
+  test "$(systemctl show "$retention_service" -p DropInPaths --value)" = "$retention_dropin"
+  retention_exec=$(systemctl show "$retention_service" -p ExecStart --value)
+  test "$(printf '%s' "$retention_exec" | grep -o 'path=' | wc -l | tr -d '[:space:]')" = 1
+  test "$(printf '%s' "$retention_exec" | grep -o 'argv\[\]=' | wc -l | tr -d '[:space:]')" = 1
+  printf '%s' "$retention_exec" | grep -F -- 'path=/usr/local/bin/node' >/dev/null
+  printf '%s' "$retention_exec" | grep -F -- "argv[]=/usr/local/bin/node $current_root/src/retention-cleanup.js ;" >/dev/null
+  main_env=$(systemctl show gaiop-upgrade.service -p EnvironmentFiles --value | grep -oE '/etc/[A-Za-z0-9._/-]+\.env' | awk '/^\/etc\/gaiop-upgrade\// { print; exit }')
+  test -n "$main_env"
+  test "$(systemctl show "$retention_service" -p EnvironmentFiles --value)" = "$main_env (ignore_errors=no) $retention_policy (ignore_errors=no)"
+  test "$(systemctl show "$retention_service" -p ReadWritePaths --value)" = '/var/lib/gaiop-upgrade /var/lib/gaiop-upgrade-retention /var/backups/gaiop/upgrade /run/gaiop-upgrade-retention'
+  test -f "$retention_policy"
+  test ! -L "$retention_policy"
+  test "$(stat -c '%u:%a' "$retention_policy")" = '0:600'
+}
+
+restore_retention_timer() {
+  if [ "$retention_timer_captured" != 1 ]; then return 0; fi
+  systemctl disable --now "$retention_timer" >/dev/null 2>&1 || true
+  if [ "$original_retention_timer_enabled" = enabled ]; then systemctl enable "$retention_timer" >/dev/null; fi
+  if [ "$original_retention_timer_active" = active ]; then systemctl start "$retention_timer" >/dev/null; fi
+  test "$(retention_timer_state)" = "$original_retention_timer_active|$original_retention_timer_enabled"
 }
 
 rollback() {
@@ -440,9 +507,25 @@ rollback() {
     exit 0
   fi
   printf 'FAILED_PHASE=%s\n' "$phase"
-  if [ "$mutation_started" -eq 1 ]; then
-    set +e
+  rollback_ok=1
+  set +e
+  if [ "$retention_timer_captured" = 1 ]; then
+    systemctl disable --now "$retention_timer" >/dev/null 2>&1 || true
+    systemctl stop "$retention_service" >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do
+      retention_rollback_state=$(systemctl is-active "$retention_service" 2>/dev/null || true)
+      case "$retention_rollback_state" in
+        active|activating|deactivating) sleep 1 ;;
+        *) break ;;
+      esac
+    done
+    [ "$(systemctl is-active "$retention_service" 2>/dev/null || true)" = inactive ] || rollback_ok=0
+    [ "$(retention_timer_state)" = 'inactive|disabled' ] || rollback_ok=0
+  fi
+  if [ "$mutation_started" -eq 1 ] && [ "$rollback_ok" = 1 ]; then
     systemctl stop gaiop-upgrade.service
+    [ "$(systemctl is-active gaiop-upgrade.service 2>/dev/null || true)" = inactive ] || rollback_ok=0
+    if [ "$rollback_ok" = 1 ]; then
     rm -rf -- "$current_root"
     cp -a -- "$backup_root/service-tree" "$current_root"
     if [ -f "$backup_root/gaiop-upgrade-sqlite-backup.service" ]; then
@@ -463,13 +546,21 @@ rollback() {
       sleep 1
     done
     if systemctl is-active --quiet gaiop-upgrade.service \
-      && [ "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18900/health 2>/dev/null || true)" = 200 ]; then
-      printf 'ROLLBACK_COMPLETE=1\n'
+      && [ "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18900/health 2>/dev/null || true)" = 200 ] \
+      && verify_retention_unit; then
+      :
     else
-      printf 'ROLLBACK_COMPLETE=0\n'
+      rollback_ok=0
     fi
-    set -e
+    fi
   fi
+  if [ "$rollback_ok" = 1 ]; then restore_retention_timer || rollback_ok=0; fi
+  if [ "$rollback_ok" = 1 ]; then
+    printf 'ROLLBACK_COMPLETE=1\n'
+  else
+    printf 'ROLLBACK_COMPLETE=0\n'
+  fi
+  set -e
   cleanup_transfer
   exit "$status"
 }
@@ -481,6 +572,15 @@ test ! -e "$stage_root"
 test ! -e "$backup_root"
 test "$(sha256sum -- "$archive" | awk '{print $1}')" = "$expected_sha"
 test -d "$current_root/node_modules/better-sqlite3"
+verify_retention_unit
+original_retention_timer_active=$(systemctl is-active "$retention_timer" 2>/dev/null || true)
+original_retention_timer_enabled=$(systemctl is-enabled "$retention_timer" 2>/dev/null || true)
+case "$original_retention_timer_active" in active|inactive) ;; *) exit 44 ;; esac
+case "$original_retention_timer_enabled" in enabled|disabled) ;; *) exit 45 ;; esac
+retention_timer_captured=1
+systemctl disable --now "$retention_timer" >/dev/null
+test "$(retention_timer_state)" = 'inactive|disabled'
+test "$(systemctl is-active "$retention_service" 2>/dev/null || true)" = inactive
 
 phase=stage
 install -d -o root -g root -m 0755 "$stage_root"
@@ -539,6 +639,9 @@ chmod 0600 "$database_backup"
 printf 'DATABASE_BACKUP_INTEGRITY=ok\n'
 
 phase=switch
+systemctl stop "$retention_service" >/dev/null 2>&1 || true
+test "$(systemctl is-active "$retention_service" 2>/dev/null || true)" = inactive
+test "$(retention_timer_state)" = 'inactive|disabled'
 mutation_started=1
 systemctl stop gaiop-upgrade.service
 rm -rf -- "$current_root"
@@ -574,12 +677,11 @@ test "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18
 test "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18900/api/v1/upgrade/status)" = 401
 test "$(tree_hash "$current_root")" = "$staged_source_hash"
 
-phase=closed_state
+phase=retention_guard
 before_packages=$(find /var/lib/gaiop-upgrade/packages -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
 before_staging=$(find /var/lib/gaiop-upgrade/staging -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
 before_rollback=$(find /var/backups/gaiop/upgrade -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
 before_sqlite=$(find "$database_root/sqlite-backups" -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
-systemctl start gaiop-upgrade-retention-cleanup.service
 systemctl start gaiop-upgrade-sqlite-backup.service
 after_packages=$(find /var/lib/gaiop-upgrade/packages -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
 after_staging=$(find /var/lib/gaiop-upgrade/staging -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
@@ -589,7 +691,7 @@ test "$before_packages" = "$after_packages"
 test "$before_staging" = "$after_staging"
 test "$before_rollback" = "$after_rollback"
 test "$before_sqlite" = "$after_sqlite"
-test "$(systemctl show gaiop-upgrade-retention-cleanup.service -p Result --value)" = success
+verify_retention_unit
 test "$(systemctl show gaiop-upgrade-sqlite-backup.service -p Result --value)" = success
 test "$(systemctl is-enabled gaiop-upgrade-sqlite-backup.timer 2>/dev/null || true)" != enabled
 
@@ -616,6 +718,10 @@ NODE
 post_summary=$(cat "$backup_root/post-release-db-summary.b64")
 rm -f -- "$backup_root/post-release-db-summary.b64"
 
+phase=restore_retention_timer
+restore_retention_timer
+verify_retention_unit
+
 complete=1
 printf 'UPGRADE_DEPLOY_COMPLETE=1\n'
 printf 'RELEASE_ID=%s\n' "$release_id"
@@ -625,7 +731,8 @@ printf 'DATABASE_BACKUP_INTEGRITY=ok\n'
 printf 'SOURCE_HASH=%s\n' "$staged_source_hash"
 printf 'HEALTH=200\n'
 printf 'UNAUTHENTICATED_STATUS=401\n'
-printf 'RETENTION_ONESHOT=success\n'
+printf 'RETENTION_ONESHOT=not-run-enabled-policy\n'
+printf 'RETENTION_TIMER=%s\n' "$(retention_timer_state)"
 printf 'SQLITE_ONESHOT=success\n'
 printf 'SQLITE_TIMER=disabled\n'
 printf 'PACKAGES_COUNT=%s\n' "$after_packages"
@@ -658,6 +765,7 @@ async function deployUpgrade(client) {
     unauthenticatedStatus: Number(values.UNAUTHENTICATED_STATUS || 0),
     closedState: {
       retentionOneShot: values.RETENTION_ONESHOT || null,
+      retentionTimer: parseTimer(values.RETENTION_TIMER),
       sqliteOneShot: values.SQLITE_ONESHOT || null,
       sqliteTimer: values.SQLITE_TIMER || null,
     },
@@ -2198,6 +2306,954 @@ async function observeWatermark(client) {
   }
 }
 
+function upgradeRetentionRepairEnableScript(expectedHashes) {
+  return String.raw`set -euo pipefail
+release_id='${releaseId}'
+expected_retention_cleanup='${expectedHashes.retentionCleanup}'
+expected_retention_runner='${expectedHashes.retentionRunner}'
+expected_package_cleaner='${expectedHashes.packageCleaner}'
+expected_backup_cleaner='${expectedHashes.backupCleaner}'
+expected_retention_qualification='${expectedHashes.retentionQualification}'
+expected_database_connection='${expectedHashes.databaseConnection}'
+expected_config='${expectedHashes.config}'
+expected_timer_unit='${expectedHashes.timerUnit}'
+service_template_b64='${expectedHashes.serviceTemplateB64}'
+service=gaiop-upgrade-retention-cleanup.service
+timer=gaiop-upgrade-retention-cleanup.timer
+service_file=/etc/systemd/system/gaiop-upgrade-retention-cleanup.service
+timer_file=/etc/systemd/system/gaiop-upgrade-retention-cleanup.timer
+dropin_dir=/etc/systemd/system/gaiop-upgrade-retention-cleanup.service.d
+dropin_file="$dropin_dir/99-gaiop-retention-production.conf"
+policy_env=/etc/gaiop/upgrade-retention.policy
+state_root=/var/lib/gaiop-upgrade
+packages_root="$state_root/packages"
+staging_root="$state_root/staging"
+rollback_root=/var/backups/gaiop/upgrade
+database="$state_root/napm-upgrade.db"
+audit_root=/var/lib/gaiop-upgrade-retention
+audit_log="$audit_root/retention-cleanup-audit.jsonl"
+runtime_root=/run/gaiop-upgrade-retention
+backup_root="/var/backups/gaiop/upgrade-retention-enable-$release_id"
+work_root=$(mktemp -d /run/gaiop-upgrade-retention-enable.XXXXXX)
+phase=precheck
+mutation_started=0
+complete=0
+backup_created=0
+backup_root_created=0
+rollback_complete=0
+
+timer_state() {
+  active=$(systemctl is-active "$1" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$1" 2>/dev/null || true)
+  printf '%s|%s' "$active" "$enabled"
+}
+
+http_status() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || printf 000
+}
+
+audit_lines() {
+  if [ -f "$audit_log" ]; then
+    awk 'END { print NR + 0 }' "$audit_log"
+  else
+    printf 0
+  fi
+}
+
+verify_root_owned_not_writable() {
+  target="$1"
+  test "$(stat -c '%u' "$target")" = 0
+  target_mode=$(stat -c '%a' "$target")
+  test "$((8#$target_mode & 8#22))" -eq 0
+}
+
+verify_root_owned_no_symlink() {
+  target="$1"
+  test ! -L "$target"
+  test "$(stat -c '%u' "$target")" = 0
+}
+
+verify_trusted_tree_ownership() {
+  target="$1"
+  test -d "$target"
+  test ! -L "$target"
+  unsafe_entry=$(find -P "$target" -xdev \( -type l -o ! -uid 0 \) -print -quit)
+  test -z "$unsafe_entry"
+}
+
+verify_trusted_tree() {
+  target="$1"
+  verify_trusted_tree_ownership "$target"
+  unsafe_entry=$(find -P "$target" -xdev \( -type l -o -perm /022 \) -print -quit)
+  test -z "$unsafe_entry"
+}
+
+write_policy() {
+  enabled="$1"
+  candidate=$(mktemp /etc/gaiop/.upgrade-retention.policy.XXXXXX)
+  if ! { cat > "$candidate" <<EOF
+NAPM_UPGRADE_DB_PATH=/var/lib/gaiop-upgrade/napm-upgrade.db
+NAPM_UPGRADE_PACKAGE_STAGING_ROOT=/var/lib/gaiop-upgrade/staging
+NAPM_UPGRADE_BACKUP_ROOT=/var/backups/gaiop/upgrade
+GAIOP_UPGRADE_RETENTION_AUTO_DELETE=$enabled
+GAIOP_UPGRADE_RETENTION_MAX_ITEMS=100
+GAIOP_UPGRADE_RETENTION_AUDIT_LOG=/var/lib/gaiop-upgrade-retention/retention-cleanup-audit.jsonl
+GAIOP_UPGRADE_RETENTION_LOCK_PATH=/run/gaiop-upgrade-retention/cleanup.lock
+GAIOP_UPGRADE_FAILED_PACKAGE_RETENTION_DAYS=7
+GAIOP_UPGRADE_STAGING_RETENTION_HOURS=24
+GAIOP_UPGRADE_BACKUP_RETENTION_DAYS=90
+GAIOP_UPGRADE_BACKUP_MIN_USABLE_GROUPS=5
+EOF
+    chown root:root "$candidate"
+    chmod 0600 "$candidate"
+    mv -f -- "$candidate" "$policy_env"
+  }; then
+    rm -f -- "$candidate"
+    return 1
+  fi
+}
+
+verify_effective_unit() {
+  test "$(systemctl show "$service" -p WorkingDirectory --value)" = "$current_root"
+  test "$(systemctl show "$service" -p DropInPaths --value)" = "$dropin_file"
+  effective_exec=$(systemctl show "$service" -p ExecStart --value)
+  test "$(printf '%s' "$effective_exec" | grep -o 'path=' | wc -l | tr -d '[:space:]')" = 1
+  test "$(printf '%s' "$effective_exec" | grep -o 'argv\[\]=' | wc -l | tr -d '[:space:]')" = 1
+  printf '%s' "$effective_exec" | grep -F -- 'path=/usr/local/bin/node' >/dev/null
+  printf '%s' "$effective_exec" | grep -F -- "argv[]=/usr/local/bin/node $current_root/src/retention-cleanup.js ;" >/dev/null
+  test "$(systemctl show "$service" -p EnvironmentFiles --value)" = "$main_env (ignore_errors=no) $policy_env (ignore_errors=no)"
+  test "$(systemctl show "$service" -p ReadWritePaths --value)" = '/var/lib/gaiop-upgrade /var/lib/gaiop-upgrade-retention /var/backups/gaiop/upgrade /run/gaiop-upgrade-retention'
+}
+
+verify_base_service_file() {
+  test -f "$service_file"
+  test ! -L "$service_file"
+  test "$(stat -c '%u:%a' "$service_file")" = '0:644'
+  printf '%s' "$service_template_b64" | base64 -d > "$work_root/source-cleanup.service"
+  sed "s#/opt/gaiop/upgrade#$current_root#g; s/\r$//" "$work_root/source-cleanup.service" > "$work_root/expected-cleanup.service"
+  sed 's/\r$//' "$service_file" > "$work_root/actual-cleanup.service"
+  cmp -s "$work_root/expected-cleanup.service" "$work_root/actual-cleanup.service"
+  normalized_service=$(sed 's/\r$//' "$service_file")
+  printf '%s\n' "$normalized_service" | grep -Fx -- "WorkingDirectory=$current_root" >/dev/null
+  printf '%s\n' "$normalized_service" | grep -Fx -- "ExecStart=/usr/local/bin/node $current_root/src/retention-cleanup.js" >/dev/null
+  printf '%s\n' "$normalized_service" | grep -Fx -- 'EnvironmentFile=/etc/gaiop/upgrade.env' >/dev/null
+  printf '%s\n' "$normalized_service" | grep -Fx -- 'ReadWritePaths=/var/lib/gaiop/upgrade' >/dev/null
+  printf '%s\n' "$normalized_service" | grep -Fx -- 'ReadWritePaths=/var/backups/gaiop/upgrade' >/dev/null
+  printf '%s\n' "$normalized_service" | grep -Fx -- 'ReadWritePaths=/run/gaiop-upgrade-retention' >/dev/null
+  for required_directive in \
+    'User=root' \
+    'Group=root' \
+    'NoNewPrivileges=true' \
+    'PrivateTmp=true' \
+    'PrivateDevices=true' \
+    'ProtectSystem=strict' \
+    'ProtectHome=read-only' \
+    'UMask=0027'
+  do
+    printf '%s\n' "$normalized_service" | grep -Fx -- "$required_directive" >/dev/null
+  done
+}
+
+unit_shape() {
+  shape_exec=$(systemctl show "$service" -p ExecStart --value | sed -n 's/.*{ path=\([^;]*\) ; argv\[\]=\([^;]*\) ;.*/\1|\2/p')
+  {
+    systemctl show "$service" -p WorkingDirectory --value
+    systemctl show "$service" -p DropInPaths --value
+    printf '%s\n' "$shape_exec"
+    systemctl show "$service" -p EnvironmentFiles --value
+    systemctl show "$service" -p ReadWritePaths --value
+  } | sha256sum | awk '{print $1}'
+}
+
+verify_audit_file() {
+  test -f "$audit_log"
+  test ! -L "$audit_log"
+  test "$(readlink -f "$audit_log")" = "$audit_log"
+  test "$(stat -c '%u:%g' "$audit_log")" = '0:0'
+  audit_mode=$(stat -c '%a' "$audit_log")
+  test "$((8#$audit_mode & 8#22))" -eq 0
+  current_audit_identity=$(stat -c '%d:%i' "$audit_log")
+  if [ "$audit_identity" != absent ]; then test "$current_audit_identity" = "$audit_identity"; fi
+}
+
+create_audit_file() {
+  if [ "$audit_identity" = absent ]; then
+    test ! -e "$audit_log"
+    test ! -L "$audit_log"
+    audit_seed=$(mktemp "$audit_root/.retention-cleanup-audit.XXXXXX")
+    if ! {
+      chown root:root "$audit_seed"
+      chmod 0640 "$audit_seed"
+      ln -- "$audit_seed" "$audit_log"
+    }; then
+      rm -f -- "$audit_seed"
+      return 1
+    fi
+    rm -f -- "$audit_seed"
+    audit_identity=$(stat -c '%d:%i' "$audit_log")
+  fi
+  verify_audit_file
+}
+
+snapshot() {
+  /usr/local/bin/node - "$current_root/node_modules/better-sqlite3" "$database" "$packages_root" "$staging_root" "$rollback_root" <<'NODE' | base64 -w 0
+const fs = require('node:fs')
+const [moduleRoot, databasePath, packagesRoot, stagingRoot, rollbackRoot] = process.argv.slice(2)
+const Database = require(moduleRoot)
+
+function rootSummary(root) {
+  const stat = fs.lstatSync(root)
+  if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('unsafe-managed-root')
+  const entries = fs.readdirSync(root, { withFileTypes: true })
+  let directFileBytes = 0
+  for (const entry of entries) {
+    const child = fs.lstatSync(require('node:path').join(root, entry.name))
+    if (child.isFile() && !child.isSymbolicLink()) directFileBytes += child.size
+  }
+  return { count: entries.length, directFileBytes }
+}
+
+const db = new Database(databasePath, { readonly: true, fileMustExist: true })
+try {
+  db.pragma('query_only = ON')
+  const integrity = db.pragma('integrity_check', { simple: true })
+  const tableNames = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()
+  let totalRows = 0
+  const selected = {}
+  for (const { name } of tableNames) {
+    const quoted = '"' + String(name).replaceAll('"', '""') + '"'
+    const count = Number(db.prepare('SELECT COUNT(*) AS count FROM ' + quoted).get().count)
+    totalRows += count
+    if (['upgrade_tasks', 'backups', 'components'].includes(name)) selected[name] = count
+  }
+  const taskStatuses = Object.fromEntries(db.prepare('SELECT status, COUNT(*) AS count FROM upgrade_tasks GROUP BY status ORDER BY status')
+    .all().map((row) => [String(row.status), Number(row.count)]))
+  const componentStatuses = Object.fromEntries(db.prepare('SELECT status, COUNT(*) AS count FROM components GROUP BY status ORDER BY status')
+    .all().map((row) => [String(row.status), Number(row.count)]))
+  process.stdout.write(JSON.stringify({
+    database: { integrity, totalRows, selected, taskStatuses, componentStatuses },
+    roots: {
+      packages: rootSummary(packagesRoot),
+      staging: rootSummary(stagingRoot),
+      rollback: rootSummary(rollbackRoot),
+    },
+  }))
+} finally {
+  db.close()
+}
+NODE
+}
+
+assert_no_active_tasks() {
+  printf '%s' "$1" | base64 -d | /usr/local/bin/node -e '
+let input = "";
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const value = JSON.parse(input);
+  const statuses = value.database.taskStatuses || {};
+  const components = value.database.componentStatuses || {};
+  if ((statuses.running || 0) !== 0 || (statuses.rolling_back || 0) !== 0 || (components.upgrading || 0) !== 0) process.exit(1);
+});'
+}
+
+validate_journal() {
+  invocation="$1"
+  output_file="$2"
+  journalctl --sync
+  journalctl --quiet --no-pager _SYSTEMD_INVOCATION_ID="$invocation" -o cat > "$output_file"
+  /usr/local/bin/node - "$output_file" <<'NODE' | base64 -w 0
+const fs = require('node:fs')
+const records = []
+for (const line of fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/)) {
+  if (!line.trim()) continue
+  try {
+    const value = JSON.parse(line)
+    if (value.policyVersion === 'gaiop_upgrade_retention.v1') records.push(value)
+  } catch {}
+}
+const categories = ['upgrade_task_package', 'upgrade_staging_package', 'upgrade_rollback_backup']
+if (records.length !== 3) process.exit(10)
+if (JSON.stringify(records.map((item) => item.category).sort()) !== JSON.stringify(categories.slice().sort())) process.exit(11)
+for (const item of records) {
+  if (item.phase !== 'completed') process.exit(12)
+  if (item.candidateCount !== 0 || item.failed !== 0 || item.success !== 0 || item.freedBytes !== 0) process.exit(13)
+}
+process.stdout.write(JSON.stringify(records.map((item) => ({
+  category: item.category,
+  candidateCount: item.candidateCount,
+  skipped: item.skipped,
+  failed: item.failed,
+  success: item.success,
+  freedBytes: item.freedBytes,
+  failureReasons: item.failureReasons,
+}))))
+NODE
+}
+
+validate_audit_tail() {
+  output_file="$1"
+  tail -n 6 "$audit_log" > "$output_file"
+  /usr/local/bin/node - "$output_file" <<'NODE' | base64 -w 0
+const fs = require('node:fs')
+const records = fs.readFileSync(process.argv[2], 'utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+const categories = ['upgrade_task_package', 'upgrade_staging_package', 'upgrade_rollback_backup']
+if (records.length !== 6) process.exit(20)
+for (const phase of ['reserved', 'completed']) {
+  const selected = records.filter((item) => item.phase === phase)
+  if (selected.length !== 3) process.exit(21)
+  if (JSON.stringify(selected.map((item) => item.category).sort()) !== JSON.stringify(categories.slice().sort())) process.exit(22)
+  for (const item of selected) {
+    if (item.policyVersion !== 'gaiop_upgrade_retention.v1' || item.candidateCount !== 0 || item.failed !== 0) process.exit(23)
+    if (phase === 'completed' && (item.success !== 0 || item.freedBytes !== 0)) process.exit(24)
+  }
+}
+process.stdout.write(JSON.stringify(records.map((item) => ({
+  phase: item.phase,
+  category: item.category,
+  candidateCount: item.candidateCount,
+  skipped: item.skipped,
+  failed: item.failed,
+  success: item.success,
+  freedBytes: item.freedBytes,
+  failureReasons: item.failureReasons,
+}))))
+NODE
+}
+
+run_and_validate() {
+  label="$1"
+  test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
+  systemctl reset-failed "$service" >/dev/null 2>&1 || true
+  systemctl start "$service"
+  test "$(systemctl show "$service" -p Result --value)" = success
+  test "$(systemctl show "$service" -p ExecMainStatus --value)" = 0
+  invocation=$(systemctl show "$service" -p InvocationID --value)
+  test -n "$invocation"
+  validate_journal "$invocation" "$work_root/$label.journal"
+}
+
+restore_original_timer_state() {
+  systemctl disable --now "$timer" >/dev/null 2>&1 || true
+  if [ "$original_timer_enabled" = enabled ]; then systemctl enable "$timer" >/dev/null 2>&1 || true; fi
+  if [ "$original_timer_active" = active ]; then systemctl start "$timer" >/dev/null 2>&1 || true; fi
+}
+
+rollback() {
+  set +e
+  rollback_complete=0
+  rollback_ok=1
+  systemctl disable --now "$timer" >/dev/null 2>&1 || true
+  systemctl stop "$service" >/dev/null 2>&1 || true
+  for _ in $(seq 1 30); do
+    rollback_service_state=$(systemctl is-active "$service" 2>/dev/null || true)
+    case "$rollback_service_state" in
+      active|activating|deactivating) sleep 1 ;;
+      *) break ;;
+    esac
+  done
+  systemctl reset-failed "$service" >/dev/null 2>&1 || true
+  [ "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive ] || rollback_ok=0
+  [ "$(timer_state "$timer")" = 'inactive|disabled' ] || rollback_ok=0
+  if [ "$backup_created" = 1 ] && [ "$rollback_ok" = 1 ]; then
+    if [ -f "$backup_root/original-dropin.conf" ]; then
+      install -d -o root -g root -m 0755 "$dropin_dir"
+      cp -a -- "$backup_root/original-dropin.conf" "$dropin_file"
+    else
+      rm -f -- "$dropin_file"
+      rmdir "$dropin_dir" >/dev/null 2>&1 || true
+    fi
+    if [ -f "$backup_root/original-policy.policy" ]; then
+      cp -a -- "$backup_root/original-policy.policy" "$policy_env"
+    else
+      rm -f -- "$policy_env"
+    fi
+    systemctl daemon-reload
+    restore_original_timer_state
+  fi
+  if [ "$rollback_ok" = 1 ]; then rmdir "$audit_root" >/dev/null 2>&1 || true; fi
+  [ "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive ] || rollback_ok=0
+  [ "$(timer_state "$timer")" = "$original_timer_active|$original_timer_enabled" ] || rollback_ok=0
+  if [ "$original_dropin_hash" = absent ]; then
+    [ ! -e "$dropin_file" ] || rollback_ok=0
+  else
+    [ -f "$dropin_file" ] && [ "$(sha256sum "$dropin_file" | awk '{print $1}')" = "$original_dropin_hash" ] || rollback_ok=0
+  fi
+  if [ "$original_policy_hash" = absent ]; then
+    [ ! -e "$policy_env" ] || rollback_ok=0
+  else
+    [ -f "$policy_env" ] && [ "$(sha256sum "$policy_env" | awk '{print $1}')" = "$original_policy_hash" ] || rollback_ok=0
+  fi
+  [ "$(unit_shape)" = "$original_unit_shape" ] || rollback_ok=0
+  [ "$rollback_ok" = 1 ] && rollback_complete=1
+  set -e
+}
+
+finish() {
+  status=$?
+  if [ "$status" -eq 0 ] && [ "$complete" = 1 ]; then exit 0; fi
+  if [ "$mutation_started" = 1 ]; then
+    rollback
+  else
+    rollback_complete=1
+    if [ "$backup_root_created" = 1 ] && [ "$backup_created" != 1 ]; then
+      case "$backup_root" in
+        /var/backups/gaiop/upgrade-retention-enable-$release_id) rm -rf -- "$backup_root" ;;
+        *) rollback_complete=0 ;;
+      esac
+      [ ! -e "$backup_root" ] || rollback_complete=0
+    fi
+  fi
+  rm -rf -- "$work_root"
+  printf 'FAILED_PHASE=%s\n' "$phase"
+  if [ "$rollback_complete" = 1 ]; then
+    printf 'ROLLBACK_COMPLETE=1\n'
+  else
+    printf 'ROLLBACK_COMPLETE=0\n'
+  fi
+  if [ -f "$audit_log" ] && [ ! -L "$audit_log" ]; then printf 'AUDIT_EVIDENCE_PRESERVED=1\n'; fi
+  exit "$status"
+}
+trap finish EXIT
+
+phase=precheck
+test "$(systemctl is-active gaiop-upgrade.service)" = active
+test "$(timer_state "$timer")" = 'inactive|disabled'
+test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
+test -f "$service_file"
+test -f "$timer_file"
+test "$(sed 's/\r$//' "$timer_file" | sha256sum | awk '{print $1}')" = "$expected_timer_unit"
+test -z "$(systemctl show "$service" -p DropInPaths --value)"
+test ! -e "$dropin_file"
+test ! -L "$dropin_file"
+test ! -e "$policy_env"
+test ! -L "$policy_env"
+test -d "$state_root"
+test -d "$packages_root"
+test -d "$staging_root"
+test -d "$rollback_root"
+for managed_root in "$state_root" "$packages_root" "$staging_root" "$rollback_root"; do
+  test ! -L "$managed_root"
+  test "$(readlink -f "$managed_root")" = "$managed_root"
+done
+test -f "$database"
+test ! -L "$database"
+test ! -e "$backup_root"
+if [ -e "$audit_root" ] || [ -L "$audit_root" ]; then
+  test -d "$audit_root"
+  test ! -L "$audit_root"
+  test "$(readlink -f "$audit_root")" = "$audit_root"
+  verify_root_owned_not_writable "$audit_root"
+  unexpected_audit_entry=$(find "$audit_root" -mindepth 1 -maxdepth 1 ! -name 'retention-cleanup-audit.jsonl' -print -quit)
+  test -z "$unexpected_audit_entry"
+  if [ -e "$audit_log" ] || [ -L "$audit_log" ]; then
+    test -f "$audit_log"
+    test ! -L "$audit_log"
+    audit_identity=$(stat -c '%d:%i' "$audit_log")
+    verify_audit_file
+  else
+    audit_identity=absent
+  fi
+else
+  audit_identity=absent
+fi
+
+current_root=$(systemctl show gaiop-upgrade.service -p WorkingDirectory --value)
+case "$current_root" in
+  /opt/gaiop-upgrade-e2e-[0-9]*|/opt/gaiop/upgrade) ;;
+  *) exit 41 ;;
+esac
+test -d "$current_root"
+test ! -L "$current_root"
+test "$(readlink -f "$current_root")" = "$current_root"
+test -f "$current_root/src/retention-cleanup.js"
+test -d "$current_root/node_modules/better-sqlite3"
+for trusted_path in \
+  "$current_root" \
+  "$current_root/src" \
+  "$current_root/src/services" \
+  "$current_root/node_modules" \
+  "$current_root/src/retention-cleanup.js" \
+  "$current_root/src/services/RetentionRunner.js" \
+  "$current_root/src/services/PackageCleaner.js" \
+  "$current_root/src/services/BackupCleaner.js"
+do
+  verify_root_owned_no_symlink "$trusted_path"
+done
+for trusted_tree in \
+  "$current_root/src" \
+  "$current_root/node_modules/better-sqlite3" \
+  "$current_root/node_modules/bindings" \
+  "$current_root/node_modules/file-uri-to-path" \
+  "$current_root/node_modules/dotenv"
+do
+  verify_trusted_tree_ownership "$trusted_tree"
+done
+if [ -e "$current_root/.env" ]; then
+  test -f "$current_root/.env"
+  test ! -L "$current_root/.env"
+  verify_root_owned_not_writable "$current_root/.env"
+fi
+test "$(sha256sum "$current_root/src/retention-cleanup.js" | awk '{print $1}')" = "$expected_retention_cleanup"
+test "$(sha256sum "$current_root/src/services/RetentionRunner.js" | awk '{print $1}')" = "$expected_retention_runner"
+test "$(sha256sum "$current_root/src/services/PackageCleaner.js" | awk '{print $1}')" = "$expected_package_cleaner"
+test "$(sha256sum "$current_root/src/services/BackupCleaner.js" | awk '{print $1}')" = "$expected_backup_cleaner"
+test "$(sha256sum "$current_root/src/services/RetentionQualification.js" | awk '{print $1}')" = "$expected_retention_qualification"
+test "$(sha256sum "$current_root/src/database/connection.js" | awk '{print $1}')" = "$expected_database_connection"
+test "$(sha256sum "$current_root/src/config.js" | awk '{print $1}')" = "$expected_config"
+verify_base_service_file
+
+environment_files=$(systemctl show gaiop-upgrade.service -p EnvironmentFiles --value)
+main_env=$(printf '%s\n' "$environment_files" | grep -oE '/etc/[A-Za-z0-9._/-]+\.env' | awk '/^\/etc\/gaiop-upgrade\// { print; exit }')
+case "$main_env" in
+  /etc/gaiop-upgrade/*.env) ;;
+  *) exit 42 ;;
+esac
+test -f "$main_env"
+test ! -L "$main_env"
+test "$(stat -c '%u' "$main_env")" = 0
+main_env_mode=$(stat -c '%a' "$main_env")
+test "$((8#$main_env_mode & 8#22))" -eq 0
+
+original_timer_active=$(systemctl is-active "$timer" 2>/dev/null || true)
+original_timer_enabled=$(systemctl is-enabled "$timer" 2>/dev/null || true)
+if [ -f "$dropin_file" ]; then
+  original_dropin_hash=$(sha256sum "$dropin_file" | awk '{print $1}')
+else
+  original_dropin_hash=absent
+fi
+if [ -f "$policy_env" ]; then
+  original_policy_hash=$(sha256sum "$policy_env" | awk '{print $1}')
+else
+  original_policy_hash=absent
+fi
+original_unit_shape=$(unit_shape)
+
+phase=backup
+install -d -o root -g root -m 0700 "$backup_root"
+backup_root_created=1
+cp -a -- "$service_file" "$backup_root/gaiop-upgrade-retention-cleanup.service"
+cp -a -- "$timer_file" "$backup_root/gaiop-upgrade-retention-cleanup.timer"
+if [ -f "$dropin_file" ]; then cp -a -- "$dropin_file" "$backup_root/original-dropin.conf"; fi
+  if [ -f "$policy_env" ]; then cp -a -- "$policy_env" "$backup_root/original-policy.policy"; fi
+printf '%s\n' "$original_timer_active" > "$backup_root/original-timer-active"
+printf '%s\n' "$original_timer_enabled" > "$backup_root/original-timer-enabled"
+printf '%s\n' "$original_unit_shape" > "$backup_root/original-unit-shape"
+/usr/local/bin/node - "$current_root/node_modules/better-sqlite3" "$database" "$backup_root/napm-upgrade.db.before-enable" <<'NODE'
+const [moduleRoot, source, destination] = process.argv.slice(2)
+const Database = require(moduleRoot)
+;(async () => {
+  const sourceDb = new Database(source, { readonly: true, fileMustExist: true })
+  try {
+    if (sourceDb.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('source-integrity')
+    await sourceDb.backup(destination)
+  } finally {
+    sourceDb.close()
+  }
+  const backupDb = new Database(destination, { readonly: true, fileMustExist: true })
+  try {
+    if (backupDb.pragma('integrity_check', { simple: true }) !== 'ok') throw new Error('backup-integrity')
+  } finally {
+    backupDb.close()
+  }
+})().catch(() => process.exit(1))
+NODE
+chmod 0600 "$backup_root/napm-upgrade.db.before-enable"
+backup_created=1
+
+phase=install_closed_policy
+mutation_started=1
+systemctl disable --now "$timer" >/dev/null 2>&1 || true
+install -d -o root -g root -m 0755 "$dropin_dir"
+install -d -o root -g root -m 0750 "$audit_root"
+verify_root_owned_not_writable "$audit_root"
+permission_manifest="$backup_root/code-permissions-before"
+: > "$permission_manifest"
+for trusted_tree in \
+  "$current_root/src" \
+  "$current_root/node_modules/better-sqlite3" \
+  "$current_root/node_modules/bindings" \
+  "$current_root/node_modules/file-uri-to-path" \
+  "$current_root/node_modules/dotenv"
+do
+  find -P "$trusted_tree" -xdev -printf '%u:%g:%m:%p\n' >> "$permission_manifest"
+done
+LC_ALL=C sort -o "$permission_manifest" "$permission_manifest"
+chmod 0600 "$permission_manifest"
+for trusted_tree in \
+  "$current_root/src" \
+  "$current_root/node_modules/better-sqlite3" \
+  "$current_root/node_modules/bindings" \
+  "$current_root/node_modules/file-uri-to-path" \
+  "$current_root/node_modules/dotenv"
+do
+  find -P "$trusted_tree" -xdev -type d -exec chmod go-w -- {} +
+  find -P "$trusted_tree" -xdev -type f -exec chmod go-w -- {} +
+  verify_trusted_tree "$trusted_tree"
+done
+cat > "$work_root/99-gaiop-retention-production.conf" <<EOF
+[Service]
+WorkingDirectory=$current_root
+EnvironmentFile=
+EnvironmentFile=$main_env
+EnvironmentFile=$policy_env
+ExecStart=
+ExecStart=/usr/local/bin/node $current_root/src/retention-cleanup.js
+ReadWritePaths=
+ReadWritePaths=/var/lib/gaiop-upgrade
+ReadWritePaths=/var/lib/gaiop-upgrade-retention
+ReadWritePaths=/var/backups/gaiop/upgrade
+ReadWritePaths=/run/gaiop-upgrade-retention
+EOF
+install -o root -g root -m 0644 "$work_root/99-gaiop-retention-production.conf" "$dropin_file"
+write_policy false
+systemctl daemon-reload
+
+phase=verify_unit
+systemd-analyze verify "$service_file" "$timer_file" /etc/systemd/system/gaiop-upgrade.service
+verify_effective_unit
+test "$(timer_state "$timer")" = 'inactive|disabled'
+
+phase=closed_run
+before_snapshot=$(snapshot)
+assert_no_active_tasks "$before_snapshot"
+before_audit_lines=$(audit_lines)
+closed_records=$(run_and_validate closed)
+after_closed_snapshot=$(snapshot)
+test "$before_snapshot" = "$after_closed_snapshot"
+test "$before_audit_lines" = "$(audit_lines)"
+
+phase=enabled_run
+write_policy true
+grep -Fx 'GAIOP_UPGRADE_RETENTION_AUTO_DELETE=true' "$policy_env" >/dev/null
+before_enabled_snapshot=$(snapshot)
+test "$before_snapshot" = "$before_enabled_snapshot"
+assert_no_active_tasks "$before_enabled_snapshot"
+create_audit_file
+before_enabled_audit=$(audit_lines)
+enabled_records=$(run_and_validate enabled)
+after_enabled_audit=$(audit_lines)
+test "$after_enabled_audit" -eq "$((before_enabled_audit + 6))"
+enabled_audit=$(validate_audit_tail "$work_root/enabled.audit")
+verify_audit_file
+if [ "$audit_identity" = absent ]; then audit_identity=$(stat -c '%d:%i' "$audit_log"); fi
+after_enabled_snapshot=$(snapshot)
+test "$before_snapshot" = "$after_enabled_snapshot"
+manual_invocation=$(systemctl show "$service" -p InvocationID --value)
+
+phase=enable_timer
+before_timer_audit=$(audit_lines)
+systemctl enable --now "$timer" >/dev/null
+test "$(timer_state "$timer")" = 'active|enabled'
+timer_records=''
+timer_audit=''
+timer_compensation=waiting
+timer_invocation=''
+for _ in $(seq 1 960); do
+  current_invocation=$(systemctl show "$service" -p InvocationID --value 2>/dev/null || true)
+  if [ -n "$current_invocation" ] && [ "$current_invocation" != "$manual_invocation" ]; then
+    timer_invocation="$current_invocation"
+    break
+  fi
+  sleep 1
+done
+if [ -n "$timer_invocation" ]; then
+  for _ in $(seq 1 60); do
+    timer_service_state=$(systemctl is-active "$service" 2>/dev/null || true)
+    case "$timer_service_state" in
+      active|activating|deactivating) sleep 1 ;;
+      *) break ;;
+    esac
+  done
+  test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
+  test "$(systemctl show "$service" -p Result --value)" = success
+  timer_records=$(validate_journal "$timer_invocation" "$work_root/timer.journal")
+  after_timer_audit=$(audit_lines)
+  test "$after_timer_audit" -eq "$((before_timer_audit + 6))"
+  timer_audit=$(validate_audit_tail "$work_root/timer.audit")
+  verify_audit_file
+  test "$before_snapshot" = "$(snapshot)"
+  timer_compensation=validated
+else
+  scheduled_trigger=$(systemctl show "$timer" -p NextElapseUSecRealtime --value)
+  test -n "$scheduled_trigger"
+  scheduled_epoch=$(date -d "$scheduled_trigger" +%s)
+  now_epoch=$(date -u +%s)
+  test "$scheduled_epoch" -gt "$((now_epoch + 300))"
+  systemctl stop "$timer"
+  test "$(timer_state "$timer")" = 'inactive|enabled'
+  for _ in $(seq 1 60); do
+    timer_service_state=$(systemctl is-active "$service" 2>/dev/null || true)
+    case "$timer_service_state" in
+      active|activating|deactivating) sleep 1 ;;
+      *) break ;;
+    esac
+  done
+  test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
+  late_invocation=$(systemctl show "$service" -p InvocationID --value 2>/dev/null || true)
+  if [ -n "$late_invocation" ] && [ "$late_invocation" != "$manual_invocation" ]; then
+    timer_invocation="$late_invocation"
+    test "$(systemctl show "$service" -p Result --value)" = success
+    timer_records=$(validate_journal "$timer_invocation" "$work_root/timer-late.journal")
+    after_timer_audit=$(audit_lines)
+    test "$after_timer_audit" -eq "$((before_timer_audit + 6))"
+    timer_audit=$(validate_audit_tail "$work_root/timer-late.audit")
+    verify_audit_file
+    test "$before_snapshot" = "$(snapshot)"
+    timer_compensation=validated_late
+  else
+    test "$before_timer_audit" = "$(audit_lines)"
+    timer_compensation=scheduled_next_run
+  fi
+  systemctl start "$timer"
+  test "$(timer_state "$timer")" = 'active|enabled'
+fi
+
+phase=final_verify
+test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
+test "$(systemctl show "$service" -p Result --value)" = success
+test "$(timer_state gaiop-admin-retention-cleanup.timer)" = 'active|enabled'
+test "$(timer_state "$timer")" = 'active|enabled'
+for other_timer in gaiop-report-retention-cleanup.timer gaiop-admin-session-retention.timer gaiop-admin-sqlite-backup.timer gaiop-upgrade-sqlite-backup.timer; do
+  test "$(timer_state "$other_timer")" = 'inactive|disabled'
+done
+test "$(timer_state gaiop-storage-watermark-monitor.timer)" = 'active|enabled'
+test "$(systemctl is-active gaiop-admin.service)" = active
+test "$(systemctl is-active gaiop-upgrade.service)" = active
+test "$(systemctl is-active caddy.service)" = active
+gateway_uid=$(id -u netinside)
+test "$(runuser -u netinside -- env XDG_RUNTIME_DIR=/run/user/$gateway_uid systemctl --user is-active openclaw-gateway.service)" = active
+test "$(http_status http://127.0.0.1:3000/api/health)" = 200
+test "$(http_status http://127.0.0.1:18900/health)" = 200
+test "$(http_status http://127.0.0.1:18900/api/v1/upgrade/status)" = 401
+test "$(http_status http://127.0.0.1:18789/health)" = 200
+test "$(curl -k -sS -o /dev/null -w '%{http_code}' --max-time 5 https://127.0.0.1/)" = 200
+final_snapshot=$(snapshot)
+test "$before_snapshot" = "$final_snapshot"
+verify_audit_file
+verify_effective_unit
+test -f "$dropin_file"
+test ! -L "$dropin_file"
+test "$(stat -c '%u:%g:%a' "$dropin_file")" = '0:0:644'
+test -f "$policy_env"
+test ! -L "$policy_env"
+test "$(stat -c '%u:%g:%a' "$policy_env")" = '0:0:600'
+grep -Fx 'GAIOP_UPGRADE_RETENTION_AUTO_DELETE=true' "$policy_env" >/dev/null
+next_trigger=$(systemctl show "$timer" -p NextElapseUSecRealtime --value)
+test -n "$next_trigger"
+dropin_sha=$(sha256sum "$dropin_file" | awk '{print $1}')
+policy_sha=$(sha256sum "$policy_env" | awk '{print $1}')
+printf '%s\n' "$dropin_sha" > "$backup_root/installed-dropin-sha256"
+printf '%s\n' "$policy_sha" > "$backup_root/installed-policy-sha256"
+chmod 0600 "$backup_root/installed-dropin-sha256" "$backup_root/installed-policy-sha256"
+
+complete=1
+trap - EXIT
+rm -rf -- "$work_root"
+printf 'UPGRADE_RETENTION_ENABLE_COMPLETE=1\n'
+printf 'RELEASE_ID=%s\n' "$release_id"
+printf 'BACKUP_ROOT=%s\n' "$backup_root"
+printf 'DATABASE_BACKUP_INTEGRITY=ok\n'
+printf 'WORKING_DIRECTORY=%s\n' "$current_root"
+printf 'CODE_PERMISSIONS_HARDENED=1\n'
+printf 'CODE_PERMISSIONS_MANIFEST=%s\n' "$permission_manifest"
+printf 'MAIN_ENVIRONMENT_FILE=%s\n' "$main_env"
+printf 'DROPIN_SHA256=%s\n' "$dropin_sha"
+printf 'POLICY_SHA256=%s\n' "$policy_sha"
+printf 'NATIVE_SYSTEMD_VERIFY=ok\n'
+printf 'CLOSED_RECORDS_B64=%s\n' "$closed_records"
+printf 'ENABLED_RECORDS_B64=%s\n' "$enabled_records"
+printf 'ENABLED_AUDIT_B64=%s\n' "$enabled_audit"
+printf 'TIMER_COMPENSATION=%s\n' "$timer_compensation"
+printf 'TIMER_RECORDS_B64=%s\n' "$timer_records"
+printf 'TIMER_AUDIT_B64=%s\n' "$timer_audit"
+printf 'FINAL_SNAPSHOT_B64=%s\n' "$final_snapshot"
+printf 'TIMER_STATE=%s\n' "$(timer_state "$timer")"
+printf 'NEXT_TRIGGER=%s\n' "$next_trigger"
+printf 'ADMIN_RETENTION_TIMER=%s\n' "$(timer_state gaiop-admin-retention-cleanup.timer)"
+printf 'WATERMARK_TIMER=%s\n' "$(timer_state gaiop-storage-watermark-monitor.timer)"
+printf 'REPORT_RETENTION_TIMER=%s\n' "$(timer_state gaiop-report-retention-cleanup.timer)"
+printf 'SESSION_RETENTION_TIMER=%s\n' "$(timer_state gaiop-admin-session-retention.timer)"
+printf 'ADMIN_SQLITE_TIMER=%s\n' "$(timer_state gaiop-admin-sqlite-backup.timer)"
+printf 'UPGRADE_SQLITE_TIMER=%s\n' "$(timer_state gaiop-upgrade-sqlite-backup.timer)"
+printf 'ADMIN_HEALTH=200\n'
+printf 'UPGRADE_HEALTH=200\n'
+printf 'UPGRADE_UNAUTHENTICATED=401\n'
+printf 'GATEWAY_HEALTH=200\n'
+printf 'HTTPS_LOOPBACK=200\n'
+`
+}
+
+function upgradeRetentionPostcheckRollbackScript() {
+  return String.raw`set -euo pipefail
+release_id='${releaseId}'
+service=gaiop-upgrade-retention-cleanup.service
+timer=gaiop-upgrade-retention-cleanup.timer
+dropin_dir=/etc/systemd/system/gaiop-upgrade-retention-cleanup.service.d
+dropin_file="$dropin_dir/99-gaiop-retention-production.conf"
+policy_env=/etc/gaiop/upgrade-retention.policy
+backup_root="/var/backups/gaiop/upgrade-retention-enable-$release_id"
+
+timer_state() {
+  active=$(systemctl is-active "$1" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$1" 2>/dev/null || true)
+  printf '%s|%s' "$active" "$enabled"
+}
+
+unit_shape() {
+  shape_exec=$(systemctl show "$service" -p ExecStart --value | sed -n 's/.*{ path=\([^;]*\) ; argv\[\]=\([^;]*\) ;.*/\1|\2/p')
+  {
+    systemctl show "$service" -p WorkingDirectory --value
+    systemctl show "$service" -p DropInPaths --value
+    printf '%s\n' "$shape_exec"
+    systemctl show "$service" -p EnvironmentFiles --value
+    systemctl show "$service" -p ReadWritePaths --value
+  } | sha256sum | awk '{print $1}'
+}
+
+test -d "$backup_root"
+test ! -L "$backup_root"
+test "$(readlink -f "$backup_root")" = "$backup_root"
+test "$(stat -c '%u:%g:%a' "$backup_root")" = '0:0:700'
+for state_file in original-timer-active original-timer-enabled original-unit-shape installed-dropin-sha256 installed-policy-sha256; do
+  test -f "$backup_root/$state_file"
+  test ! -L "$backup_root/$state_file"
+  test "$(stat -c '%u' "$backup_root/$state_file")" = 0
+  state_mode=$(stat -c '%a' "$backup_root/$state_file")
+  test "$((8#$state_mode & 8#22))" -eq 0
+done
+test "$(<"$backup_root/original-timer-active")" = inactive
+test "$(<"$backup_root/original-timer-enabled")" = disabled
+original_unit_shape=$(<"$backup_root/original-unit-shape")
+test -n "$original_unit_shape"
+expected_dropin_sha=$(<"$backup_root/installed-dropin-sha256")
+expected_policy_sha=$(<"$backup_root/installed-policy-sha256")
+printf '%s\n' "$expected_dropin_sha" | grep -Eq '^[a-f0-9]{64}$'
+printf '%s\n' "$expected_policy_sha" | grep -Eq '^[a-f0-9]{64}$'
+
+systemctl disable --now "$timer" >/dev/null 2>&1 || true
+systemctl stop "$service" >/dev/null 2>&1 || true
+systemctl reset-failed "$service" >/dev/null 2>&1 || true
+test "$(timer_state "$timer")" = 'inactive|disabled'
+test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
+test -f "$dropin_file"
+test ! -L "$dropin_file"
+test "$(sha256sum "$dropin_file" | awk '{print $1}')" = "$expected_dropin_sha"
+test -f "$policy_env"
+test ! -L "$policy_env"
+test "$(sha256sum "$policy_env" | awk '{print $1}')" = "$expected_policy_sha"
+rm -f -- "$dropin_file" "$policy_env"
+rmdir "$dropin_dir" >/dev/null 2>&1 || true
+systemctl daemon-reload
+
+test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
+test "$(timer_state "$timer")" = 'inactive|disabled'
+test ! -e "$dropin_file"
+test ! -L "$dropin_file"
+test ! -e "$policy_env"
+test ! -L "$policy_env"
+test "$(unit_shape)" = "$original_unit_shape"
+printf 'POSTCHECK_ROLLBACK_COMPLETE=1\n'
+printf 'AUDIT_EVIDENCE_PRESERVED=1\n'
+printf 'BACKUP_ROOT=%s\n' "$backup_root"
+printf 'TIMER_STATE=%s\n' "$(timer_state "$timer")"
+printf 'UPGRADE_HEALTH=%s\n' "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18900/health 2>/dev/null || printf 000)"
+`
+}
+
+async function repairEnableUpgradeRetention(client) {
+  const publicHttpsBefore = await publicHttpsStatus()
+  if (publicHttpsBefore !== 200) {
+    return {
+      completed: false,
+      mode: 'repair-enable-upgrade-retention',
+      errorCode: 'UPGRADE_RETENTION_PUBLIC_PREFLIGHT_FAILED',
+      failedPhase: 'public_https_preflight',
+      rollbackComplete: true,
+      health: { httpsPublicBefore: publicHttpsBefore, httpsPublicAfter: null },
+    }
+  }
+  const expectedHashes = {
+    retentionCleanup: await sha256(join(upgradeSourceRoot, 'src', 'retention-cleanup.js')),
+    retentionRunner: await sha256(join(upgradeSourceRoot, 'src', 'services', 'RetentionRunner.js')),
+    packageCleaner: await sha256(join(upgradeSourceRoot, 'src', 'services', 'PackageCleaner.js')),
+    backupCleaner: await sha256(join(upgradeSourceRoot, 'src', 'services', 'BackupCleaner.js')),
+    retentionQualification: await sha256(join(upgradeSourceRoot, 'src', 'services', 'RetentionQualification.js')),
+    databaseConnection: await sha256(join(upgradeSourceRoot, 'src', 'database', 'connection.js')),
+    config: await sha256(join(upgradeSourceRoot, 'src', 'config.js')),
+    timerUnit: sha256NormalizedText(join(upgradeSourceRoot, 'deploy', 'systemd', 'gaiop-upgrade-retention-cleanup.timer')),
+    serviceTemplateB64: readFileSync(join(upgradeSourceRoot, 'deploy', 'systemd', 'gaiop-upgrade-retention-cleanup.service')).toString('base64'),
+  }
+  const remote = await runValidatedSudoScript(client, upgradeRetentionRepairEnableScript(expectedHashes))
+  const values = parseKeyValues(remote.output)
+  const remoteCompleted = remote.ok && values.UPGRADE_RETENTION_ENABLE_COMPLETE === '1'
+  const publicHttpsAfter = remote.ok ? await publicHttpsStatus() : null
+  let postcheckRollback = null
+  let postcheckRollbackValues = {}
+  let publicHttpsAfterRollback = null
+  const needsPostcheckRollback = (remote.ok && (!remoteCompleted || publicHttpsAfter !== 200))
+    || (!remote.ok && values.ROLLBACK_COMPLETE !== '1')
+  if (needsPostcheckRollback) {
+    postcheckRollback = await runValidatedSudoScript(client, upgradeRetentionPostcheckRollbackScript())
+    postcheckRollbackValues = parseKeyValues(postcheckRollback.output)
+    publicHttpsAfterRollback = await publicHttpsStatus()
+  }
+  const completed = remoteCompleted && publicHttpsAfter === 200
+  const rollbackComplete = completed
+    ? false
+    : (postcheckRollback
+        ? postcheckRollback.ok && postcheckRollbackValues.POSTCHECK_ROLLBACK_COMPLETE === '1'
+        : values.ROLLBACK_COMPLETE === '1')
+  return {
+    completed,
+    mode: 'repair-enable-upgrade-retention',
+    errorCode: completed ? null : 'UPGRADE_RETENTION_ENABLE_FAILED',
+    failedPhase: completed ? null : (publicHttpsAfter !== 200 && remoteCompleted ? 'public_https_postcheck' : (values.FAILED_PHASE || 'remote_script')),
+    rollbackComplete,
+    releaseId: values.RELEASE_ID || releaseId,
+    rollbackPoint: values.BACKUP_ROOT || null,
+    databaseBackupIntegrity: values.DATABASE_BACKUP_INTEGRITY || null,
+    auditEvidencePreserved: postcheckRollbackValues.AUDIT_EVIDENCE_PRESERVED === '1'
+      || values.AUDIT_EVIDENCE_PRESERVED === '1',
+    runtime: {
+      workingDirectory: values.WORKING_DIRECTORY || null,
+      mainEnvironmentFile: values.MAIN_ENVIRONMENT_FILE || null,
+      dropInSha256: values.DROPIN_SHA256 || null,
+      policySha256: values.POLICY_SHA256 || null,
+      nativeSystemdVerify: values.NATIVE_SYSTEMD_VERIFY || null,
+      sourceHashes: expectedHashes,
+    },
+    validation: {
+      closedRecords: parseBase64Json(values.CLOSED_RECORDS_B64, []),
+      enabledRecords: parseBase64Json(values.ENABLED_RECORDS_B64, []),
+      enabledAudit: parseBase64Json(values.ENABLED_AUDIT_B64, []),
+      timerCompensation: values.TIMER_COMPENSATION || null,
+      timerRecords: parseBase64Json(values.TIMER_RECORDS_B64, []),
+      timerAudit: parseBase64Json(values.TIMER_AUDIT_B64, []),
+    },
+    snapshot: parseBase64Json(values.FINAL_SNAPSHOT_B64, null),
+    timers: {
+      upgradeRetention: parseTimer(postcheckRollbackValues.TIMER_STATE || values.TIMER_STATE),
+      adminRetention: parseTimer(values.ADMIN_RETENTION_TIMER),
+      watermark: parseTimer(values.WATERMARK_TIMER),
+      reportRetention: parseTimer(values.REPORT_RETENTION_TIMER),
+      sessionRetention: parseTimer(values.SESSION_RETENTION_TIMER),
+      adminSqlite: parseTimer(values.ADMIN_SQLITE_TIMER),
+      upgradeSqlite: parseTimer(values.UPGRADE_SQLITE_TIMER),
+      nextTrigger: values.NEXT_TRIGGER || null,
+    },
+    health: {
+      admin: Number(values.ADMIN_HEALTH || 0),
+      upgrade: Number(postcheckRollbackValues.UPGRADE_HEALTH || values.UPGRADE_HEALTH || 0),
+      upgradeUnauthenticated: Number(values.UPGRADE_UNAUTHENTICATED || 0),
+      gateway: Number(values.GATEWAY_HEALTH || 0),
+      httpsLoopback: Number(values.HTTPS_LOOPBACK || 0),
+      httpsPublicBefore: publicHttpsBefore,
+      httpsPublicAfter: publicHttpsAfter,
+      httpsPublicAfterRollback: publicHttpsAfterRollback,
+    },
+  }
+}
+
 function publicHttpsStatus() {
   return new Promise((resolve) => {
     const request = https.get({
@@ -2399,6 +3455,13 @@ client.on('ready', async () => {
       if (!summary.completed) process.exitCode = 1
       return
     }
+    if (mode === 'repair-enable-upgrade-retention') {
+      const summary = await repairEnableUpgradeRetention(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
     const [remote, publicStatus] = await Promise.all([
       runSudoScript(client, preflightScript),
       publicHttpsStatus(),
@@ -2409,7 +3472,7 @@ client.on('ready', async () => {
     if (!summary.completed) process.exitCode = 1
   } catch {
     finished = true
-    process.stdout.write('{"completed":false,"mode":"preflight","errorCode":"RETENTION_PREFLIGHT_FAILED"}\n')
+    process.stdout.write(`${JSON.stringify({ completed: false, mode, errorCode: 'RETENTION_RELEASE_FAILED' })}\n`)
     process.exitCode = 1
   } finally {
     client.end()
@@ -2419,7 +3482,7 @@ client.on('ready', async () => {
 client.on('error', () => {
   if (finished) return
   finished = true
-  process.stdout.write('{"completed":false,"mode":"preflight","errorCode":"RETENTION_PREFLIGHT_SSH_FAILED"}\n')
+  process.stdout.write(`${JSON.stringify({ completed: false, mode, errorCode: 'RETENTION_RELEASE_SSH_FAILED' })}\n`)
   process.exitCode = 1
 })
 
