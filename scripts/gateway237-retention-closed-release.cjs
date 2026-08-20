@@ -13,6 +13,7 @@ const upgradeArchive = String(process.env.GAIOP_RETENTION_RELEASE_UPGRADE_ARCHIV
 const watermarkArchive = String(process.env.GAIOP_RETENTION_RELEASE_WATERMARK_ARCHIVE || '').trim()
 const adminSourceRoot = String(process.env.GAIOP_RETENTION_RELEASE_ADMIN_SOURCE_ROOT || '').trim()
 const upgradeSourceRoot = String(process.env.GAIOP_RETENTION_RELEASE_UPGRADE_SOURCE_ROOT || '').trim()
+const reportRetentionReleaseBody = readFileSync(join(__dirname, 'gateway237-report-retention-enable.sh'), 'utf8').replace(/\r\n/g, '\n')
 const connection = {
   host: String(process.env.GAIOP_RETENTION_RELEASE_SSH_HOST || '').trim(),
   username: String(process.env.GAIOP_RETENTION_RELEASE_SSH_USERNAME || '').trim(),
@@ -20,7 +21,7 @@ const connection = {
   readyTimeout: 20_000,
 }
 
-if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention', 'enable-sqlite-backups'].includes(mode)) {
+if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention', 'enable-sqlite-backups', 'enable-report-retention'].includes(mode)) {
   throw new Error('The controlled retention release mode is not available.')
 }
 if (mode === 'verify-units'
@@ -51,6 +52,10 @@ if (mode === 'repair-enable-upgrade-retention' && !upgradeSourceRoot) {
 if (mode === 'enable-sqlite-backups'
   && (!/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId) || !adminSourceRoot || !upgradeSourceRoot)) {
   throw new Error('The SQLite backup enablement inputs are incomplete.')
+}
+if (mode === 'enable-report-retention'
+  && (!/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId) || !adminSourceRoot)) {
+  throw new Error('The report retention enablement inputs are incomplete.')
 }
 if (mode === 'deploy-watermark-probes' && !watermarkArchive) {
   throw new Error('The storage watermark probe archive is incomplete.')
@@ -4363,6 +4368,153 @@ async function enableSqliteBackups(client) {
   }
 }
 
+function reportRetentionReleaseScript(action, values) {
+  const variables = {
+    GAIOP_REPORT_RELEASE_ACTION: action,
+    GAIOP_REPORT_RELEASE_ID: releaseId,
+    ...values,
+  }
+  for (const [key, value] of Object.entries(variables)) {
+    if (!/^GAIOP_REPORT_[A-Z0-9_]+$/.test(key) || !/^[A-Za-z0-9+/=._-]+$/.test(String(value || ''))) {
+      throw new Error('The report retention release identity is invalid.')
+    }
+  }
+  const assignments = Object.entries(variables).map(([key, value]) => `${key}='${value}'`).join('\n')
+  return `${assignments}\n${reportRetentionReleaseBody}`
+}
+
+function reportRetentionPostcheckRollbackScript(values) {
+  const current = {
+    GAIOP_REPORT_CURRENT_SERVICE_SHA256: values.REPORT_SERVICE_SHA256,
+    GAIOP_REPORT_CURRENT_TIMER_SHA256: values.REPORT_TIMER_SHA256,
+    GAIOP_REPORT_CURRENT_DROPIN_SHA256: values.REPORT_DROPIN_SHA256,
+    GAIOP_REPORT_CURRENT_POLICY_SHA256: values.REPORT_POLICY_SHA256,
+  }
+  if (!Object.values(current).every((value) => /^[a-f0-9]{64}$/.test(String(value || '')))) {
+    throw new Error('The report retention postcheck rollback identity is incomplete.')
+  }
+  return reportRetentionReleaseScript('postcheck-rollback', current)
+}
+
+async function enableReportRetention(client) {
+  const publicHttpsBefore = await publicHttpsStatus()
+  if (publicHttpsBefore !== 200) {
+    return {
+      completed: false,
+      mode: 'enable-report-retention',
+      errorCode: 'REPORT_RETENTION_PUBLIC_PREFLIGHT_FAILED',
+      failedPhase: 'public_https_preflight',
+      rollbackComplete: true,
+      health: { httpsPublicBefore: publicHttpsBefore, httpsPublicAfter: null },
+    }
+  }
+  const normalizedB64 = (filePath) => Buffer.from(readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n'), 'utf8').toString('base64')
+  const expected = {
+    GAIOP_REPORT_EXPECTED_ADMIN_CLEANER_SHA256: sha256NormalizedText(join(adminSourceRoot, 'server', 'admin-retention-cleaner.js')),
+    GAIOP_REPORT_EXPECTED_DATABASE_SHA256: sha256NormalizedText(join(adminSourceRoot, 'server', 'database.js')),
+    GAIOP_REPORT_EXPECTED_CLEANUP_SHA256: sha256NormalizedText(join(adminSourceRoot, 'server', 'report-retention-cleanup.js')),
+    GAIOP_REPORT_EXPECTED_SERVICE_LOGIC_SHA256: sha256NormalizedText(join(adminSourceRoot, 'server', 'report-retention-service.js')),
+    GAIOP_REPORT_EXPECTED_SCHEMA_SHA256: sha256NormalizedText(join(adminSourceRoot, 'server', 'lib', 'report-retention-schema.js')),
+    GAIOP_REPORT_EXPECTED_STORAGE_PATH_SHA256: sha256NormalizedText(join(adminSourceRoot, 'server', 'lib', 'report-storage-path.js')),
+    GAIOP_REPORT_EXPECTED_SERVICE_TEMPLATE_SHA256: sha256NormalizedText(join(adminSourceRoot, 'deploy', 'systemd', 'gaiop-report-retention-cleanup.service')),
+    GAIOP_REPORT_EXPECTED_TIMER_TEMPLATE_SHA256: sha256NormalizedText(join(adminSourceRoot, 'deploy', 'systemd', 'gaiop-report-retention-cleanup.timer')),
+    GAIOP_REPORT_SERVICE_TEMPLATE_B64: normalizedB64(join(adminSourceRoot, 'deploy', 'systemd', 'gaiop-report-retention-cleanup.service')),
+    GAIOP_REPORT_TIMER_TEMPLATE_B64: normalizedB64(join(adminSourceRoot, 'deploy', 'systemd', 'gaiop-report-retention-cleanup.timer')),
+  }
+  const remote = await runValidatedSudoScript(client, reportRetentionReleaseScript('enable', expected))
+  const values = parseKeyValues(remote.output)
+  const remoteCompleted = remote.ok && values.REPORT_RETENTION_ENABLE_COMPLETE === '1'
+  const publicHttpsAfter = remoteCompleted ? await publicHttpsStatus() : null
+  let postcheckRollback = null
+  let postcheckValues = {}
+  let publicHttpsAfterRollback = null
+  if (remoteCompleted && publicHttpsAfter !== 200) {
+    postcheckRollback = await runValidatedSudoScript(client, reportRetentionPostcheckRollbackScript(values))
+    postcheckValues = parseKeyValues(postcheckRollback.output)
+    publicHttpsAfterRollback = await publicHttpsStatus()
+  }
+  const completed = remoteCompleted && publicHttpsAfter === 200
+  const failedPhase = completed ? null : (values.FAILED_PHASE || (remoteCompleted ? 'public_https_postcheck' : 'remote_script'))
+  const errorCode = completed
+    ? null
+    : (failedPhase === 'permanent_delete_confirmation_required'
+        ? 'REPORT_RETENTION_PERMANENT_DELETE_CONFIRMATION_REQUIRED'
+        : (failedPhase === 'report_retention_anomaly_gate'
+            ? 'REPORT_RETENTION_ANOMALY_GATE_FAILED'
+            : 'REPORT_RETENTION_ENABLE_FAILED'))
+  return {
+    completed,
+    mode: 'enable-report-retention',
+    errorCode,
+    failedPhase,
+    remoteExitCode: remote.exitCode ?? null,
+    remoteStatus: values.FAILED_STATUS || null,
+    failureDetail: parseBase64Json(values.FAILED_DETAIL_B64, null),
+    sourcePermissions: {
+      before: parseBase64Json(values.SOURCE_PERMISSIONS_B64, []),
+      after: parseBase64Json(values.SOURCE_PERMISSIONS_AFTER_B64, []),
+    },
+    rollbackComplete: completed
+      ? false
+      : (postcheckRollback
+          ? postcheckRollback.ok && postcheckValues.POSTCHECK_ROLLBACK_COMPLETE === '1'
+          : values.ROLLBACK_COMPLETE === '1'),
+    releaseId: values.RELEASE_ID || releaseId,
+    rollbackPoint: values.BACKUP_ROOT || null,
+    backupEvidencePreserved: postcheckValues.BACKUP_EVIDENCE_PRESERVED === '1'
+      || values.BACKUP_EVIDENCE_PRESERVED === '1',
+    databaseBackupIntegrity: values.DATABASE_BACKUP_INTEGRITY || null,
+    inspection: {
+      initial: parseBase64Json(values.INITIAL_INSPECTION_B64, null),
+      final: parseBase64Json(values.FINAL_INSPECTION_B64, null),
+      permanentDeleteCount: Number(values.PERMANENT_DELETE_COUNT || 0),
+      anomalyCount: Number(values.ANOMALY_COUNT || 0),
+      eligibleCount: Number(values.ELIGIBLE_COUNT || 0),
+      paths: parseBase64Json(values.PATHS_B64, null),
+    },
+    validation: {
+      closed: parseBase64Json(values.CLOSED_RUN_B64, null),
+      batchOne: parseBase64Json(values.BATCH_ONE_RUN_B64, null),
+      batchOneChange: parseBase64Json(values.BATCH_ONE_CHANGE_B64, null),
+      timerRuns: parseBase64Json(values.TIMER_RUNS_B64, []),
+      manual: parseBase64Json(values.MANUAL_RUN_B64, null),
+      manualChange: parseBase64Json(values.MANUAL_CHANGE_B64, null),
+      totalChange: parseBase64Json(values.TOTAL_CHANGE_B64, null),
+      nativeSystemdVerify: values.NATIVE_SYSTEMD_VERIFY || null,
+    },
+    timers: {
+      reportRetention: parseTimer(postcheckValues.REPORT_TIMER || values.REPORT_TIMER),
+      nextTrigger: values.REPORT_NEXT || null,
+      adminRetention: parseTimer(values.ADMIN_RETENTION_TIMER),
+      upgradeRetention: parseTimer(values.UPGRADE_RETENTION_TIMER),
+      watermark: parseTimer(values.WATERMARK_TIMER),
+      adminSqlite: parseTimer(values.ADMIN_SQLITE_TIMER),
+      upgradeSqlite: parseTimer(values.UPGRADE_SQLITE_TIMER),
+      sessionRetention: parseTimer(values.SESSION_TIMER),
+      sqliteCleanup: values.SQLITE_CLEANUP || null,
+    },
+    hashes: {
+      sources: Object.fromEntries(Object.entries(expected).filter(([key]) => key.endsWith('_SHA256'))),
+      service: values.REPORT_SERVICE_SHA256 || null,
+      timer: values.REPORT_TIMER_SHA256 || null,
+      dropIn: values.REPORT_DROPIN_SHA256 || null,
+      policy: values.REPORT_POLICY_SHA256 || null,
+    },
+    health: {
+      admin: Number(postcheckValues.ADMIN_HEALTH || values.ADMIN_HEALTH || 0),
+      upgrade: Number(values.UPGRADE_HEALTH || 0),
+      upgradeUnauthenticated: Number(values.UPGRADE_UNAUTHENTICATED || 0),
+      gateway: Number(values.GATEWAY_HEALTH || 0),
+      httpsLoopback: Number(values.HTTPS_LOOPBACK || 0),
+      httpsPublicBefore: publicHttpsBefore,
+      httpsPublicAfter: publicHttpsAfter,
+      httpsPublicAfterRollback: publicHttpsAfterRollback,
+      adminListener: values.ADMIN_LISTENER || null,
+      protectedServicePidsUnchanged: values.PIDS_UNCHANGED === '1',
+    },
+  }
+}
+
 function publicHttpsStatus() {
   return new Promise((resolve) => {
     const request = https.get({
@@ -4578,6 +4730,13 @@ client.on('ready', async () => {
       if (!summary.completed) process.exitCode = 1
       return
     }
+    if (mode === 'enable-report-retention') {
+      const summary = await enableReportRetention(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
     const [remote, publicStatus] = await Promise.all([
       runSudoScript(client, preflightScript),
       publicHttpsStatus(),
@@ -4586,9 +4745,14 @@ client.on('ready', async () => {
     finished = true
     process.stdout.write(`${JSON.stringify(summary)}\n`)
     if (!summary.completed) process.exitCode = 1
-  } catch {
+  } catch (error) {
     finished = true
-    process.stdout.write(`${JSON.stringify({ completed: false, mode, errorCode: 'RETENTION_RELEASE_FAILED' })}\n`)
+    const diagnostic = String(error?.message || error?.code || 'unknown')
+      .replaceAll(connection.password, '[redacted]')
+      .replaceAll(connection.host, '[redacted-host]')
+      .replaceAll(connection.username, '[redacted-user]')
+      .slice(0, 300)
+    process.stdout.write(`${JSON.stringify({ completed: false, mode, errorCode: 'RETENTION_RELEASE_FAILED', diagnostic })}\n`)
     process.exitCode = 1
   } finally {
     client.end()

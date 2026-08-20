@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention', 'enable-sqlite-backups')]
+  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention', 'enable-sqlite-backups', 'enable-report-retention')]
   [string]$Mode = 'preflight',
   [ValidatePattern('^[0-9]{8}T[0-9]{6}Z$')]
   [string]$ReleaseId,
@@ -16,12 +16,16 @@ param(
 $ErrorActionPreference = 'Stop'
 $credentialPath = Join-Path (Join-Path $env:LOCALAPPDATA 'GAIOP') 'alert-syslog-connection.clixml'
 $runnerPath = Join-Path $PSScriptRoot 'gateway237-retention-closed-release.cjs'
+$reportRunnerPath = Join-Path $PSScriptRoot 'gateway237-report-retention-enable.sh'
 
 if (-not (Test-Path -LiteralPath $credentialPath -PathType Leaf)) {
   throw 'The controlled 237 connection record is unavailable.'
 }
 if (-not (Test-Path -LiteralPath $runnerPath -PathType Leaf)) {
   throw 'The controlled retention release runner is unavailable.'
+}
+if (-not (Test-Path -LiteralPath $reportRunnerPath -PathType Leaf)) {
+  throw 'The controlled report retention release runner is unavailable.'
 }
 if ($Mode -eq 'verify-units') {
   if (-not $ReleaseId) { throw 'ReleaseId is required for unit verification.' }
@@ -47,6 +51,30 @@ if ($Mode -eq 'repair-enable-upgrade-retention' -and -not $ReleaseId) {
 }
 if ($Mode -eq 'enable-sqlite-backups' -and -not $ReleaseId) {
   throw 'ReleaseId is required for SQLite backup enablement.'
+}
+if ($Mode -eq 'enable-report-retention' -and -not $ReleaseId) {
+  throw 'ReleaseId is required for report retention enablement.'
+}
+if ($Mode -eq 'enable-report-retention') {
+  if (-not (Test-Path -LiteralPath $AdminSourceRootPath -PathType Container)) {
+    throw 'The verified Admin report retention source root is unavailable.'
+  }
+  foreach ($relativePath in @(
+    'package.json',
+    'server\admin-retention-cleaner.js',
+    'server\database.js',
+    'server\report-retention-cleanup.js',
+    'server\report-retention-service.js',
+    'server\lib\report-retention-schema.js',
+    'server\lib\report-storage-path.js',
+    'deploy\systemd\gaiop-report-retention-cleanup.service',
+    'deploy\systemd\gaiop-report-retention-cleanup.timer',
+    'deploy\iso\env\report-retention.policy.example'
+  )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $AdminSourceRootPath $relativePath) -PathType Leaf)) {
+      throw "The verified Admin report retention source is incomplete: $relativePath"
+    }
+  }
 }
 if ($Mode -eq 'enable-sqlite-backups') {
   if (-not (Test-Path -LiteralPath $AdminSourceRootPath -PathType Container)) {
@@ -147,6 +175,12 @@ try {
   $process.WaitForExit()
   $result = $stdout | ConvertFrom-Json -ErrorAction Stop
   if ($process.ExitCode -ne 0 -or -not $result.completed) {
+    if ($Mode -eq 'enable-report-retention') {
+      $result | ConvertTo-Json -Depth 12
+    }
+    if ($result.errorCode -in @('REPORT_RETENTION_PERMANENT_DELETE_CONFIRMATION_REQUIRED', 'REPORT_RETENTION_ANOMALY_GATE_FAILED')) {
+      exit 2
+    }
     $errorCode = if ($result.errorCode) { [string]$result.errorCode } else { 'RETENTION_RELEASE_RUNNER_FAILED' }
     $failurePhase = if ($result.failedPhase) { [string]$result.failedPhase } else { 'unknown' }
     $rollbackState = if ($result.rollbackComplete) { 'complete' } else { 'not-confirmed' }
@@ -154,7 +188,11 @@ try {
       "events=$($result.eventCounts.before)/$($result.eventCounts.afterFirst)/$($result.eventCounts.afterSecond)"
     } else { 'events=not-applicable' }
     $statusErrors = if ($result.statusErrors) { "status=$($result.statusErrors)" } else { 'status=not-applicable' }
-    $testFailure = if ($result.testFailure) { "test=$($result.testFailure -replace "`r?`n", ' | ')" } else { 'test=not-applicable' }
+    $testFailure = if ($result.testFailure) {
+      "test=$($result.testFailure -replace "`r?`n", ' | ')"
+    } elseif ($result.diagnostic) {
+      "diagnostic=$($result.diagnostic -replace "`r?`n", ' | ')"
+    } else { 'test=not-applicable' }
     $unitDiagnostics = if ($result.diagnostics) {
       "unit_workdir=$($result.diagnostics.workingDirectory); dropins=$($result.diagnostics.dropInPaths); exec=$($result.diagnostics.execStart); env_files=$($result.diagnostics.environmentFiles); rw_paths=$($result.diagnostics.readWritePaths)"
     } else { 'unit_diagnostics=not-applicable' }

@@ -68,6 +68,8 @@ controlledFiles:
   environmentExamples:
     - source: GAIOP-Admin/deploy/iso/env/admin.env.example
       target: /etc/gaiop/admin.env
+    - source: GAIOP-Admin/deploy/iso/env/report-retention.policy.example
+      target: /etc/gaiop/report-retention.policy
     - source: GAIOP-latest/deploy/iso/env/gateway.env.example
       target: /etc/gaiop/gateway.env
     - source: GAIOP-latest/deploy/iso/env/alert-receiver.env.example
@@ -169,6 +171,8 @@ firstBoot:
     - /etc/gaiop/gateway.env
     - /etc/gaiop/alert-receiver.env
     - /etc/gaiop/upgrade.env
+  requiredPolicyFiles:
+    - /etc/gaiop/report-retention.policy
   generatedOnTarget:
     - Linux-target Node.js dependencies and production frontend build, unless the ISO pipeline provides target-compatible artifacts
     - TLS certificate/key material and reverse-proxy activation

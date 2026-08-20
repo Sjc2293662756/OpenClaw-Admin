@@ -23,6 +23,7 @@ invalid source/ISO checksums; it does not read environment files or secrets.
 | Source | Controlled target |
 |---|---|
 | `env/admin.env.example` | `/etc/gaiop/admin.env` |
+| `env/report-retention.policy.example` | `/etc/gaiop/report-retention.policy` |
 | `GAIOP-latest/deploy/iso/env/gateway.env.example` | `/etc/gaiop/gateway.env` |
 | `GAIOP-latest/deploy/iso/env/alert-receiver.env.example` | `/etc/gaiop/alert-receiver.env` |
 | `systemd/gaiop-admin.service` | `/etc/systemd/system/gaiop-admin.service` |
