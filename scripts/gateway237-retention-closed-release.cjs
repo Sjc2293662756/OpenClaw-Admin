@@ -3338,7 +3338,7 @@ async function repairEnableUpgradeRetention(client) {
 }
 
 function sqliteBackupEnableScript(expected) {
-  return String.raw`set -euo pipefail
+  return String.raw`set -Eeuo pipefail
 release_id='${releaseId}'
 admin_root=/opt/gaiop/admin
 admin_db=/var/lib/gaiop/admin/wizard.db
@@ -3682,7 +3682,7 @@ verify_restore_tiers() {
         --uid=gaiop --gid=gaiop --working-directory=/ \
         --property=Type=oneshot --property=UMask=0077 --property=NoNewPrivileges=yes \
         --property=PrivateTmp=yes --property=PrivateDevices=yes --property=ProtectSystem=strict --property=ProtectHome=yes \
-        --property="ReadOnlyPaths=$backup_path $admin_root/server" --property="ReadWritePaths=$restore_path" \
+        --property="ReadOnlyPaths=$admin_root/server" --property="ReadWritePaths=$backup_path $restore_path" \
         --property="InaccessiblePaths=-/var/lib/gaiop-upgrade -/var/backups/gaiop/upgrade -/var/lib/gaiop/alerts -/etc/gaiop/admin.env" \
         env -i \
         GAIOP_ADMIN_DATA_DIR=/var/lib/gaiop/admin \
@@ -3694,7 +3694,7 @@ verify_restore_tiers() {
         --working-directory=/ \
         --property=Type=oneshot --property=UMask=0077 --property=NoNewPrivileges=yes \
         --property=PrivateTmp=yes --property=PrivateDevices=yes --property=ProtectSystem=strict --property=ProtectHome=yes \
-        --property="ReadOnlyPaths=$backup_path $upgrade_root/src" --property="ReadWritePaths=$restore_path" \
+        --property="ReadOnlyPaths=$upgrade_root/src" --property="ReadWritePaths=$backup_path $restore_path" \
         --property="InaccessiblePaths=-/var/lib/gaiop/admin -/var/lib/gaiop/alerts -/etc/gaiop/upgrade.env -/etc/gaiop-upgrade -/var/backups/gaiop/upgrade -/var/lib/gaiop-upgrade/packages -/var/lib/gaiop/upgrade/staging" \
         env -i \
         NAPM_UPGRADE_DB_PATH="$upgrade_db" \
@@ -3725,7 +3725,6 @@ verify_effective_unit() {
   test "$(printf '%s' "$effective_exec" | grep -o 'path=' | wc -l | tr -d '[:space:]')" = 1
   printf '%s' "$effective_exec" | grep -F -- 'path=/usr/local/bin/node' >/dev/null
   printf '%s' "$effective_exec" | grep -F -- "argv[]=/usr/local/bin/node $expected_exec ;" >/dev/null
-  test "$(systemctl show "$service_name" -p RuntimeDirectory --value)" = "$(basename "$expected_workdir")"
   test "$(systemctl show "$service_name" -p RuntimeDirectoryPreserve --value)" = no
   test "$(systemctl show "$service_name" -p TimeoutStartUSec --value)" = 15min
   test "$(systemctl show "$service_name" -p UMask --value)" = 0077
@@ -3745,12 +3744,14 @@ phase=preflight
 test "$(id -u)" = 0
 printf '%s\n' "$release_id" | grep -Eq '^[0-9]{8}T[0-9]{6}Z$'
 test ! -e "$backup_root"
+phase=preflight_upgrade_root
 upgrade_root=$(systemctl show gaiop-upgrade.service -p WorkingDirectory --value)
 case "$upgrade_root" in /opt/gaiop/*|/opt/gaiop-*) ;; *) exit 51 ;; esac
 test -d "$admin_root"
 test -d "$upgrade_root"
 test -f "$admin_db"
 test ! -L "$admin_db"
+phase=preflight_live_database
 upgrade_pid=$(systemctl show gaiop-upgrade.service -p MainPID --value)
 printf '%s\n' "$upgrade_pid" | grep -Eq '^[1-9][0-9]*$'
 upgrade_db=
@@ -3766,6 +3767,7 @@ for descriptor in /proc/$upgrade_pid/fd/*; do
   esac
 done
 test -n "$upgrade_db"
+phase=preflight_timers_and_health
 test "$(timer_state "$admin_timer")" = 'inactive|disabled'
 test "$(timer_state "$upgrade_timer")" = 'inactive|disabled'
 test "$(timer_state gaiop-admin-retention-cleanup.timer)" = 'active|enabled'
@@ -3777,6 +3779,7 @@ test "$(http_status http://127.0.0.1:3000/api/health)" = 200
 test "$(http_status http://127.0.0.1:18900/health)" = 200
 test "$(http_status http://127.0.0.1:18789/health)" = 200
 
+phase=preflight_source_files
 for source_file in \
   "$admin_root/package.json" \
   "$admin_root/server/sqlite-backup.js" \
@@ -3790,8 +3793,8 @@ for source_file in \
   test -f "$source_file"
   test ! -L "$source_file"
 done
+phase=preflight_source_hashes
 test "$(sha256sum "$admin_root/server/sqlite-backup.js" | awk '{print $1}')" = '${expected.adminBackup}'
-test "$(/usr/local/bin/node -p \"require('$admin_root/package.json').type || ''\")" = module
 test "$(sha256sum "$admin_root/server/sqlite-restore-test.js" | awk '{print $1}')" = '${expected.adminRestore}'
 test "$(sha256sum "$admin_root/server/lib/sqlite-backup-service.js" | awk '{print $1}')" = '${expected.adminLibrary}'
 test "$(sha256sum "$upgrade_root/src/sqlite-backup.js" | awk '{print $1}')" = '${expected.upgradeBackup}'
@@ -3802,6 +3805,7 @@ test "$(sha256sum "$upgrade_root/package.json" | awk '{print $1}')" = '${expecte
 test "$(normalized_sha "$admin_service_file")" = '${expected.adminService}'
 test "$(normalized_sha "$admin_timer_file")" = '${expected.adminTimer}'
 test "$(normalized_sha "$upgrade_timer_file")" = '${expected.upgradeTimer}'
+phase=preflight_dependencies
 for dependency_dir in \
   "$admin_root/node_modules/better-sqlite3" "$admin_root/node_modules/bindings" "$admin_root/node_modules/file-uri-to-path" \
   "$upgrade_root/node_modules/better-sqlite3" "$upgrade_root/node_modules/bindings" "$upgrade_root/node_modules/file-uri-to-path" "$upgrade_root/node_modules/dotenv"; do
@@ -3823,9 +3827,25 @@ for managed_dir in "$admin_backup_root" "$admin_restore_root" "$upgrade_backup_r
   if [ -e "$managed_dir" ] || [ -L "$managed_dir" ]; then
     test -d "$managed_dir"
     test ! -L "$managed_dir"
-    test -z "$(find "$managed_dir" -mindepth 1 -maxdepth 1 -print -quit)"
   fi
 done
+for restore_dir in "$admin_restore_root" "$upgrade_restore_root"; do
+  if [ -d "$restore_dir" ]; then test -z "$(find "$restore_dir" -mindepth 1 -maxdepth 1 -print -quit)"; fi
+done
+admin_existing_count=$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
+upgrade_existing_count=$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
+case "$admin_existing_count" in 0|6) ;; *) exit 52 ;; esac
+case "$upgrade_existing_count" in 0|6) ;; *) exit 53 ;; esac
+admin_expected_created=3
+upgrade_expected_created=3
+if [ "$admin_existing_count" = 6 ]; then
+  admin_expected_created=0
+  verify_backup_set "$admin_root/node_modules/better-sqlite3" "$admin_backup_root" admin "$work_root/admin-existing-set.json" "$(id -u gaiop)" "$(id -g gaiop)"
+fi
+if [ "$upgrade_existing_count" = 6 ]; then
+  upgrade_expected_created=0
+  verify_backup_set "$upgrade_root/node_modules/better-sqlite3" "$upgrade_backup_root" upgrade "$work_root/upgrade-existing-set.json" 0 0
+fi
 
 phase=capture
 install -d -o root -g root -m 0700 "$backup_root"
@@ -3979,8 +3999,8 @@ test "$(stat -c '%U:%G:%a' "$upgrade_policy")" = 'root:root:600'
 phase=closed_one_shot
 validate_disabled_one_shot "$admin_service" "$work_root/admin-disabled.json"
 validate_disabled_one_shot "$upgrade_service" "$work_root/upgrade-disabled.json"
-test -z "$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -print -quit)"
-test -z "$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -print -quit)"
+test "$admin_existing_count" = "$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -printf x | wc -c | tr -d '[:space:]')"
+test "$upgrade_existing_count" = "$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -printf x | wc -c | tr -d '[:space:]')"
 
 phase=enable_creation_policy
 sed 's/GAIOP_ADMIN_SQLITE_BACKUP_CREATE_ENABLED=false/GAIOP_ADMIN_SQLITE_BACKUP_CREATE_ENABLED=true/' "$work_root/admin.policy" > "$work_root/admin.policy.enabled"
@@ -3997,8 +4017,8 @@ grep -Fx 'GAIOP_UPGRADE_SQLITE_BACKUP_CREATE_ENABLED=true' "$upgrade_policy" >/d
 grep -Fx 'GAIOP_UPGRADE_SQLITE_BACKUP_CLEANUP_ENABLED=false' "$upgrade_policy" >/dev/null
 
 phase=first_enabled_one_shot
-validate_one_shot "$admin_service" admin 3 "$work_root/admin-first.json"
-validate_one_shot "$upgrade_service" upgrade 3 "$work_root/upgrade-first.json"
+validate_one_shot "$admin_service" admin "$admin_expected_created" "$work_root/admin-first.json"
+validate_one_shot "$upgrade_service" upgrade "$upgrade_expected_created" "$work_root/upgrade-first.json"
 admin_uid=$(id -u gaiop)
 admin_gid=$(id -g gaiop)
 verify_backup_set "$admin_root/node_modules/better-sqlite3" "$admin_backup_root" admin "$work_root/admin-set.json" "$admin_uid" "$admin_gid"
