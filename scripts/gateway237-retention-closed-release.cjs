@@ -2595,6 +2595,22 @@ journal_cursor() {
   journalctl --quiet --no-pager -n 0 --show-cursor | sed -n 's/^-- cursor: //p'
 }
 
+journal_policy_record_count() {
+  journalctl --quiet --no-pager --after-cursor="$1" --unit="$service" -o cat | /usr/local/bin/node -e '
+let input = "";
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  let count = 0;
+  for (const line of input.split(/\r?\n/)) {
+    try {
+      const value = JSON.parse(line);
+      if (value.policyVersion === "gaiop_upgrade_retention.v1" && value.phase === "completed") count += 1;
+    } catch {}
+  }
+  process.stdout.write(String(count));
+});'
+}
+
 validate_journal() {
   invocation="$1"
   output_file="$2"
@@ -2989,25 +3005,28 @@ verify_audit_file
 if [ "$audit_identity" = absent ]; then audit_identity=$(stat -c '%d:%i' "$audit_log"); fi
 after_enabled_snapshot=$(snapshot)
 assert_managed_snapshot_unchanged "$before_snapshot" "$after_enabled_snapshot"
-manual_invocation=$(systemctl show "$service" -p InvocationID --value)
 
 phase=enable_timer
 before_timer_audit=$(audit_lines)
+timer_cursor=$(journal_cursor)
+test -n "$timer_cursor"
 systemctl enable --now "$timer" >/dev/null
 test "$(timer_state "$timer")" = 'active|enabled'
 timer_records=''
 timer_audit=''
 timer_compensation=waiting
-timer_invocation=''
+timer_observed=0
+phase=observe_timer
 for _ in $(seq 1 960); do
-  current_invocation=$(systemctl show "$service" -p InvocationID --value 2>/dev/null || true)
-  if [ -n "$current_invocation" ] && [ "$current_invocation" != "$manual_invocation" ]; then
-    timer_invocation="$current_invocation"
+  timer_record_count=$(journal_policy_record_count "$timer_cursor")
+  if [ "$timer_record_count" -ge 3 ]; then
+    timer_observed=1
     break
   fi
   sleep 1
 done
-if [ -n "$timer_invocation" ]; then
+if [ "$timer_observed" = 1 ]; then
+  phase=validate_timer
   for _ in $(seq 1 60); do
     timer_service_state=$(systemctl is-active "$service" 2>/dev/null || true)
     case "$timer_service_state" in
@@ -3017,7 +3036,7 @@ if [ -n "$timer_invocation" ]; then
   done
   test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
   test "$(systemctl show "$service" -p Result --value)" = success
-  timer_records=$(validate_journal "$timer_invocation" "$work_root/timer.journal")
+  timer_records=$(validate_journal '' "$work_root/timer.journal" "$timer_cursor")
   after_timer_audit=$(audit_lines)
   test "$after_timer_audit" -eq "$((before_timer_audit + 6))"
   timer_audit=$(validate_audit_tail "$work_root/timer.audit")
@@ -3041,11 +3060,10 @@ else
     esac
   done
   test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
-  late_invocation=$(systemctl show "$service" -p InvocationID --value 2>/dev/null || true)
-  if [ -n "$late_invocation" ] && [ "$late_invocation" != "$manual_invocation" ]; then
-    timer_invocation="$late_invocation"
+  late_record_count=$(journal_policy_record_count "$timer_cursor")
+  if [ "$late_record_count" -ge 3 ]; then
     test "$(systemctl show "$service" -p Result --value)" = success
-    timer_records=$(validate_journal "$timer_invocation" "$work_root/timer-late.journal")
+    timer_records=$(validate_journal '' "$work_root/timer-late.journal" "$timer_cursor")
     after_timer_audit=$(audit_lines)
     test "$after_timer_audit" -eq "$((before_timer_audit + 6))"
     timer_audit=$(validate_audit_tail "$work_root/timer-late.audit")
