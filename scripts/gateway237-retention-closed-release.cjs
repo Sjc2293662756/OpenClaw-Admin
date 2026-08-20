@@ -11,6 +11,7 @@ const releaseId = String(process.env.GAIOP_RETENTION_RELEASE_ID || '').trim()
 const adminArchive = String(process.env.GAIOP_RETENTION_RELEASE_ADMIN_ARCHIVE || '').trim()
 const upgradeArchive = String(process.env.GAIOP_RETENTION_RELEASE_UPGRADE_ARCHIVE || '').trim()
 const watermarkArchive = String(process.env.GAIOP_RETENTION_RELEASE_WATERMARK_ARCHIVE || '').trim()
+const adminSourceRoot = String(process.env.GAIOP_RETENTION_RELEASE_ADMIN_SOURCE_ROOT || '').trim()
 const upgradeSourceRoot = String(process.env.GAIOP_RETENTION_RELEASE_UPGRADE_SOURCE_ROOT || '').trim()
 const connection = {
   host: String(process.env.GAIOP_RETENTION_RELEASE_SSH_HOST || '').trim(),
@@ -19,7 +20,7 @@ const connection = {
   readyTimeout: 20_000,
 }
 
-if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention'].includes(mode)) {
+if (!['preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention', 'enable-sqlite-backups'].includes(mode)) {
   throw new Error('The controlled retention release mode is not available.')
 }
 if (mode === 'verify-units'
@@ -46,6 +47,10 @@ if (mode === 'repair-enable-upgrade-retention' && !/^[0-9]{8}T[0-9]{6}Z$/.test(r
 }
 if (mode === 'repair-enable-upgrade-retention' && !upgradeSourceRoot) {
   throw new Error('The verified Upgrade retention source is incomplete.')
+}
+if (mode === 'enable-sqlite-backups'
+  && (!/^[0-9]{8}T[0-9]{6}Z$/.test(releaseId) || !adminSourceRoot || !upgradeSourceRoot)) {
+  throw new Error('The SQLite backup enablement inputs are incomplete.')
 }
 if (mode === 'deploy-watermark-probes' && !watermarkArchive) {
   throw new Error('The storage watermark probe archive is incomplete.')
@@ -3332,6 +3337,997 @@ async function repairEnableUpgradeRetention(client) {
   }
 }
 
+function sqliteBackupEnableScript(expected) {
+  return String.raw`set -euo pipefail
+release_id='${releaseId}'
+admin_root=/opt/gaiop/admin
+admin_db=/var/lib/gaiop/admin/wizard.db
+admin_backup_root=/var/lib/gaiop/admin/sqlite-backups
+admin_restore_root=/var/lib/gaiop/admin/sqlite-restore-tests
+admin_service=gaiop-admin-sqlite-backup.service
+admin_timer=gaiop-admin-sqlite-backup.timer
+admin_service_file=/etc/systemd/system/gaiop-admin-sqlite-backup.service
+admin_timer_file=/etc/systemd/system/gaiop-admin-sqlite-backup.timer
+admin_dropin_dir=/etc/systemd/system/gaiop-admin-sqlite-backup.service.d
+admin_dropin_file=$admin_dropin_dir/99-gaiop-sqlite-backup-production.conf
+admin_policy=/etc/gaiop/admin-sqlite-backup.policy
+upgrade_service=gaiop-upgrade-sqlite-backup.service
+upgrade_timer=gaiop-upgrade-sqlite-backup.timer
+upgrade_service_file=/etc/systemd/system/gaiop-upgrade-sqlite-backup.service
+upgrade_timer_file=/etc/systemd/system/gaiop-upgrade-sqlite-backup.timer
+upgrade_dropin_dir=/etc/systemd/system/gaiop-upgrade-sqlite-backup.service.d
+upgrade_dropin_file=$upgrade_dropin_dir/99-gaiop-sqlite-backup-production.conf
+upgrade_policy=/etc/gaiop/upgrade-sqlite-backup.policy
+upgrade_backup_root=/var/lib/gaiop-upgrade/sqlite-backups
+upgrade_restore_root=/var/lib/gaiop-upgrade/sqlite-restore-tests
+backup_root=/var/backups/gaiop/sqlite-backup-enable-$release_id
+work_root=$(mktemp -d /run/gaiop-sqlite-backup-enable.XXXXXX)
+phase=preflight
+completed=0
+backup_captured=0
+rollback_complete=0
+
+timer_state() {
+  active=$(systemctl is-active "$1" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$1" 2>/dev/null || true)
+  printf '%s|%s' "$active" "$enabled"
+}
+
+http_status() {
+  curl -sS -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || printf 000
+}
+
+normalized_sha() {
+  sed 's/\r$//' "$1" | sha256sum | awk '{print $1}'
+}
+
+capture_file() {
+  source_path=$1
+  label=$2
+  if [ -e "$source_path" ] || [ -L "$source_path" ]; then
+    test -f "$source_path"
+    test ! -L "$source_path"
+    cp -a -- "$source_path" "$backup_root/$label"
+  else
+    : > "$backup_root/$label.absent"
+  fi
+}
+
+restore_file() {
+  target_path=$1
+  label=$2
+  if [ -f "$backup_root/$label" ]; then
+    install -d -o root -g root -m 0755 "$(dirname "$target_path")"
+    rm -f -- "$target_path"
+    cp -a -- "$backup_root/$label" "$target_path"
+  elif [ -f "$backup_root/$label.absent" ]; then
+    rm -f -- "$target_path"
+  else
+    return 1
+  fi
+}
+
+restore_mode() {
+  target_path=$1
+  label=$2
+  if [ -f "$backup_root/$label.mode" ]; then
+    if [ -e "$target_path" ]; then
+      test ! -L "$target_path"
+      chmod "$(cat "$backup_root/$label.mode")" "$target_path"
+    fi
+  elif [ ! -f "$backup_root/$label.absent" ]; then
+    return 1
+  fi
+}
+
+restore_timer() {
+  timer_name=$1
+  state=$2
+  systemctl disable --now "$timer_name" >/dev/null 2>&1 || true
+  case "$state" in
+    active\|enabled) systemctl enable --now "$timer_name" >/dev/null 2>&1 ;;
+    inactive\|enabled) systemctl enable "$timer_name" >/dev/null 2>&1 ;;
+    active\|disabled) systemctl start "$timer_name" >/dev/null 2>&1 ;;
+    inactive\|disabled) ;;
+    *) return 1 ;;
+  esac
+  test "$(timer_state "$timer_name")" = "$state"
+}
+
+rollback() {
+  set +e
+  systemctl disable --now "$admin_timer" "$upgrade_timer" >/dev/null 2>&1
+  systemctl stop "$admin_service" "$upgrade_service" >/dev/null 2>&1
+  if [ "$backup_captured" = 1 ]; then
+    restore_file "$admin_service_file" admin.service
+    restore_file "$admin_timer_file" admin.timer
+    restore_file "$admin_dropin_file" admin.dropin
+    restore_file "$admin_policy" admin.policy
+    restore_file "$upgrade_service_file" upgrade.service
+    restore_file "$upgrade_timer_file" upgrade.timer
+    restore_file "$upgrade_dropin_file" upgrade.dropin
+    restore_file "$upgrade_policy" upgrade.policy
+    restore_mode "$upgrade_db" upgrade-database
+    restore_mode "$upgrade_db-wal" upgrade-database-wal
+    restore_mode "$upgrade_db-shm" upgrade-database-shm
+    rmdir "$admin_dropin_dir" >/dev/null 2>&1 || true
+    rmdir "$upgrade_dropin_dir" >/dev/null 2>&1 || true
+    systemctl daemon-reload
+    admin_original=$(cat "$backup_root/admin.timer-state")
+    upgrade_original=$(cat "$backup_root/upgrade.timer-state")
+    restore_timer "$admin_timer" "$admin_original"
+    restore_timer "$upgrade_timer" "$upgrade_original"
+    restored_files=1
+    for restored_entry in \
+      "$admin_service_file:admin.service" "$admin_timer_file:admin.timer" \
+      "$admin_dropin_file:admin.dropin" "$admin_policy:admin.policy" \
+      "$upgrade_service_file:upgrade.service" "$upgrade_timer_file:upgrade.timer" \
+      "$upgrade_dropin_file:upgrade.dropin" "$upgrade_policy:upgrade.policy"; do
+      restored_path=$(printf '%s' "$restored_entry" | cut -d: -f1)
+      restored_label=$(printf '%s' "$restored_entry" | cut -d: -f2)
+      if [ -f "$backup_root/$restored_label" ]; then
+        cmp -s "$backup_root/$restored_label" "$restored_path" || restored_files=0
+      elif [ -f "$backup_root/$restored_label.absent" ]; then
+        [ ! -e "$restored_path" ] && [ ! -L "$restored_path" ] || restored_files=0
+      else
+        restored_files=0
+      fi
+    done
+    for mode_entry in "$upgrade_db:upgrade-database" "$upgrade_db-wal:upgrade-database-wal" "$upgrade_db-shm:upgrade-database-shm"; do
+      mode_path=$(printf '%s' "$mode_entry" | cut -d: -f1)
+      mode_label=$(printf '%s' "$mode_entry" | cut -d: -f2)
+      if [ -f "$backup_root/$mode_label.mode" ] && [ -e "$mode_path" ]; then
+        [ "$(stat -c '%a' "$mode_path")" = "$(cat "$backup_root/$mode_label.mode")" ] || restored_files=0
+      elif [ ! -f "$backup_root/$mode_label.mode" ] && [ ! -f "$backup_root/$mode_label.absent" ]; then
+        restored_files=0
+      fi
+    done
+    if [ "$restored_files" = 1 ] \
+      && [ "$(timer_state "$admin_timer")" = "$admin_original" ] \
+      && [ "$(timer_state "$upgrade_timer")" = "$upgrade_original" ] \
+      && [ "$(timer_state gaiop-admin-retention-cleanup.timer)" = "$(cat "$backup_root/admin-retention.timer-state")" ] \
+      && [ "$(timer_state gaiop-upgrade-retention-cleanup.timer)" = "$(cat "$backup_root/upgrade-retention.timer-state")" ] \
+      && [ "$(timer_state gaiop-storage-watermark-monitor.timer)" = "$(cat "$backup_root/watermark.timer-state")" ] \
+      && [ "$(timer_state gaiop-report-retention-cleanup.timer)" = "$(cat "$backup_root/report.timer-state")" ] \
+      && [ "$(timer_state gaiop-admin-session-retention.timer)" = "$(cat "$backup_root/session.timer-state")" ]; then
+      rollback_complete=1
+    fi
+  fi
+  set -e
+}
+
+finish() {
+  rc=$?
+  if [ "$completed" != 1 ]; then
+    rollback
+    printf 'FAILED_PHASE=%s\n' "$phase"
+    printf 'ROLLBACK_COMPLETE=%s\n' "$rollback_complete"
+    printf 'BACKUP_ROOT=%s\n' "$backup_root"
+    printf 'BACKUP_EVIDENCE_PRESERVED=%s\n' "$backup_captured"
+  fi
+  rm -rf -- "$work_root"
+  exit "$rc"
+}
+trap finish EXIT
+
+online_backup() {
+  module_path=$1
+  source_db=$2
+  destination_db=$3
+  /usr/local/bin/node - "$module_path" "$source_db" "$destination_db" <<'NODE'
+const [modulePath, source, destination] = process.argv.slice(2)
+const Database = require(modulePath)
+;(async () => {
+  const live = new Database(source, { readonly: true, fileMustExist: true })
+  try { await live.backup(destination) } finally { live.close() }
+  const copy = new Database(destination, { readonly: true, fileMustExist: true })
+  try {
+    const rows = copy.pragma('integrity_check')
+    if (!Array.isArray(rows) || rows.length !== 1 || rows[0].integrity_check !== 'ok') process.exit(21)
+  } finally { copy.close() }
+})().catch(() => process.exit(22))
+NODE
+  chmod 0600 "$destination_db"
+}
+
+source_integrity() {
+  module_path=$1
+  source_db=$2
+  /usr/local/bin/node - "$module_path" "$source_db" <<'NODE'
+const [modulePath, source] = process.argv.slice(2)
+const Database = require(modulePath)
+const db = new Database(source, { readonly: true, fileMustExist: true })
+try {
+  const rows = db.pragma('integrity_check')
+  if (!Array.isArray(rows) || rows.length !== 1 || rows[0].integrity_check !== 'ok') process.exit(1)
+} finally { db.close() }
+NODE
+}
+
+validate_disabled_one_shot() {
+  service_name=$1
+  output_file=$2
+  cursor=$(journal_cursor "$service_name")
+  test -n "$cursor"
+  systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
+  systemctl start "$service_name"
+  test "$(systemctl show "$service_name" -p Result --value)" = success
+  journalctl --sync
+  journalctl --quiet --after-cursor="$cursor" -u "$service_name" -o cat --no-pager > "$work_root/journal-disabled.log"
+  /usr/local/bin/node - "$work_root/journal-disabled.log" "$output_file" <<'NODE'
+const fs = require('node:fs')
+const [logFile, outputFile] = process.argv.slice(2)
+let selected = null
+for (const line of fs.readFileSync(logFile, 'utf8').split(/\r?\n/)) {
+  try {
+    const value = JSON.parse(line)
+    if (value && value.status === 'create_disabled') selected = value
+  } catch {}
+}
+if (!selected || selected.ok !== true || selected.cleanup?.status !== 'not_run') process.exit(1)
+fs.writeFileSync(outputFile, JSON.stringify({ ok: true, status: 'create_disabled', cleanup: 'not_run' }))
+NODE
+}
+
+journal_cursor() {
+  journalctl --sync
+  journalctl --quiet --no-pager -n 0 --show-cursor | sed -n 's/^-- cursor: //p'
+}
+
+validate_one_shot() {
+  service_name=$1
+  component=$2
+  expected_created=$3
+  output_file=$4
+  cursor=$(journal_cursor "$service_name")
+  test -n "$cursor"
+  systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
+  systemctl start "$service_name"
+  test "$(systemctl show "$service_name" -p Result --value)" = success
+  journalctl --sync
+  journalctl --quiet --after-cursor="$cursor" -u "$service_name" -o cat --no-pager > "$work_root/journal.log"
+  /usr/local/bin/node - "$work_root/journal.log" "$component" "$expected_created" "$output_file" <<'NODE'
+const fs = require('node:fs')
+const [logFile, component, expectedText, outputFile] = process.argv.slice(2)
+let selected = null
+for (const line of fs.readFileSync(logFile, 'utf8').split(/\r?\n/)) {
+  try {
+    const value = JSON.parse(line)
+    if (value && value.component === component && value.status === 'completed') selected = value
+  } catch {}
+}
+if (!selected || selected.ok !== true || selected.cleanup?.status !== 'disabled') process.exit(31)
+if (!Array.isArray(selected.created) || selected.created.length !== Number(expectedText)) process.exit(32)
+const tiers = selected.created.map((item) => item.tier).sort()
+if (Number(expectedText) === 3 && JSON.stringify(tiers) !== JSON.stringify(['daily', 'monthly', 'weekly'])) process.exit(33)
+fs.writeFileSync(outputFile, JSON.stringify({ ok: true, status: selected.status, component, created: tiers, cleanup: 'disabled' }))
+NODE
+}
+
+verify_backup_set() {
+  module_path=$1
+  backup_path=$2
+  component=$3
+  output_file=$4
+  expected_uid=$5
+  expected_gid=$6
+  /usr/local/bin/node - "$module_path" "$backup_path" "$component" "$output_file" "$expected_uid" "$expected_gid" <<'NODE'
+const crypto = require('node:crypto')
+const fs = require('node:fs')
+const path = require('node:path')
+const [modulePath, root, component, outputFile, expectedUidText, expectedGidText] = process.argv.slice(2)
+const Database = require(modulePath)
+const expectedUid = Number(expectedUidText)
+const expectedGid = Number(expectedGidText)
+function week(now) {
+  const date = new Date(now)
+  const day = date.getUTCDay() || 7
+  const thursday = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + 4 - day))
+  const yearStart = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 1))
+  return String(thursday.getUTCFullYear()) + '-W' + String(Math.ceil((((thursday - yearStart) / 86400000) + 1) / 7)).padStart(2, '0')
+}
+const now = Date.now()
+const periods = {
+  daily: new Date(now).toISOString().slice(0, 10),
+  weekly: week(now),
+  monthly: new Date(now).toISOString().slice(0, 7),
+}
+const expected = []
+for (const tier of ['daily', 'weekly', 'monthly']) {
+  expected.push(component + '-' + tier + '-' + periods[tier] + '.manifest.json')
+  expected.push(component + '-' + tier + '-' + periods[tier] + '.sqlite3')
+}
+const actual = fs.readdirSync(root).sort()
+if (JSON.stringify(actual) !== JSON.stringify(expected.sort())) process.exit(41)
+const fingerprints = []
+for (const tier of ['daily', 'weekly', 'monthly']) {
+  const base = component + '-' + tier + '-' + periods[tier]
+  const dbPath = path.join(root, base + '.sqlite3')
+  const manifestPath = path.join(root, base + '.manifest.json')
+  const dbStat = fs.lstatSync(dbPath)
+  const manifestStat = fs.lstatSync(manifestPath)
+  if (!dbStat.isFile() || dbStat.isSymbolicLink() || !manifestStat.isFile() || manifestStat.isSymbolicLink()) process.exit(42)
+  if ((dbStat.mode & 0o777) !== 0o600 || (manifestStat.mode & 0o777) !== 0o600) process.exit(43)
+  if (dbStat.uid !== expectedUid || dbStat.gid !== expectedGid || manifestStat.uid !== expectedUid || manifestStat.gid !== expectedGid) process.exit(46)
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(dbPath)).digest('hex')
+  if (manifest.policyVersion !== 'gaiop_sqlite_backup.v1' || manifest.component !== component
+    || manifest.tier !== tier || manifest.period !== periods[tier] || manifest.fileName !== path.basename(dbPath)
+    || manifest.sizeBytes !== dbStat.size || manifest.sha256 !== hash) process.exit(44)
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true })
+  try {
+    const rows = db.pragma('integrity_check')
+    if (!Array.isArray(rows) || rows.length !== 1 || rows[0].integrity_check !== 'ok') process.exit(45)
+    if (String(db.pragma('journal_mode', { simple: true })).toLowerCase() !== 'delete') process.exit(47)
+  } finally { db.close() }
+  fingerprints.push(String(dbStat.size) + ':' + hash)
+}
+if (new Set(fingerprints).size !== 1) process.exit(48)
+fs.writeFileSync(outputFile, JSON.stringify({ component, tiers: ['daily', 'weekly', 'monthly'], manifests: 3, integrity: 'ok', journalMode: 'delete', identicalSnapshots: true }))
+NODE
+}
+
+verify_restore_tiers() {
+  component=$1
+  backup_path=$2
+  restore_path=$3
+  output_file=$4
+  : > "$output_file"
+  for tier in daily weekly monthly; do
+    backup_file=$(find "$backup_path" -mindepth 1 -maxdepth 1 -type f -name "$component-$tier-*.sqlite3" -print -quit)
+    test -n "$backup_file"
+    if [ "$component" = admin ]; then
+      result=$(systemd-run --quiet --wait --pipe --collect --unit="gaiop-admin-restore-$release_id-$tier" \
+        --uid=gaiop --gid=gaiop --working-directory=/ \
+        --property=Type=oneshot --property=UMask=0077 --property=NoNewPrivileges=yes \
+        --property=PrivateTmp=yes --property=PrivateDevices=yes --property=ProtectSystem=strict --property=ProtectHome=yes \
+        --property="ReadOnlyPaths=$backup_path $admin_root/server" --property="ReadWritePaths=$restore_path" \
+        --property="InaccessiblePaths=-/var/lib/gaiop-upgrade -/var/backups/gaiop/upgrade -/var/lib/gaiop/alerts -/etc/gaiop/admin.env" \
+        env -i \
+        GAIOP_ADMIN_DATA_DIR=/var/lib/gaiop/admin \
+        GAIOP_ADMIN_SQLITE_BACKUP_DIR="$backup_path" \
+        GAIOP_ADMIN_SQLITE_RESTORE_TEST_DIR="$restore_path" \
+        /usr/local/bin/node "$admin_root/server/sqlite-restore-test.js" "$backup_file")
+    else
+      result=$(systemd-run --quiet --wait --pipe --collect --unit="gaiop-upgrade-restore-$release_id-$tier" \
+        --working-directory=/ \
+        --property=Type=oneshot --property=UMask=0077 --property=NoNewPrivileges=yes \
+        --property=PrivateTmp=yes --property=PrivateDevices=yes --property=ProtectSystem=strict --property=ProtectHome=yes \
+        --property="ReadOnlyPaths=$backup_path $upgrade_root/src" --property="ReadWritePaths=$restore_path" \
+        --property="InaccessiblePaths=-/var/lib/gaiop/admin -/var/lib/gaiop/alerts -/etc/gaiop/upgrade.env -/etc/gaiop-upgrade -/var/backups/gaiop/upgrade -/var/lib/gaiop-upgrade/packages -/var/lib/gaiop/upgrade/staging" \
+        env -i \
+        NAPM_UPGRADE_DB_PATH="$upgrade_db" \
+        GAIOP_UPGRADE_SQLITE_BACKUP_DIR="$backup_path" \
+        GAIOP_UPGRADE_SQLITE_RESTORE_TEST_DIR="$restore_path" \
+        /usr/local/bin/node "$upgrade_root/src/sqlite-restore-test.js" "$backup_file")
+    fi
+    printf '%s\n' "$result" | /usr/local/bin/node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{const v=JSON.parse(s);if(v.ok!==true||v.status!=='verified'||v.component!=='$component')process.exit(1)})"
+    printf '%s\n' "$tier" >> "$output_file"
+    test -z "$(find "$restore_path" -mindepth 1 -maxdepth 1 -print -quit)"
+  done
+}
+
+verify_effective_unit() {
+  service_name=$1
+  expected_user=$2
+  expected_group=$3
+  expected_workdir=$4
+  expected_policy=$5
+  expected_exec=$6
+  expected_rw=$7
+  expected_inaccessible=$8
+  test "$(systemctl show "$service_name" -p User --value)" = "$expected_user"
+  test "$(systemctl show "$service_name" -p Group --value)" = "$expected_group"
+  test "$(systemctl show "$service_name" -p WorkingDirectory --value)" = "$expected_workdir"
+  test "$(systemctl show "$service_name" -p EnvironmentFiles --value)" = "$expected_policy (ignore_errors=no)"
+  effective_exec=$(systemctl show "$service_name" -p ExecStart --value)
+  test "$(printf '%s' "$effective_exec" | grep -o 'path=' | wc -l | tr -d '[:space:]')" = 1
+  printf '%s' "$effective_exec" | grep -F -- 'path=/usr/local/bin/node' >/dev/null
+  printf '%s' "$effective_exec" | grep -F -- "argv[]=/usr/local/bin/node $expected_exec ;" >/dev/null
+  test "$(systemctl show "$service_name" -p RuntimeDirectory --value)" = "$(basename "$expected_workdir")"
+  test "$(systemctl show "$service_name" -p RuntimeDirectoryPreserve --value)" = no
+  test "$(systemctl show "$service_name" -p TimeoutStartUSec --value)" = 15min
+  test "$(systemctl show "$service_name" -p UMask --value)" = 0077
+  test "$(systemctl show "$service_name" -p NoNewPrivileges --value)" = yes
+  test "$(systemctl show "$service_name" -p PrivateTmp --value)" = yes
+  test "$(systemctl show "$service_name" -p PrivateDevices --value)" = yes
+  test "$(systemctl show "$service_name" -p ProtectSystem --value)" = strict
+  actual_rw=$(systemctl show "$service_name" -p ReadWritePaths --value | tr ' ' '\n' | sed '/^$/d;s/^-//' | LC_ALL=C sort | paste -sd ' ' -)
+  wanted_rw=$(printf '%s' "$expected_rw" | tr ' ' '\n' | LC_ALL=C sort | paste -sd ' ' -)
+  test "$actual_rw" = "$wanted_rw"
+  actual_hidden=$(systemctl show "$service_name" -p InaccessiblePaths --value | tr ' ' '\n' | sed '/^$/d;s/^-//' | LC_ALL=C sort | paste -sd ' ' -)
+  wanted_hidden=$(printf '%s' "$expected_inaccessible" | tr ' ' '\n' | LC_ALL=C sort | paste -sd ' ' -)
+  test "$actual_hidden" = "$wanted_hidden"
+}
+
+phase=preflight
+test "$(id -u)" = 0
+printf '%s\n' "$release_id" | grep -Eq '^[0-9]{8}T[0-9]{6}Z$'
+test ! -e "$backup_root"
+upgrade_root=$(systemctl show gaiop-upgrade.service -p WorkingDirectory --value)
+case "$upgrade_root" in /opt/gaiop/*|/opt/gaiop-*) ;; *) exit 51 ;; esac
+test -d "$admin_root"
+test -d "$upgrade_root"
+test -f "$admin_db"
+test ! -L "$admin_db"
+upgrade_db=
+for candidate in /var/lib/gaiop-upgrade/napm-upgrade.db /var/lib/gaiop-upgrade/upgrade.db /var/lib/gaiop/upgrade/napm-upgrade.db /var/lib/gaiop/upgrade/upgrade.db; do
+  if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+    test -z "$upgrade_db"
+    upgrade_db=$candidate
+  fi
+done
+test -n "$upgrade_db"
+test "$(timer_state "$admin_timer")" = 'inactive|disabled'
+test "$(timer_state "$upgrade_timer")" = 'inactive|disabled'
+test "$(timer_state gaiop-admin-retention-cleanup.timer)" = 'active|enabled'
+test "$(timer_state gaiop-upgrade-retention-cleanup.timer)" = 'active|enabled'
+test "$(timer_state gaiop-storage-watermark-monitor.timer)" = 'active|enabled'
+test "$(timer_state gaiop-report-retention-cleanup.timer)" = 'inactive|disabled'
+test "$(timer_state gaiop-admin-session-retention.timer)" = 'inactive|disabled'
+test "$(http_status http://127.0.0.1:3000/api/health)" = 200
+test "$(http_status http://127.0.0.1:18900/health)" = 200
+test "$(http_status http://127.0.0.1:18789/health)" = 200
+
+for source_file in \
+  "$admin_root/package.json" \
+  "$admin_root/server/sqlite-backup.js" \
+  "$admin_root/server/sqlite-restore-test.js" \
+  "$admin_root/server/lib/sqlite-backup-service.js" \
+  "$upgrade_root/package.json" \
+  "$upgrade_root/src/sqlite-backup.js" \
+  "$upgrade_root/src/sqlite-restore-test.js" \
+  "$upgrade_root/src/services/SqliteBackupService.js" \
+  "$upgrade_root/src/config.js"; do
+  test -f "$source_file"
+  test ! -L "$source_file"
+done
+test "$(sha256sum "$admin_root/server/sqlite-backup.js" | awk '{print $1}')" = '${expected.adminBackup}'
+test "$(/usr/local/bin/node -p \"require('$admin_root/package.json').type || ''\")" = module
+test "$(sha256sum "$admin_root/server/sqlite-restore-test.js" | awk '{print $1}')" = '${expected.adminRestore}'
+test "$(sha256sum "$admin_root/server/lib/sqlite-backup-service.js" | awk '{print $1}')" = '${expected.adminLibrary}'
+test "$(sha256sum "$upgrade_root/src/sqlite-backup.js" | awk '{print $1}')" = '${expected.upgradeBackup}'
+test "$(sha256sum "$upgrade_root/src/sqlite-restore-test.js" | awk '{print $1}')" = '${expected.upgradeRestore}'
+test "$(sha256sum "$upgrade_root/src/services/SqliteBackupService.js" | awk '{print $1}')" = '${expected.upgradeLibrary}'
+test "$(sha256sum "$upgrade_root/src/config.js" | awk '{print $1}')" = '${expected.upgradeConfig}'
+test "$(sha256sum "$upgrade_root/package.json" | awk '{print $1}')" = '${expected.upgradePackage}'
+test "$(normalized_sha "$admin_service_file")" = '${expected.adminService}'
+test "$(normalized_sha "$admin_timer_file")" = '${expected.adminTimer}'
+test "$(normalized_sha "$upgrade_timer_file")" = '${expected.upgradeTimer}'
+for dependency_dir in \
+  "$admin_root/node_modules/better-sqlite3" "$admin_root/node_modules/bindings" "$admin_root/node_modules/file-uri-to-path" \
+  "$upgrade_root/node_modules/better-sqlite3" "$upgrade_root/node_modules/bindings" "$upgrade_root/node_modules/file-uri-to-path" "$upgrade_root/node_modules/dotenv"; do
+  test -d "$dependency_dir"
+  test ! -L "$dependency_dir"
+  test -z "$(find "$dependency_dir" -perm /0022 -print -quit)"
+done
+phase=capacity_and_source_integrity
+source_integrity "$admin_root/node_modules/better-sqlite3" "$admin_db"
+source_integrity "$upgrade_root/node_modules/better-sqlite3" "$upgrade_db"
+source_bytes=0
+for source_file in "$admin_db" "$admin_db-wal" "$admin_db-shm" "$upgrade_db" "$upgrade_db-wal" "$upgrade_db-shm"; do
+  if [ -f "$source_file" ]; then source_bytes=$(( source_bytes + $(stat -c '%s' "$source_file") )); fi
+done
+required_bytes=$(( source_bytes * 60 + 104857600 ))
+available_bytes=$(df -PB1 /var/backups/gaiop | awk 'NR == 2 {print $4}')
+test "$available_bytes" -gt "$required_bytes"
+for managed_dir in "$admin_backup_root" "$admin_restore_root" "$upgrade_backup_root" "$upgrade_restore_root"; do
+  if [ -e "$managed_dir" ] || [ -L "$managed_dir" ]; then
+    test -d "$managed_dir"
+    test ! -L "$managed_dir"
+    test -z "$(find "$managed_dir" -mindepth 1 -maxdepth 1 -print -quit)"
+  fi
+done
+
+phase=capture
+install -d -o root -g root -m 0700 "$backup_root"
+capture_file "$admin_service_file" admin.service
+capture_file "$admin_timer_file" admin.timer
+capture_file "$admin_dropin_file" admin.dropin
+capture_file "$admin_policy" admin.policy
+capture_file "$upgrade_service_file" upgrade.service
+capture_file "$upgrade_timer_file" upgrade.timer
+capture_file "$upgrade_dropin_file" upgrade.dropin
+capture_file "$upgrade_policy" upgrade.policy
+timer_state "$admin_timer" > "$backup_root/admin.timer-state"
+timer_state "$upgrade_timer" > "$backup_root/upgrade.timer-state"
+timer_state gaiop-admin-retention-cleanup.timer > "$backup_root/admin-retention.timer-state"
+timer_state gaiop-upgrade-retention-cleanup.timer > "$backup_root/upgrade-retention.timer-state"
+timer_state gaiop-storage-watermark-monitor.timer > "$backup_root/watermark.timer-state"
+timer_state gaiop-report-retention-cleanup.timer > "$backup_root/report.timer-state"
+timer_state gaiop-admin-session-retention.timer > "$backup_root/session.timer-state"
+for mode_entry in "$upgrade_db:upgrade-database" "$upgrade_db-wal:upgrade-database-wal" "$upgrade_db-shm:upgrade-database-shm"; do
+  mode_path=$(printf '%s' "$mode_entry" | cut -d: -f1)
+  mode_label=$(printf '%s' "$mode_entry" | cut -d: -f2)
+  if [ -e "$mode_path" ]; then
+    test -f "$mode_path"
+    test ! -L "$mode_path"
+    stat -c '%a' "$mode_path" > "$backup_root/$mode_label.mode"
+  else
+    : > "$backup_root/$mode_label.absent"
+  fi
+done
+backup_captured=1
+
+phase=database_safety_backups
+online_backup "$admin_root/node_modules/better-sqlite3" "$admin_db" "$backup_root/wizard.db.before-enable"
+online_backup "$upgrade_root/node_modules/better-sqlite3" "$upgrade_db" "$backup_root/upgrade.db.before-enable"
+
+phase=trusted_tree_permissions
+stat -c '%n|%U|%G|%a' \
+  "$admin_root" "$admin_root/package.json" "$admin_root/server" "$admin_root/server/lib" \
+  "$admin_root/server/sqlite-backup.js" "$admin_root/server/sqlite-restore-test.js" "$admin_root/server/lib/sqlite-backup-service.js" \
+  "$upgrade_root" "$upgrade_root/package.json" "$upgrade_root/src" "$upgrade_root/src/services" \
+  "$upgrade_root/src/sqlite-backup.js" "$upgrade_root/src/sqlite-restore-test.js" "$upgrade_root/src/services/SqliteBackupService.js" "$upgrade_root/src/config.js" \
+  > "$backup_root/trusted-tree-modes.before"
+chmod 0600 "$backup_root/trusted-tree-modes.before"
+chmod go-w "$admin_root" "$admin_root/server" "$admin_root/server/lib" \
+  "$admin_root/package.json" "$admin_root/server/sqlite-backup.js" "$admin_root/server/sqlite-restore-test.js" "$admin_root/server/lib/sqlite-backup-service.js"
+chmod go-w "$upgrade_root" "$upgrade_root/src" "$upgrade_root/src/services" \
+  "$upgrade_root/package.json" "$upgrade_root/src/sqlite-backup.js" "$upgrade_root/src/sqlite-restore-test.js" "$upgrade_root/src/services/SqliteBackupService.js" "$upgrade_root/src/config.js"
+for trusted_path in \
+  "$admin_root" "$admin_root/package.json" "$admin_root/server" "$admin_root/server/lib" \
+  "$admin_root/server/sqlite-backup.js" "$admin_root/server/sqlite-restore-test.js" "$admin_root/server/lib/sqlite-backup-service.js" \
+  "$upgrade_root" "$upgrade_root/package.json" "$upgrade_root/src" "$upgrade_root/src/services" \
+  "$upgrade_root/src/sqlite-backup.js" "$upgrade_root/src/sqlite-restore-test.js" "$upgrade_root/src/services/SqliteBackupService.js" "$upgrade_root/src/config.js"; do
+  test -z "$(find "$trusted_path" -maxdepth 0 -perm /0022 -print -quit)"
+done
+printf 'go-w\n' > "$backup_root/trusted-tree-permission-tightening"
+
+phase=upgrade_database_permissions
+for database_file in "$upgrade_db" "$upgrade_db-wal" "$upgrade_db-shm"; do
+  if [ -e "$database_file" ]; then
+    test -f "$database_file"
+    test ! -L "$database_file"
+    chmod 0640 "$database_file"
+    test "$(stat -c '%a' "$database_file")" = 640
+  fi
+done
+test "$(http_status http://127.0.0.1:18900/health)" = 200
+
+phase=install_policy
+install -d -o gaiop -g gaiop -m 0700 "$admin_backup_root" "$admin_restore_root"
+install -d -o root -g root -m 0700 "$upgrade_backup_root" "$upgrade_restore_root"
+cat > "$work_root/admin.policy" <<EOF
+GAIOP_ADMIN_DATA_DIR=/var/lib/gaiop/admin
+GAIOP_ADMIN_SQLITE_BACKUP_DIR=$admin_backup_root
+GAIOP_ADMIN_SQLITE_RESTORE_TEST_DIR=$admin_restore_root
+GAIOP_ADMIN_SQLITE_BACKUP_LOCK_PATH=/run/gaiop-admin-sqlite-backup/backup.lock
+GAIOP_ADMIN_SQLITE_BACKUP_CREATE_ENABLED=false
+GAIOP_ADMIN_SQLITE_BACKUP_CLEANUP_ENABLED=false
+EOF
+cat > "$work_root/upgrade.policy" <<EOF
+NAPM_UPGRADE_DB_PATH=$upgrade_db
+GAIOP_UPGRADE_SQLITE_BACKUP_DIR=$upgrade_backup_root
+GAIOP_UPGRADE_SQLITE_RESTORE_TEST_DIR=$upgrade_restore_root
+GAIOP_UPGRADE_SQLITE_BACKUP_LOCK_PATH=/run/gaiop-upgrade-sqlite-backup/backup.lock
+GAIOP_UPGRADE_SQLITE_BACKUP_CREATE_ENABLED=false
+GAIOP_UPGRADE_SQLITE_BACKUP_CLEANUP_ENABLED=false
+EOF
+install -o root -g gaiop -m 0640 "$work_root/admin.policy" "$admin_policy"
+install -o root -g root -m 0600 "$work_root/upgrade.policy" "$upgrade_policy"
+
+install -d -o root -g root -m 0755 "$admin_dropin_dir" "$upgrade_dropin_dir"
+cat > "$work_root/admin.dropin" <<EOF
+[Service]
+WorkingDirectory=/run/gaiop-admin-sqlite-backup
+EnvironmentFile=
+EnvironmentFile=$admin_policy
+ExecStart=
+ExecStart=/usr/local/bin/node $admin_root/server/sqlite-backup.js
+RuntimeDirectory=gaiop-admin-sqlite-backup
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=no
+TimeoutStartSec=15min
+ReadWritePaths=
+ReadWritePaths=$admin_backup_root
+ReadWritePaths=/run/gaiop-admin-sqlite-backup
+InaccessiblePaths=
+InaccessiblePaths=-/var/lib/gaiop-upgrade
+InaccessiblePaths=-/var/backups/gaiop/upgrade
+InaccessiblePaths=-/var/lib/gaiop/alerts
+InaccessiblePaths=-/etc/gaiop/admin.env
+EOF
+cat > "$work_root/upgrade.dropin" <<EOF
+[Service]
+WorkingDirectory=/run/gaiop-upgrade-sqlite-backup
+EnvironmentFile=
+EnvironmentFile=$upgrade_policy
+ExecStart=
+ExecStart=/usr/local/bin/node $upgrade_root/src/sqlite-backup.js
+RuntimeDirectory=gaiop-upgrade-sqlite-backup
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=no
+TimeoutStartSec=15min
+ReadWritePaths=
+ReadWritePaths=$upgrade_backup_root
+ReadWritePaths=/run/gaiop-upgrade-sqlite-backup
+InaccessiblePaths=
+InaccessiblePaths=-/var/lib/gaiop/admin
+InaccessiblePaths=-/var/lib/gaiop/alerts
+InaccessiblePaths=-/etc/gaiop/upgrade.env
+InaccessiblePaths=-/etc/gaiop-upgrade
+InaccessiblePaths=-/var/backups/gaiop/upgrade
+InaccessiblePaths=-/var/lib/gaiop-upgrade/packages
+InaccessiblePaths=-/var/lib/gaiop/upgrade/staging
+EOF
+install -o root -g root -m 0644 "$work_root/admin.dropin" "$admin_dropin_file"
+install -o root -g root -m 0644 "$work_root/upgrade.dropin" "$upgrade_dropin_file"
+systemctl daemon-reload
+
+phase=unit_validation
+systemd-analyze verify "$admin_service" "$admin_timer" "$upgrade_service" "$upgrade_timer"
+verify_effective_unit "$admin_service" gaiop gaiop /run/gaiop-admin-sqlite-backup "$admin_policy" \
+  "$admin_root/server/sqlite-backup.js" \
+  "$admin_backup_root /run/gaiop-admin-sqlite-backup" \
+  '/var/lib/gaiop-upgrade /var/backups/gaiop/upgrade /var/lib/gaiop/alerts /etc/gaiop/admin.env'
+verify_effective_unit "$upgrade_service" root root /run/gaiop-upgrade-sqlite-backup "$upgrade_policy" \
+  "$upgrade_root/src/sqlite-backup.js" \
+  "$upgrade_backup_root /run/gaiop-upgrade-sqlite-backup" \
+  '/var/lib/gaiop/admin /var/lib/gaiop/alerts /etc/gaiop/upgrade.env /etc/gaiop-upgrade /var/backups/gaiop/upgrade /var/lib/gaiop-upgrade/packages /var/lib/gaiop/upgrade/staging'
+test "$(stat -c '%U:%G:%a' "$admin_policy")" = 'root:gaiop:640'
+test "$(stat -c '%U:%G:%a' "$upgrade_policy")" = 'root:root:600'
+
+phase=closed_one_shot
+validate_disabled_one_shot "$admin_service" "$work_root/admin-disabled.json"
+validate_disabled_one_shot "$upgrade_service" "$work_root/upgrade-disabled.json"
+test -z "$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -print -quit)"
+test -z "$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -print -quit)"
+
+phase=enable_creation_policy
+sed 's/GAIOP_ADMIN_SQLITE_BACKUP_CREATE_ENABLED=false/GAIOP_ADMIN_SQLITE_BACKUP_CREATE_ENABLED=true/' "$work_root/admin.policy" > "$work_root/admin.policy.enabled"
+sed 's/GAIOP_UPGRADE_SQLITE_BACKUP_CREATE_ENABLED=false/GAIOP_UPGRADE_SQLITE_BACKUP_CREATE_ENABLED=true/' "$work_root/upgrade.policy" > "$work_root/upgrade.policy.enabled"
+admin_policy_candidate=$(mktemp /etc/gaiop/.admin-sqlite-backup.policy.XXXXXX)
+upgrade_policy_candidate=$(mktemp /etc/gaiop/.upgrade-sqlite-backup.policy.XXXXXX)
+install -o root -g gaiop -m 0640 "$work_root/admin.policy.enabled" "$admin_policy_candidate"
+install -o root -g root -m 0600 "$work_root/upgrade.policy.enabled" "$upgrade_policy_candidate"
+mv -f -- "$admin_policy_candidate" "$admin_policy"
+mv -f -- "$upgrade_policy_candidate" "$upgrade_policy"
+grep -Fx 'GAIOP_ADMIN_SQLITE_BACKUP_CREATE_ENABLED=true' "$admin_policy" >/dev/null
+grep -Fx 'GAIOP_ADMIN_SQLITE_BACKUP_CLEANUP_ENABLED=false' "$admin_policy" >/dev/null
+grep -Fx 'GAIOP_UPGRADE_SQLITE_BACKUP_CREATE_ENABLED=true' "$upgrade_policy" >/dev/null
+grep -Fx 'GAIOP_UPGRADE_SQLITE_BACKUP_CLEANUP_ENABLED=false' "$upgrade_policy" >/dev/null
+
+phase=first_enabled_one_shot
+validate_one_shot "$admin_service" admin 3 "$work_root/admin-first.json"
+validate_one_shot "$upgrade_service" upgrade 3 "$work_root/upgrade-first.json"
+admin_uid=$(id -u gaiop)
+admin_gid=$(id -g gaiop)
+verify_backup_set "$admin_root/node_modules/better-sqlite3" "$admin_backup_root" admin "$work_root/admin-set.json" "$admin_uid" "$admin_gid"
+verify_backup_set "$upgrade_root/node_modules/better-sqlite3" "$upgrade_backup_root" upgrade "$work_root/upgrade-set.json" 0 0
+
+phase=restore_validation
+verify_restore_tiers admin "$admin_backup_root" "$admin_restore_root" "$work_root/admin-restores.txt"
+verify_restore_tiers upgrade "$upgrade_backup_root" "$upgrade_restore_root" "$work_root/upgrade-restores.txt"
+test "$(wc -l < "$work_root/admin-restores.txt" | tr -d '[:space:]')" = 3
+test "$(wc -l < "$work_root/upgrade-restores.txt" | tr -d '[:space:]')" = 3
+
+phase=enable_timers
+systemctl enable --now "$admin_timer" "$upgrade_timer"
+test "$(timer_state "$admin_timer")" = 'active|enabled'
+test "$(timer_state "$upgrade_timer")" = 'active|enabled'
+for one_shot in "$admin_service" "$upgrade_service"; do
+  for attempt in $(seq 1 60); do
+    state=$(systemctl is-active "$one_shot" 2>/dev/null || true)
+    [ "$state" = inactive ] && break
+    [ "$state" = failed ] && exit 61
+    sleep 1
+  done
+  test "$(systemctl is-active "$one_shot" 2>/dev/null || true)" = inactive
+done
+
+phase=enabled_one_shot
+admin_tree_before=$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -type f -printf '%f %s\n' | LC_ALL=C sort | sha256sum | awk '{print $1}')
+upgrade_tree_before=$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -type f -printf '%f %s\n' | LC_ALL=C sort | sha256sum | awk '{print $1}')
+validate_one_shot "$admin_service" admin 0 "$work_root/admin-second.json"
+validate_one_shot "$upgrade_service" upgrade 0 "$work_root/upgrade-second.json"
+test "$admin_tree_before" = "$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -type f -printf '%f %s\n' | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+test "$upgrade_tree_before" = "$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -type f -printf '%f %s\n' | LC_ALL=C sort | sha256sum | awk '{print $1}')"
+verify_backup_set "$admin_root/node_modules/better-sqlite3" "$admin_backup_root" admin "$work_root/admin-final-set.json" "$admin_uid" "$admin_gid"
+verify_backup_set "$upgrade_root/node_modules/better-sqlite3" "$upgrade_backup_root" upgrade "$work_root/upgrade-final-set.json" 0 0
+
+phase=final_validation
+source_integrity "$admin_root/node_modules/better-sqlite3" "$admin_db"
+source_integrity "$upgrade_root/node_modules/better-sqlite3" "$upgrade_db"
+for database_file in "$upgrade_db" "$upgrade_db-wal" "$upgrade_db-shm"; do
+  if [ -e "$database_file" ]; then test "$(stat -c '%a' "$database_file")" = 640; fi
+done
+test "$(timer_state gaiop-admin-retention-cleanup.timer)" = 'active|enabled'
+test "$(timer_state gaiop-upgrade-retention-cleanup.timer)" = 'active|enabled'
+test "$(timer_state gaiop-storage-watermark-monitor.timer)" = 'active|enabled'
+test "$(timer_state gaiop-report-retention-cleanup.timer)" = 'inactive|disabled'
+test "$(timer_state gaiop-admin-session-retention.timer)" = 'inactive|disabled'
+admin_next=$(systemctl show "$admin_timer" -p NextElapseUSecRealtime --value)
+upgrade_next=$(systemctl show "$upgrade_timer" -p NextElapseUSecRealtime --value)
+test -n "$admin_next"
+test "$admin_next" != n/a
+test -n "$upgrade_next"
+test "$upgrade_next" != n/a
+test "$(http_status http://127.0.0.1:3000/api/health)" = 200
+test "$(http_status http://127.0.0.1:18900/health)" = 200
+test "$(http_status http://127.0.0.1:18789/health)" = 200
+test "$(http_status http://127.0.0.1:18900/api/v1/upgrade/status)" = 401
+
+printf 'RELEASE_ID=%s\n' "$release_id"
+printf 'BACKUP_ROOT=%s\n' "$backup_root"
+printf 'DATABASE_BACKUP_INTEGRITY=ok\n'
+printf 'CAPACITY_AVAILABLE_BYTES=%s\n' "$available_bytes"
+printf 'CAPACITY_REQUIRED_BYTES=%s\n' "$required_bytes"
+printf 'TRUSTED_TREE_PERMISSIONS=go-w\n'
+printf 'UPGRADE_DATABASE_PERMISSIONS=640\n'
+printf 'ADMIN_DISABLED_B64=%s\n' "$(base64 -w 0 "$work_root/admin-disabled.json")"
+printf 'UPGRADE_DISABLED_B64=%s\n' "$(base64 -w 0 "$work_root/upgrade-disabled.json")"
+printf 'ADMIN_FIRST_B64=%s\n' "$(base64 -w 0 "$work_root/admin-first.json")"
+printf 'UPGRADE_FIRST_B64=%s\n' "$(base64 -w 0 "$work_root/upgrade-first.json")"
+printf 'ADMIN_SECOND_B64=%s\n' "$(base64 -w 0 "$work_root/admin-second.json")"
+printf 'UPGRADE_SECOND_B64=%s\n' "$(base64 -w 0 "$work_root/upgrade-second.json")"
+printf 'ADMIN_SET_B64=%s\n' "$(base64 -w 0 "$work_root/admin-final-set.json")"
+printf 'UPGRADE_SET_B64=%s\n' "$(base64 -w 0 "$work_root/upgrade-final-set.json")"
+printf 'ADMIN_RESTORE_TIERS=3\n'
+printf 'UPGRADE_RESTORE_TIERS=3\n'
+printf 'ADMIN_TIMER=%s\n' "$(timer_state "$admin_timer")"
+printf 'UPGRADE_TIMER=%s\n' "$(timer_state "$upgrade_timer")"
+printf 'ADMIN_NEXT=%s\n' "$admin_next"
+printf 'UPGRADE_NEXT=%s\n' "$upgrade_next"
+printf 'ADMIN_RETENTION_TIMER=%s\n' "$(timer_state gaiop-admin-retention-cleanup.timer)"
+printf 'UPGRADE_RETENTION_TIMER=%s\n' "$(timer_state gaiop-upgrade-retention-cleanup.timer)"
+printf 'WATERMARK_TIMER=%s\n' "$(timer_state gaiop-storage-watermark-monitor.timer)"
+printf 'REPORT_TIMER=%s\n' "$(timer_state gaiop-report-retention-cleanup.timer)"
+printf 'SESSION_TIMER=%s\n' "$(timer_state gaiop-admin-session-retention.timer)"
+printf 'ADMIN_HEALTH=%s\n' "$(http_status http://127.0.0.1:3000/api/health)"
+printf 'UPGRADE_HEALTH=%s\n' "$(http_status http://127.0.0.1:18900/health)"
+printf 'UPGRADE_UNAUTHENTICATED=%s\n' "$(http_status http://127.0.0.1:18900/api/v1/upgrade/status)"
+printf 'GATEWAY_HEALTH=%s\n' "$(http_status http://127.0.0.1:18789/health)"
+printf 'ADMIN_DROPIN_SHA256=%s\n' "$(sha256sum "$admin_dropin_file" | awk '{print $1}')"
+printf 'UPGRADE_DROPIN_SHA256=%s\n' "$(sha256sum "$upgrade_dropin_file" | awk '{print $1}')"
+printf 'ADMIN_POLICY_SHA256=%s\n' "$(sha256sum "$admin_policy" | awk '{print $1}')"
+printf 'UPGRADE_POLICY_SHA256=%s\n' "$(sha256sum "$upgrade_policy" | awk '{print $1}')"
+completed=1
+printf 'SQLITE_BACKUP_ENABLE_COMPLETE=1\n'
+`
+}
+
+function sqliteBackupPostcheckRollbackScript(values) {
+  const hashes = [values.ADMIN_DROPIN_SHA256, values.UPGRADE_DROPIN_SHA256, values.ADMIN_POLICY_SHA256, values.UPGRADE_POLICY_SHA256]
+  if (!hashes.every((value) => /^[a-f0-9]{64}$/.test(String(value || '')))) {
+    throw new Error('The SQLite backup postcheck rollback identity is incomplete.')
+  }
+  return String.raw`set -euo pipefail
+release_id='${releaseId}'
+backup_root=/var/backups/gaiop/sqlite-backup-enable-$release_id
+admin_service=gaiop-admin-sqlite-backup.service
+admin_timer=gaiop-admin-sqlite-backup.timer
+admin_service_file=/etc/systemd/system/gaiop-admin-sqlite-backup.service
+admin_timer_file=/etc/systemd/system/gaiop-admin-sqlite-backup.timer
+admin_dropin_dir=/etc/systemd/system/gaiop-admin-sqlite-backup.service.d
+admin_dropin_file=$admin_dropin_dir/99-gaiop-sqlite-backup-production.conf
+admin_policy=/etc/gaiop/admin-sqlite-backup.policy
+upgrade_service=gaiop-upgrade-sqlite-backup.service
+upgrade_timer=gaiop-upgrade-sqlite-backup.timer
+upgrade_service_file=/etc/systemd/system/gaiop-upgrade-sqlite-backup.service
+upgrade_timer_file=/etc/systemd/system/gaiop-upgrade-sqlite-backup.timer
+upgrade_dropin_dir=/etc/systemd/system/gaiop-upgrade-sqlite-backup.service.d
+upgrade_dropin_file=$upgrade_dropin_dir/99-gaiop-sqlite-backup-production.conf
+upgrade_policy=/etc/gaiop/upgrade-sqlite-backup.policy
+
+timer_state() {
+  active=$(systemctl is-active "$1" 2>/dev/null || true)
+  enabled=$(systemctl is-enabled "$1" 2>/dev/null || true)
+  printf '%s|%s' "$active" "$enabled"
+}
+
+restore_file() {
+  target=$1
+  label=$2
+  if [ -f "$backup_root/$label" ]; then
+    install -d -o root -g root -m 0755 "$(dirname "$target")"
+    rm -f -- "$target"
+    cp -a -- "$backup_root/$label" "$target"
+  else
+    test -f "$backup_root/$label.absent"
+    rm -f -- "$target"
+  fi
+}
+
+restore_timer() {
+  unit=$1
+  state=$2
+  systemctl disable --now "$unit" >/dev/null 2>&1 || true
+  case "$state" in
+    active\|enabled) systemctl enable --now "$unit" >/dev/null ;;
+    inactive\|enabled) systemctl enable "$unit" >/dev/null ;;
+    active\|disabled) systemctl start "$unit" >/dev/null ;;
+    inactive\|disabled) ;;
+    *) exit 71 ;;
+  esac
+  test "$(timer_state "$unit")" = "$state"
+}
+
+test "$(id -u)" = 0
+test -d "$backup_root"
+test ! -L "$backup_root"
+test "$(stat -c '%U:%G:%a' "$backup_root")" = 'root:root:700'
+test "$(sha256sum "$admin_dropin_file" | awk '{print $1}')" = '${values.ADMIN_DROPIN_SHA256}'
+test "$(sha256sum "$upgrade_dropin_file" | awk '{print $1}')" = '${values.UPGRADE_DROPIN_SHA256}'
+test "$(sha256sum "$admin_policy" | awk '{print $1}')" = '${values.ADMIN_POLICY_SHA256}'
+test "$(sha256sum "$upgrade_policy" | awk '{print $1}')" = '${values.UPGRADE_POLICY_SHA256}'
+
+upgrade_db=
+for candidate in /var/lib/gaiop-upgrade/napm-upgrade.db /var/lib/gaiop-upgrade/upgrade.db /var/lib/gaiop/upgrade/napm-upgrade.db /var/lib/gaiop/upgrade/upgrade.db; do
+  if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+    test -z "$upgrade_db"
+    upgrade_db=$candidate
+  fi
+done
+test -n "$upgrade_db"
+
+systemctl disable --now "$admin_timer" "$upgrade_timer" >/dev/null 2>&1 || true
+systemctl stop "$admin_service" "$upgrade_service" >/dev/null 2>&1 || true
+restore_file "$admin_service_file" admin.service
+restore_file "$admin_timer_file" admin.timer
+restore_file "$admin_dropin_file" admin.dropin
+restore_file "$admin_policy" admin.policy
+restore_file "$upgrade_service_file" upgrade.service
+restore_file "$upgrade_timer_file" upgrade.timer
+restore_file "$upgrade_dropin_file" upgrade.dropin
+restore_file "$upgrade_policy" upgrade.policy
+rmdir "$admin_dropin_dir" >/dev/null 2>&1 || true
+rmdir "$upgrade_dropin_dir" >/dev/null 2>&1 || true
+for mode_entry in "$upgrade_db:upgrade-database" "$upgrade_db-wal:upgrade-database-wal" "$upgrade_db-shm:upgrade-database-shm"; do
+  mode_path=$(printf '%s' "$mode_entry" | cut -d: -f1)
+  mode_label=$(printf '%s' "$mode_entry" | cut -d: -f2)
+  if [ -f "$backup_root/$mode_label.mode" ]; then
+    if [ -e "$mode_path" ]; then
+      test ! -L "$mode_path"
+      chmod "$(cat "$backup_root/$mode_label.mode")" "$mode_path"
+    fi
+  else
+    test -f "$backup_root/$mode_label.absent"
+  fi
+done
+systemctl daemon-reload
+admin_original=$(cat "$backup_root/admin.timer-state")
+upgrade_original=$(cat "$backup_root/upgrade.timer-state")
+restore_timer "$admin_timer" "$admin_original"
+restore_timer "$upgrade_timer" "$upgrade_original"
+
+for restored_entry in \
+  "$admin_service_file:admin.service" "$admin_timer_file:admin.timer" \
+  "$admin_dropin_file:admin.dropin" "$admin_policy:admin.policy" \
+  "$upgrade_service_file:upgrade.service" "$upgrade_timer_file:upgrade.timer" \
+  "$upgrade_dropin_file:upgrade.dropin" "$upgrade_policy:upgrade.policy"; do
+  restored_path=$(printf '%s' "$restored_entry" | cut -d: -f1)
+  restored_label=$(printf '%s' "$restored_entry" | cut -d: -f2)
+  if [ -f "$backup_root/$restored_label" ]; then
+    cmp -s "$backup_root/$restored_label" "$restored_path"
+  else
+    test -f "$backup_root/$restored_label.absent"
+    test ! -e "$restored_path"
+    test ! -L "$restored_path"
+  fi
+done
+test "$(timer_state "$admin_timer")" = "$admin_original"
+test "$(timer_state "$upgrade_timer")" = "$upgrade_original"
+test "$(timer_state gaiop-admin-retention-cleanup.timer)" = "$(cat "$backup_root/admin-retention.timer-state")"
+test "$(timer_state gaiop-upgrade-retention-cleanup.timer)" = "$(cat "$backup_root/upgrade-retention.timer-state")"
+test "$(timer_state gaiop-storage-watermark-monitor.timer)" = "$(cat "$backup_root/watermark.timer-state")"
+test "$(timer_state gaiop-report-retention-cleanup.timer)" = "$(cat "$backup_root/report.timer-state")"
+test "$(timer_state gaiop-admin-session-retention.timer)" = "$(cat "$backup_root/session.timer-state")"
+
+printf 'POSTCHECK_ROLLBACK_COMPLETE=1\n'
+printf 'BACKUP_EVIDENCE_PRESERVED=1\n'
+printf 'BACKUP_ROOT=%s\n' "$backup_root"
+printf 'ADMIN_TIMER=%s\n' "$(timer_state "$admin_timer")"
+printf 'UPGRADE_TIMER=%s\n' "$(timer_state "$upgrade_timer")"
+printf 'ADMIN_HEALTH=%s\n' "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3000/api/health 2>/dev/null || printf 000)"
+printf 'UPGRADE_HEALTH=%s\n' "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:18900/health 2>/dev/null || printf 000)"
+`
+}
+
+async function enableSqliteBackups(client) {
+  const publicHttpsBefore = await publicHttpsStatus()
+  if (publicHttpsBefore !== 200) {
+    return {
+      completed: false,
+      mode: 'enable-sqlite-backups',
+      errorCode: 'SQLITE_BACKUP_PUBLIC_PREFLIGHT_FAILED',
+      failedPhase: 'public_https_preflight',
+      rollbackComplete: true,
+      health: { httpsPublicBefore: publicHttpsBefore, httpsPublicAfter: null },
+    }
+  }
+  const expected = {
+    adminBackup: await sha256(join(adminSourceRoot, 'server', 'sqlite-backup.js')),
+    adminRestore: await sha256(join(adminSourceRoot, 'server', 'sqlite-restore-test.js')),
+    adminLibrary: await sha256(join(adminSourceRoot, 'server', 'lib', 'sqlite-backup-service.js')),
+    adminService: sha256NormalizedText(join(adminSourceRoot, 'deploy', 'systemd', 'gaiop-admin-sqlite-backup.service')),
+    adminTimer: sha256NormalizedText(join(adminSourceRoot, 'deploy', 'systemd', 'gaiop-admin-sqlite-backup.timer')),
+    upgradeBackup: await sha256(join(upgradeSourceRoot, 'src', 'sqlite-backup.js')),
+    upgradePackage: await sha256(join(upgradeSourceRoot, 'package.json')),
+    upgradeRestore: await sha256(join(upgradeSourceRoot, 'src', 'sqlite-restore-test.js')),
+    upgradeLibrary: await sha256(join(upgradeSourceRoot, 'src', 'services', 'SqliteBackupService.js')),
+    upgradeConfig: await sha256(join(upgradeSourceRoot, 'src', 'config.js')),
+    upgradeService: sha256NormalizedText(join(upgradeSourceRoot, 'deploy', 'systemd', 'gaiop-upgrade-sqlite-backup.service')),
+    upgradeTimer: sha256NormalizedText(join(upgradeSourceRoot, 'deploy', 'systemd', 'gaiop-upgrade-sqlite-backup.timer')),
+  }
+  const remote = await runValidatedSudoScript(client, sqliteBackupEnableScript(expected))
+  const values = parseKeyValues(remote.output)
+  const publicHttpsAfter = await publicHttpsStatus()
+  const remoteCompleted = remote.ok && values.SQLITE_BACKUP_ENABLE_COMPLETE === '1'
+  let postcheckRollback = null
+  let postcheckValues = {}
+  let publicHttpsAfterRollback = null
+  if (remoteCompleted && publicHttpsAfter !== 200) {
+    postcheckRollback = await runValidatedSudoScript(client, sqliteBackupPostcheckRollbackScript(values))
+    postcheckValues = parseKeyValues(postcheckRollback.output)
+    publicHttpsAfterRollback = await publicHttpsStatus()
+  }
+  const completed = remoteCompleted && publicHttpsAfter === 200
+  return {
+    completed,
+    mode: 'enable-sqlite-backups',
+    errorCode: completed ? null : 'SQLITE_BACKUP_ENABLE_FAILED',
+    failedPhase: completed
+      ? null
+      : (remoteCompleted && publicHttpsAfter !== 200 ? 'public_https_postcheck' : (values.FAILED_PHASE || 'remote_script')),
+    rollbackComplete: completed
+      ? false
+      : (postcheckRollback
+          ? postcheckRollback.ok && postcheckValues.POSTCHECK_ROLLBACK_COMPLETE === '1'
+          : values.ROLLBACK_COMPLETE === '1'),
+    releaseId: values.RELEASE_ID || releaseId,
+    rollbackPoint: values.BACKUP_ROOT || null,
+    backupEvidencePreserved: postcheckValues.BACKUP_EVIDENCE_PRESERVED === '1'
+      || values.BACKUP_EVIDENCE_PRESERVED === '1',
+    databaseBackupIntegrity: values.DATABASE_BACKUP_INTEGRITY || null,
+    capacityGate: {
+      availableBytes: Number(values.CAPACITY_AVAILABLE_BYTES || 0),
+      requiredBytes: Number(values.CAPACITY_REQUIRED_BYTES || 0),
+    },
+    trustedTreePermissions: values.TRUSTED_TREE_PERMISSIONS || null,
+    upgradeDatabasePermissions: values.UPGRADE_DATABASE_PERMISSIONS || null,
+    validation: {
+      adminDisabled: parseBase64Json(values.ADMIN_DISABLED_B64, null),
+      upgradeDisabled: parseBase64Json(values.UPGRADE_DISABLED_B64, null),
+      adminFirst: parseBase64Json(values.ADMIN_FIRST_B64, null),
+      upgradeFirst: parseBase64Json(values.UPGRADE_FIRST_B64, null),
+      adminSecond: parseBase64Json(values.ADMIN_SECOND_B64, null),
+      upgradeSecond: parseBase64Json(values.UPGRADE_SECOND_B64, null),
+      adminBackupSet: parseBase64Json(values.ADMIN_SET_B64, null),
+      upgradeBackupSet: parseBase64Json(values.UPGRADE_SET_B64, null),
+      adminRestoreTiers: Number(values.ADMIN_RESTORE_TIERS || 0),
+      upgradeRestoreTiers: Number(values.UPGRADE_RESTORE_TIERS || 0),
+    },
+    timers: {
+      adminSqlite: parseTimer(postcheckValues.ADMIN_TIMER || values.ADMIN_TIMER),
+      upgradeSqlite: parseTimer(postcheckValues.UPGRADE_TIMER || values.UPGRADE_TIMER),
+      adminNextTrigger: values.ADMIN_NEXT || null,
+      upgradeNextTrigger: values.UPGRADE_NEXT || null,
+      adminRetention: parseTimer(values.ADMIN_RETENTION_TIMER),
+      upgradeRetention: parseTimer(values.UPGRADE_RETENTION_TIMER),
+      watermark: parseTimer(values.WATERMARK_TIMER),
+      report: parseTimer(values.REPORT_TIMER),
+      session: parseTimer(values.SESSION_TIMER),
+    },
+    hashes: {
+      expectedSources: expected,
+      adminDropIn: values.ADMIN_DROPIN_SHA256 || null,
+      upgradeDropIn: values.UPGRADE_DROPIN_SHA256 || null,
+      adminPolicy: values.ADMIN_POLICY_SHA256 || null,
+      upgradePolicy: values.UPGRADE_POLICY_SHA256 || null,
+    },
+    health: {
+      admin: Number(postcheckValues.ADMIN_HEALTH || values.ADMIN_HEALTH || 0),
+      upgrade: Number(postcheckValues.UPGRADE_HEALTH || values.UPGRADE_HEALTH || 0),
+      upgradeUnauthenticated: Number(values.UPGRADE_UNAUTHENTICATED || 0),
+      gateway: Number(values.GATEWAY_HEALTH || 0),
+      httpsPublicBefore: publicHttpsBefore,
+      httpsPublicAfter: publicHttpsAfter,
+      httpsPublicAfterRollback: publicHttpsAfterRollback,
+    },
+  }
+}
+
 function publicHttpsStatus() {
   return new Promise((resolve) => {
     const request = https.get({
@@ -3535,6 +4531,13 @@ client.on('ready', async () => {
     }
     if (mode === 'repair-enable-upgrade-retention') {
       const summary = await repairEnableUpgradeRetention(client)
+      finished = true
+      process.stdout.write(`${JSON.stringify(summary)}\n`)
+      if (!summary.completed) process.exitCode = 1
+      return
+    }
+    if (mode === 'enable-sqlite-backups') {
+      const summary = await enableSqliteBackups(client)
       finished = true
       process.stdout.write(`${JSON.stringify(summary)}\n`)
       if (!summary.completed) process.exitCode = 1

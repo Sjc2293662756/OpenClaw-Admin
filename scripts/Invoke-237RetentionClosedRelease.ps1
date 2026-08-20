@@ -2,13 +2,14 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention')]
+  [ValidateSet('preflight', 'verify-units', 'deploy-upgrade', 'deploy-admin', 'diagnose-admin', 'close-disabled-timers', 'verify-watermark', 'inspect-watermark-filesystems', 'deploy-watermark-probes', 'verify-enable-watermark', 'observe-watermark', 'rollback-watermark', 'repair-enable-upgrade-retention', 'enable-sqlite-backups')]
   [string]$Mode = 'preflight',
   [ValidatePattern('^[0-9]{8}T[0-9]{6}Z$')]
   [string]$ReleaseId,
   [string]$AdminArchivePath,
   [string]$UpgradeArchivePath,
   [string]$WatermarkArchivePath,
+  [string]$AdminSourceRootPath,
   [string]$UpgradeSourceRootPath
 )
 
@@ -43,6 +44,42 @@ if ($Mode -in @('deploy-watermark-probes', 'verify-enable-watermark', 'observe-w
 }
 if ($Mode -eq 'repair-enable-upgrade-retention' -and -not $ReleaseId) {
   throw 'ReleaseId is required for Upgrade retention repair and enablement.'
+}
+if ($Mode -eq 'enable-sqlite-backups' -and -not $ReleaseId) {
+  throw 'ReleaseId is required for SQLite backup enablement.'
+}
+if ($Mode -eq 'enable-sqlite-backups') {
+  if (-not (Test-Path -LiteralPath $AdminSourceRootPath -PathType Container)) {
+    throw 'The verified Admin source root is unavailable.'
+  }
+  if (-not (Test-Path -LiteralPath $UpgradeSourceRootPath -PathType Container)) {
+    throw 'The verified Upgrade source root is unavailable.'
+  }
+  foreach ($relativePath in @(
+    'package.json',
+    'server\sqlite-backup.js',
+    'server\sqlite-restore-test.js',
+    'server\lib\sqlite-backup-service.js',
+    'deploy\systemd\gaiop-admin-sqlite-backup.service',
+    'deploy\systemd\gaiop-admin-sqlite-backup.timer'
+  )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $AdminSourceRootPath $relativePath) -PathType Leaf)) {
+      throw "The verified Admin SQLite backup source is incomplete: $relativePath"
+    }
+  }
+  foreach ($relativePath in @(
+    'package.json',
+    'src\sqlite-backup.js',
+    'src\sqlite-restore-test.js',
+    'src\services\SqliteBackupService.js',
+    'src\config.js',
+    'deploy\systemd\gaiop-upgrade-sqlite-backup.service',
+    'deploy\systemd\gaiop-upgrade-sqlite-backup.timer'
+  )) {
+    if (-not (Test-Path -LiteralPath (Join-Path $UpgradeSourceRootPath $relativePath) -PathType Leaf)) {
+      throw "The verified Upgrade SQLite backup source is incomplete: $relativePath"
+    }
+  }
 }
 if ($Mode -eq 'repair-enable-upgrade-retention') {
   if (-not (Test-Path -LiteralPath $UpgradeSourceRootPath -PathType Container)) {
@@ -96,6 +133,9 @@ try {
   }
   if ($WatermarkArchivePath) {
     $start.EnvironmentVariables['GAIOP_RETENTION_RELEASE_WATERMARK_ARCHIVE'] = (Resolve-Path -LiteralPath $WatermarkArchivePath).Path
+  }
+  if ($AdminSourceRootPath) {
+    $start.EnvironmentVariables['GAIOP_RETENTION_RELEASE_ADMIN_SOURCE_ROOT'] = (Resolve-Path -LiteralPath $AdminSourceRootPath).Path
   }
   if ($UpgradeSourceRootPath) {
     $start.EnvironmentVariables['GAIOP_RETENTION_RELEASE_UPGRADE_SOURCE_ROOT'] = (Resolve-Path -LiteralPath $UpgradeSourceRootPath).Path
