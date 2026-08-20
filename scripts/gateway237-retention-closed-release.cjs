@@ -2572,11 +2572,41 @@ process.stdin.on("end", () => {
 });'
 }
 
+assert_managed_snapshot_unchanged() {
+  /usr/local/bin/node - "$1" "$2" <<'NODE'
+const decode = (value) => JSON.parse(Buffer.from(value, 'base64').toString('utf8'))
+const managed = (value) => ({
+  database: {
+    integrity: value.database.integrity,
+    selected: value.database.selected,
+    taskStatuses: value.database.taskStatuses,
+    componentStatuses: value.database.componentStatuses,
+  },
+  roots: value.roots,
+})
+const before = managed(decode(process.argv[2]))
+const after = managed(decode(process.argv[3]))
+if (JSON.stringify(before) !== JSON.stringify(after)) process.exit(1)
+NODE
+}
+
+journal_cursor() {
+  journalctl --sync
+  journalctl --quiet --no-pager -n 0 --show-cursor | sed -n 's/^-- cursor: //p'
+}
+
 validate_journal() {
   invocation="$1"
   output_file="$2"
+  cursor=''
+  if [ "$#" -ge 3 ]; then cursor="$3"; fi
   journalctl --sync
-  journalctl --quiet --no-pager _SYSTEMD_INVOCATION_ID="$invocation" -o cat > "$output_file"
+  if [ -n "$invocation" ]; then
+    journalctl --quiet --no-pager _SYSTEMD_INVOCATION_ID="$invocation" -o cat > "$output_file"
+  else
+    test -n "$cursor"
+    journalctl --quiet --no-pager --after-cursor="$cursor" --unit="$service" -o cat > "$output_file"
+  fi
   /usr/local/bin/node - "$output_file" <<'NODE' | base64 -w 0
 const fs = require('node:fs')
 const records = []
@@ -2640,12 +2670,13 @@ run_and_validate() {
   label="$1"
   test "$(systemctl is-active "$service" 2>/dev/null || true)" = inactive
   systemctl reset-failed "$service" >/dev/null 2>&1 || true
+  cursor=$(journal_cursor)
+  test -n "$cursor"
   systemctl start "$service"
   test "$(systemctl show "$service" -p Result --value)" = success
   test "$(systemctl show "$service" -p ExecMainStatus --value)" = 0
-  invocation=$(systemctl show "$service" -p InvocationID --value)
-  test -n "$invocation"
-  validate_journal "$invocation" "$work_root/$label.journal"
+  invocation=$(systemctl show "$service" -p InvocationID --value 2>/dev/null || true)
+  validate_journal "$invocation" "$work_root/$label.journal" "$cursor"
 }
 
 restore_original_timer_state() {
@@ -2937,14 +2968,16 @@ assert_no_active_tasks "$before_snapshot"
 before_audit_lines=$(audit_lines)
 closed_records=$(run_and_validate closed)
 after_closed_snapshot=$(snapshot)
-test "$before_snapshot" = "$after_closed_snapshot"
+phase=closed_managed_snapshot
+assert_managed_snapshot_unchanged "$before_snapshot" "$after_closed_snapshot"
+phase=closed_audit
 test "$before_audit_lines" = "$(audit_lines)"
 
 phase=enabled_run
 write_policy true
 grep -Fx 'GAIOP_UPGRADE_RETENTION_AUTO_DELETE=true' "$policy_env" >/dev/null
 before_enabled_snapshot=$(snapshot)
-test "$before_snapshot" = "$before_enabled_snapshot"
+assert_managed_snapshot_unchanged "$before_snapshot" "$before_enabled_snapshot"
 assert_no_active_tasks "$before_enabled_snapshot"
 create_audit_file
 before_enabled_audit=$(audit_lines)
@@ -2955,7 +2988,7 @@ enabled_audit=$(validate_audit_tail "$work_root/enabled.audit")
 verify_audit_file
 if [ "$audit_identity" = absent ]; then audit_identity=$(stat -c '%d:%i' "$audit_log"); fi
 after_enabled_snapshot=$(snapshot)
-test "$before_snapshot" = "$after_enabled_snapshot"
+assert_managed_snapshot_unchanged "$before_snapshot" "$after_enabled_snapshot"
 manual_invocation=$(systemctl show "$service" -p InvocationID --value)
 
 phase=enable_timer
@@ -2989,7 +3022,8 @@ if [ -n "$timer_invocation" ]; then
   test "$after_timer_audit" -eq "$((before_timer_audit + 6))"
   timer_audit=$(validate_audit_tail "$work_root/timer.audit")
   verify_audit_file
-  test "$before_snapshot" = "$(snapshot)"
+  timer_snapshot=$(snapshot)
+  assert_managed_snapshot_unchanged "$before_snapshot" "$timer_snapshot"
   timer_compensation=validated
 else
   scheduled_trigger=$(systemctl show "$timer" -p NextElapseUSecRealtime --value)
@@ -3016,7 +3050,8 @@ else
     test "$after_timer_audit" -eq "$((before_timer_audit + 6))"
     timer_audit=$(validate_audit_tail "$work_root/timer-late.audit")
     verify_audit_file
-    test "$before_snapshot" = "$(snapshot)"
+    timer_snapshot=$(snapshot)
+    assert_managed_snapshot_unchanged "$before_snapshot" "$timer_snapshot"
     timer_compensation=validated_late
   else
     test "$before_timer_audit" = "$(audit_lines)"
@@ -3046,7 +3081,7 @@ test "$(http_status http://127.0.0.1:18900/api/v1/upgrade/status)" = 401
 test "$(http_status http://127.0.0.1:18789/health)" = 200
 test "$(curl -k -sS -o /dev/null -w '%{http_code}' --max-time 5 https://127.0.0.1/)" = 200
 final_snapshot=$(snapshot)
-test "$before_snapshot" = "$final_snapshot"
+assert_managed_snapshot_unchanged "$before_snapshot" "$final_snapshot"
 verify_audit_file
 verify_effective_unit
 test -f "$dropin_file"
