@@ -3751,12 +3751,19 @@ test -d "$admin_root"
 test -d "$upgrade_root"
 test -f "$admin_db"
 test ! -L "$admin_db"
+upgrade_pid=$(systemctl show gaiop-upgrade.service -p MainPID --value)
+printf '%s\n' "$upgrade_pid" | grep -Eq '^[1-9][0-9]*$'
 upgrade_db=
-for candidate in /var/lib/gaiop-upgrade/napm-upgrade.db /var/lib/gaiop-upgrade/upgrade.db /var/lib/gaiop/upgrade/napm-upgrade.db /var/lib/gaiop/upgrade/upgrade.db; do
-  if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
-    test -z "$upgrade_db"
-    upgrade_db=$candidate
-  fi
+for descriptor in /proc/$upgrade_pid/fd/*; do
+  candidate=$(readlink -f "$descriptor" 2>/dev/null || true)
+  candidate=$(printf '%s\n' "$candidate" | sed 's/-wal$//;s/-shm$//')
+  case "$candidate" in
+    /var/lib/gaiop-upgrade/napm-upgrade.db|/var/lib/gaiop-upgrade/upgrade.db|/var/lib/gaiop/upgrade/napm-upgrade.db|/var/lib/gaiop/upgrade/upgrade.db)
+      test -f "$candidate"
+      test ! -L "$candidate"
+      if [ -n "$upgrade_db" ]; then test "$upgrade_db" = "$candidate"; else upgrade_db=$candidate; fi
+      ;;
+  esac
 done
 test -n "$upgrade_db"
 test "$(timer_state "$admin_timer")" = 'inactive|disabled'
@@ -4153,12 +4160,19 @@ test "$(sha256sum "$upgrade_dropin_file" | awk '{print $1}')" = '${values.UPGRAD
 test "$(sha256sum "$admin_policy" | awk '{print $1}')" = '${values.ADMIN_POLICY_SHA256}'
 test "$(sha256sum "$upgrade_policy" | awk '{print $1}')" = '${values.UPGRADE_POLICY_SHA256}'
 
+upgrade_pid=$(systemctl show gaiop-upgrade.service -p MainPID --value)
+printf '%s\n' "$upgrade_pid" | grep -Eq '^[1-9][0-9]*$'
 upgrade_db=
-for candidate in /var/lib/gaiop-upgrade/napm-upgrade.db /var/lib/gaiop-upgrade/upgrade.db /var/lib/gaiop/upgrade/napm-upgrade.db /var/lib/gaiop/upgrade/upgrade.db; do
-  if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
-    test -z "$upgrade_db"
-    upgrade_db=$candidate
-  fi
+for descriptor in /proc/$upgrade_pid/fd/*; do
+  candidate=$(readlink -f "$descriptor" 2>/dev/null || true)
+  candidate=$(printf '%s\n' "$candidate" | sed 's/-wal$//;s/-shm$//')
+  case "$candidate" in
+    /var/lib/gaiop-upgrade/napm-upgrade.db|/var/lib/gaiop-upgrade/upgrade.db|/var/lib/gaiop/upgrade/napm-upgrade.db|/var/lib/gaiop/upgrade/upgrade.db)
+      test -f "$candidate"
+      test ! -L "$candidate"
+      if [ -n "$upgrade_db" ]; then test "$upgrade_db" = "$candidate"; else upgrade_db=$candidate; fi
+      ;;
+  esac
 done
 test -n "$upgrade_db"
 
