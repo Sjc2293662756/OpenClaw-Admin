@@ -3509,6 +3509,7 @@ finish() {
   exit "$rc"
 }
 trap finish EXIT
+trap 'phase="${phase}_line_${LINENO}"' ERR
 
 online_backup() {
   module_path=$1
