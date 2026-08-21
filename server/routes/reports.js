@@ -144,7 +144,7 @@ function resolveReportDataSourceId(db, audit, attribution = null) {
  * only these paired artifacts from the dedicated report directory, avoiding
  * any dependency on the Gateway process or arbitrary host file access.
  */
-function syncGeneratedReports(db) {
+export function syncGeneratedReports(db) {
   ensureReportRoot()
   const attributionEntries = readReportAttributionIndex()
   const insert = db.prepare(`
@@ -299,7 +299,7 @@ function readEventTimestamp(value) {
   return Number.isFinite(timestamp) ? timestamp : null
 }
 
-function syncReportDeliveries(db) {
+export function syncReportDeliveries(db) {
   const reportExists = db.prepare('SELECT id FROM report_files WHERE id = ?')
   const upsert = db.prepare(`
     INSERT INTO report_deliveries (

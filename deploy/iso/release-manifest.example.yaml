@@ -22,6 +22,7 @@ components:
     targetDirectory: /opt/gaiop/admin
     requiredPaths:
       - server/index.js
+      - server/report-registry-sync.js
       - server/admin-retention-cleanup.js
       - server/report-retention-cleanup.js
       - server/session-retention-cleanup.js

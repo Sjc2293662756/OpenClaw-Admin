@@ -53,6 +53,7 @@ test('retention routes and migrations each have one non-overlapping registration
 
 test('every Admin retention service, timer and runtime script is uniquely packaged', () => {
   const releaseManifest = read('deploy/iso/release-manifest.example.yaml')
+  assert.match(releaseManifest, /^      - server\/report-registry-sync\.js$/m)
   const units = [
     ['gaiop-admin-retention-cleanup', 'server/admin-retention-cleanup.js'],
     ['gaiop-report-retention-cleanup', 'server/report-retention-cleanup.js'],
