@@ -50,6 +50,9 @@ interface ToolProgress {
 const MAX_AGENT_STEPS = 30
 const TOOL_PREVIEW_MAX_CHARS = 6000
 const FINALIZED_RUN_TTL_MS = 5 * 60 * 1000
+const MAX_EVENT_NESTING = 4
+const EVENT_WRAPPER_KEYS = ['payload', 'data', 'event', 'session', 'message', 'result'] as const
+const MESSAGE_CONTAINER_KEYS = ['messages', 'items', 'transcript', 'history', 'events', 'turns'] as const
 
 export const useChatStore = defineStore('chat', () => {
   const CONTEXT_COMPACTION_DETAIL_ZH = '上下文压缩中...'
@@ -382,7 +385,10 @@ export const useChatStore = defineStore('chat', () => {
       try {
         const history = await wsStore.rpc.listChatHistory(normalizedKey)
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
-        messages.value = history
+        // Gateway can acknowledge a send before its transcript is visible to
+        // chat.history. Keep optimistic local turns during silent refreshes so
+        // a temporary empty/partial response cannot blank the conversation.
+        messages.value = silent ? mergePendingMessages(history) : history
         lastSyncedAt.value = Date.now()
       } catch (error) {
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
@@ -426,37 +432,51 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function scheduleHistoryRefresh(delay = 250) {
-    if (!sessionKey.value.trim()) return
+    const key = sessionKey.value.trim()
+    if (!key) return
     if (refreshTimer) {
       clearTimeout(refreshTimer)
       refreshTimer = null
     }
     refreshTimer = setTimeout(() => {
-      fetchHistory(sessionKey.value, { silent: true, clearError: false })
+      fetchHistory(key, { silent: true, clearError: false })
     }, delay)
   }
 
   function schedulePostSendRefreshes() {
-    if (!sessionKey.value.trim()) return
+    const key = sessionKey.value.trim()
+    if (!key) return
     clearTimers()
     // 发送后做低频兜底刷新，避免高频回拉导致列表抖动
-    for (const delay of [1400, 4200]) {
+    for (const delay of [1400, 4200, 10000]) {
       const timer = setTimeout(() => {
-        fetchHistory(sessionKey.value, { silent: true, clearError: false })
+        fetchHistory(key, { silent: true, clearError: false })
       }, delay)
       pollTimers.push(timer)
     }
   }
 
-  function extractSessionKey(payload: unknown): string {
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return ''
+  function extractSessionKey(payload: unknown, depth = 0, visited = new Set<object>()): string {
+    if (!payload || typeof payload !== 'object' || depth > MAX_EVENT_NESTING) return ''
+    if (visited.has(payload)) return ''
+    visited.add(payload)
+
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const key = extractSessionKey(item, depth + 1, visited)
+        if (key) return key
+      }
+      return ''
+    }
+
     const row = payload as Record<string, unknown>
-    if (typeof row.sessionKey === 'string') return row.sessionKey
-    if (typeof row.key === 'string') return row.key
-    if (row.session && typeof row.session === 'object' && !Array.isArray(row.session)) {
-      const session = row.session as Record<string, unknown>
-      if (typeof session.key === 'string') return session.key
-      if (typeof session.sessionKey === 'string') return session.sessionKey
+    const direct = [row.sessionKey, row.key, row.session]
+      .find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    if (direct) return direct.trim()
+
+    for (const key of EVENT_WRAPPER_KEYS) {
+      const nested = extractSessionKey(row[key], depth + 1, visited)
+      if (nested) return nested
     }
     return ''
   }
@@ -530,29 +550,62 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function extractRealtimeMessages(payload: unknown): ChatMessage[] {
-    const rawItems: unknown[] = []
+  function extractRealtimeMessages(payload: unknown, depth = 0, visited = new Set<object>()): ChatMessage[] {
+    if (!payload || typeof payload !== 'object' || depth > MAX_EVENT_NESTING) return []
+    if (visited.has(payload)) return []
+    visited.add(payload)
 
     if (Array.isArray(payload)) {
-      rawItems.push(...payload)
-    } else {
-      const row = asRecord(payload)
-      if (!row) return []
+      return payload.flatMap((item) => extractRealtimeMessages(item, depth + 1, visited))
+    }
 
-      if (Array.isArray(row.messages)) rawItems.push(...row.messages)
-      if (Array.isArray(row.items)) rawItems.push(...row.items)
-      if (Array.isArray(row.transcript)) rawItems.push(...row.transcript)
-      if (Array.isArray(row.history)) rawItems.push(...row.history)
+    const row = payload as Record<string, unknown>
+    const messages: ChatMessage[] = []
+    const hasDirectMessageFields =
+      row.role || row.type || row.content || row.text || row.output || row.delta || row.input || typeof row.message === 'string'
+    if (hasDirectMessageFields) {
+      const ownMessage = normalizeRealtimeMessage(row)
+      if (ownMessage) messages.push(ownMessage)
+    }
 
-      if (row.message) rawItems.push(row.message)
-      if (row.item) rawItems.push(row.item)
-
-      if (row.role || row.type || row.content || row.text || row.message || row.output || row.delta) {
-        rawItems.push(row)
+    for (const key of MESSAGE_CONTAINER_KEYS) {
+      const nested = row[key]
+      if (nested && typeof nested === 'object') {
+        messages.push(...extractRealtimeMessages(nested, depth + 1, visited))
       }
     }
 
-    return rawItems.map((item) => normalizeRealtimeMessage(item)).filter((item): item is ChatMessage => !!item)
+    for (const key of EVENT_WRAPPER_KEYS) {
+      const nested = row[key]
+      if (nested && typeof nested === 'object') {
+        messages.push(...extractRealtimeMessages(nested, depth + 1, visited))
+      }
+    }
+
+    const seen = new Set<string>()
+    return messages.filter((item) => {
+      const signature = item.id ? `id:${item.id}` : `${item.role}:${item.content}`
+      if (seen.has(signature)) return false
+      seen.add(signature)
+      return true
+    })
+  }
+
+  function mergePendingMessages(history: ChatMessage[]): ChatMessage[] {
+    const pending = messages.value.filter((item) => {
+      const id = item.id || ''
+      return id.startsWith('web-') || id.startsWith('local-')
+    })
+    if (pending.length === 0) return history
+
+    const merged = [...history]
+    for (const item of pending) {
+      const alreadyPresent = merged.some((existing) =>
+        existing.role === item.role && existing.content === item.content
+      )
+      if (!alreadyPresent) merged.push(item)
+    }
+    return merged
   }
 
   function extractRunId(payload: unknown): string {
@@ -976,6 +1029,7 @@ export const useChatStore = defineStore('chat', () => {
       if (agentStatus.phase === 'sending' && agentStatus.runId === idempotencyKey) {
         setAgentStatusPhase(agentId, 'waiting', { runId: idempotencyKey, detail: null })
       }
+      schedulePostSendRefreshes()
     } catch (error) {
       lastError.value = error instanceof Error ? error.message : String(error)
       messages.value = messages.value.filter((item) => item.id !== idempotencyKey)
