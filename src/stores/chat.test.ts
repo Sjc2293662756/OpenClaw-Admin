@@ -225,4 +225,34 @@ describe('post-send history fallback', () => {
     send.resolve(undefined)
     await request
   })
+
+  it('keeps a realtime report reply while Gateway history is still user-only', async () => {
+    vi.useFakeTimers()
+    const sessionKey = 'agent:main:main:dm:webchat-report-history-lag'
+    mocks.sendChatMessage.mockResolvedValue(undefined)
+    mocks.listChatHistory.mockResolvedValue([
+      { role: 'user', content: '生成最近七天的综述报告' },
+    ])
+
+    const store = useChatStore()
+    store.setSessionKey(sessionKey)
+    await store.sendMessage('生成最近七天的综述报告')
+    store.handleRealtimeEvent({
+      payload: {
+        message: {
+          sessionKey,
+          messageId: 'report-reply-1',
+          role: 'assistant',
+          content: '报告已生成：NAPM 系统综述报告',
+        },
+      },
+    }, { refreshHistory: false })
+
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+
+    expect(store.messages.map((item) => item.content)).toEqual([
+      '生成最近七天的综述报告',
+      '报告已生成：NAPM 系统综述报告',
+    ])
+  })
 })

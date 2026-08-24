@@ -624,14 +624,23 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function mergePendingMessages(history: ChatMessage[]): ChatMessage[] {
-    const pending = messages.value.filter((item) => {
-      const id = item.id || ''
-      return id.startsWith('web-') || id.startsWith('local-')
-    })
-    if (pending.length === 0) return history
-
+    // A report reply can arrive through realtime events before Gateway writes
+    // it to chat.history. Keep every locally visible turn that is absent from
+    // the response, not only web-/local- user placeholders, so the next
+    // silent refresh cannot make a rendered report disappear.
     const merged = [...history]
-    for (const item of pending) {
+    for (const item of messages.value) {
+      const existingIndex = item.id
+        ? merged.findIndex((existing) => existing.id && existing.id === item.id)
+        : -1
+      if (existingIndex >= 0) {
+        const existing = merged[existingIndex]
+        if (existing && item.content.length > existing.content.length) {
+          merged[existingIndex] = { ...existing, ...item }
+        }
+        continue
+      }
+
       const alreadyPresent = merged.some((existing) =>
         existing.role === item.role && existing.content === item.content
       )
