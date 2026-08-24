@@ -310,8 +310,44 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function resolveChatEventState(normalizedEvent: string, payloadRow?: Record<string, unknown> | null): string {
-    const direct = asString(payloadRow?.state || payloadRow?.status || payloadRow?.phase).trim().toLowerCase()
+  function extractNestedStringField(
+    payload: unknown,
+    fieldNames: readonly string[],
+    depth = 0,
+    visited = new Set<object>()
+  ): string {
+    if (!payload || typeof payload !== 'object' || depth > MAX_EVENT_NESTING) return ''
+    if (visited.has(payload)) return ''
+    visited.add(payload)
+
+    if (Array.isArray(payload)) {
+      for (const item of payload) {
+        const value = extractNestedStringField(item, fieldNames, depth + 1, visited)
+        if (value) return value
+      }
+      return ''
+    }
+
+    const row = payload as Record<string, unknown>
+    for (const fieldName of fieldNames) {
+      const value = asString(row[fieldName]).trim()
+      if (value) return value
+    }
+    for (const key of EVENT_WRAPPER_KEYS) {
+      const value = extractNestedStringField(row[key], fieldNames, depth + 1, visited)
+      if (value) return value
+    }
+    for (const [key, value] of Object.entries(row)) {
+      if (fieldNames.includes(key) || EVENT_WRAPPER_KEYS.includes(key as typeof EVENT_WRAPPER_KEYS[number])) continue
+      if (!value || typeof value !== 'object') continue
+      const nested = extractNestedStringField(value, fieldNames, depth + 1, visited)
+      if (nested) return nested
+    }
+    return ''
+  }
+
+  function resolveChatEventState(normalizedEvent: string, payload?: unknown): string {
+    const direct = extractNestedStringField(payload, ['state', 'status', 'phase']).toLowerCase()
     if (direct) return direct
 
     if (normalizedEvent === 'chat.delta' || normalizedEvent.endsWith('.delta')) return 'delta'
@@ -655,11 +691,19 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function extractRunId(payload: unknown): string {
-    const row = asRecord(payload)
-    if (!row) return ''
-    const runId = asString(row.runId).trim()
-    if (runId) return runId
-    return ''
+    return extractNestedStringField(payload, ['runId'])
+  }
+
+  function extractChatProjectionMessage(payload: unknown): ChatMessage | null {
+    // A chat event may contain both a cumulative message and a short `delta`
+    // field inside one or more transport wrappers. The cumulative assistant
+    // message is the canonical browser projection; low-level fragments must
+    // not become separate transcript bubbles.
+    const candidates = extractRealtimeMessages(payload).filter((item) => item.role === 'assistant')
+    return candidates.reduce<ChatMessage | null>((selected, item) => {
+      if (!selected || item.content.length > selected.content.length) return item
+      return selected
+    }, null)
   }
 
   function mergeRealtimeMessages(
@@ -761,23 +805,21 @@ export const useChatStore = defineStore('chat', () => {
     // event must never appear inside an open WebChat conversation.
     if (!shouldApplyRealtimeEvent(sessionKey.value, keyInEvent)) return
 
-    const payloadRow = asRecord(payload)
-    const state = resolveChatEventState(normalizedEvent, payloadRow)
+    const state = resolveChatEventState(normalizedEvent, payload)
     const runId = extractRunId(payload)
     const isTerminal = state === 'final' || state === 'done' || state === 'aborted' || state === 'error'
-    const streamMessageId = runId
-      ? `chat-stream:${runId}`
-      : state
-        ? activeRealtimeMessageId || (keyInEvent ? `chat-stream:${keyInEvent}` : '')
-        : ''
-    const realtimeMessages = extractRealtimeMessages(payload).map((item) =>
-      item.role === 'assistant' && streamMessageId
-        ? { ...item, id: streamMessageId }
-        : item
-    )
     const streaming = state === 'delta' || (options?.streaming ?? false)
+    const needsProjectionId = streaming || isTerminal
+    const streamMessageId = needsProjectionId
+      ? activeRealtimeMessageId
+        || `chat-stream:${runId || keyInEvent || sessionKey.value}`
+      : ''
+    const projection = extractChatProjectionMessage(payload)
+    const realtimeMessages = projection
+      ? [{ ...projection, id: streamMessageId || projection.id }]
+      : []
 
-    if (state === 'delta' && streamMessageId) {
+    if (streaming && streamMessageId) {
       activeRealtimeMessageId = streamMessageId
     }
     if (isTerminal) {
@@ -849,7 +891,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (normalizedEvent === 'chat' || normalizedEvent.startsWith('chat.')) {
-      const state = resolveChatEventState(normalizedEvent, payloadRow)
+      const state = resolveChatEventState(normalizedEvent, payload)
       const isTerminal = state === 'final' || state === 'done' || state === 'aborted' || state === 'error'
       if (!isTerminal && runIdInEvent && isRunFinalized(runIdInEvent)) {
         return

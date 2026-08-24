@@ -184,6 +184,62 @@ describe('realtime event routing', () => {
     expect(store.messages[0]?.content.match(/✅ 报告已生成。/gu)).toHaveLength(1)
   })
 
+  it('uses the cumulative message from a wrapped chat event instead of its short delta field', () => {
+    const flush = stubAnimationFrames()
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-wrapped-chat'
+    store.setSessionKey(sessionKey)
+
+    const sendWrappedSnapshot = (content: string, delta: string) => {
+      store.handleRealtimeEvent('chat', {
+        payload: {
+          data: {
+            runId: 'run-wrapped-chat',
+            state: 'delta',
+            delta,
+            message: {
+              sessionKey,
+              role: 'assistant',
+              content: [{ type: 'text', text: content }],
+            },
+          },
+        },
+      }, { refreshHistory: false })
+      flush()
+    }
+
+    sendWrappedSnapshot('238web 最近 3 天的业务综述报告', '报告')
+    sendWrappedSnapshot('238web 最近 3 天的业务综述报告已生成 ✅', ' ✅')
+
+    expect(store.messages).toEqual([expect.objectContaining({
+      id: 'chat-stream:run-wrapped-chat',
+      content: '238web 最近 3 天的业务综述报告已生成 ✅',
+    })])
+  })
+
+  it('replaces non-prefix chat snapshots even when transport metadata is absent', () => {
+    const flush = stubAnimationFrames()
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-snapshot-reset'
+    store.setSessionKey(sessionKey)
+
+    const sendSnapshot = (content: string) => {
+      store.handleRealtimeEvent('chat', {
+        message: { sessionKey, role: 'assistant', content },
+      }, { refreshHistory: false, streaming: true })
+      flush()
+    }
+
+    sendSnapshot("I'll generate a 3-day summary report.")
+    sendSnapshot('The summary data is collected.')
+    sendSnapshot('238web 最近 3 天的业务综述报告已生成 ✅')
+
+    expect(store.messages).toEqual([expect.objectContaining({
+      id: `chat-stream:${sessionKey}`,
+      content: '238web 最近 3 天的业务综述报告已生成 ✅',
+    })])
+  })
+
   it('does not append a new chat stream to the previous persisted assistant turn', async () => {
     const flush = stubAnimationFrames()
     const sessionKey = 'agent:main:main:dm:webchat-stream-boundary'
