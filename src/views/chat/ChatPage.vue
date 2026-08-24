@@ -2708,8 +2708,9 @@ async function handleSend() {
   try {
     let createdWorkspaceSession = false
     if (workspaceMode.value && !sessionKeyInput.value.trim()) {
-      // 不发送 /new 命令，首次正式需求即建立会话，避免用户看到底层系统提示。
-      const key = await sessionStore.createWorkspaceSession()
+      // 复用统一的新会话流程：先让 Gateway 初始化并持久化会话，
+      // 再发送首条正式需求，避免实时消息只能显示而无法在刷新后回放。
+      const key = await sessionStore.createSession({})
       sessionKeyInput.value = key
       await router.replace({
         name: 'ChatWorkspace',

@@ -6,6 +6,7 @@ import { useSessionStore } from './session'
 const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   getSessionsUsage: vi.fn(),
+  sendChatMessage: vi.fn(),
 }))
 
 vi.mock('./websocket', () => ({
@@ -13,6 +14,7 @@ vi.mock('./websocket', () => ({
     rpc: {
       listSessions: mocks.listSessions,
       getSessionsUsage: mocks.getSessionsUsage,
+      sendChatMessage: mocks.sendChatMessage,
     },
   }),
 }))
@@ -49,7 +51,9 @@ beforeEach(() => {
   setActivePinia(createPinia())
   mocks.listSessions.mockReset()
   mocks.getSessionsUsage.mockReset()
+  mocks.sendChatMessage.mockReset()
   mocks.getSessionsUsage.mockResolvedValue({ sessions: [] })
+  vi.unstubAllGlobals()
 })
 
 describe('session list progressive loading', () => {
@@ -178,5 +182,22 @@ describe('session list progressive loading', () => {
       sessionTitle: '服务端固定标题',
       messageCount: 2,
     })
+  })
+
+  it('initializes a newly created workspace session before returning it', async () => {
+    const key = 'agent:main:main:dm:webchat-initialized'
+    mocks.listSessions.mockResolvedValue([])
+    mocks.sendChatMessage.mockResolvedValue({})
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, sessionKey: key }),
+    }))
+    const store = useSessionStore()
+
+    await expect(store.createSession({})).resolves.toBe(key)
+    expect(mocks.sendChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionKey: key,
+      message: '/new',
+    }))
   })
 })
