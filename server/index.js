@@ -29,6 +29,7 @@ import { createUsersRouter } from './routes/users.js'
 import { createDataSourcesRouter } from './routes/data-sources.js'
 import { createSensitiveConfigRouter } from './routes/sensitive-config.js'
 import { createReportsRouter } from './routes/reports.js'
+import { startReportRegistrySync } from './report-registry-sync.js'
 import { createAlertsRouter } from './routes/alerts.js'
 import { createReportStorageRouter } from './routes/report-storage.js'
 import { createSessionSettingsRouter } from './routes/session-settings.js'
@@ -705,6 +706,7 @@ app.use('/api/system-config/environment', createSensitiveConfigRouter({
   validateSystemSensitiveConfigInput,
 }))
 app.use('/api/reports', createReportsRouter({ db, authMiddleware, adminMiddleware, recordAudit }))
+const stopReportRegistrySync = startReportRegistrySync(db)
 app.use('/api/media', createMediaRouter({
   authMiddleware,
   roots: () => {
@@ -4462,6 +4464,7 @@ server.listen(envConfig.PORT, envConfig.GAIOP_BIND_HOST, () => {
 
 process.on('SIGINT', () => {
   console.log('\nShutting down...')
+  stopReportRegistrySync()
   cleanupAllTerminalSessions()
   gateway.disconnect()
   server.close(() => {
@@ -4472,6 +4475,7 @@ process.on('SIGINT', () => {
 
 process.on('SIGTERM', () => {
   console.log('\nShutting down (SIGTERM)...')
+  stopReportRegistrySync()
   cleanupAllTerminalSessions()
   gateway.disconnect()
   server.close(() => {
