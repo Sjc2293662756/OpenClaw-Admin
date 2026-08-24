@@ -569,6 +569,12 @@ app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({
   authMiddleware,
   operatorMiddleware,
   recordAudit,
+  gateway,
+  reportProvenanceOptions: {
+    enabled: envConfig.GAIOP_REPORT_PROVENANCE_ENABLED === 'true',
+    signingKey: envConfig.GAIOP_REPORT_PROVENANCE_SIGNING_KEY,
+    storeDirectory: envConfig.GAIOP_REPORT_PROVENANCE_STORE_DIR,
+  },
 }))
 app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
 

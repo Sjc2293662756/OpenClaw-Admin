@@ -2707,20 +2707,27 @@ async function handleSend() {
 
   try {
     let createdWorkspaceSession = false
+    let createdRun: { idempotencyKey: string; runId?: string } | null = null
     if (workspaceMode.value && !sessionKeyInput.value.trim()) {
-      // BFF 已签发全新的唯一会话键。首条正式需求直接创建 Gateway
-      // transcript；这里不能先发 `/new`，否则重置落盘会与首条消息竞态。
-      const key = await sessionStore.createWorkspaceSession()
-      sessionKeyInput.value = key
+      // 当前 Gateway 的正式原子入口先建立 sessions.json/transcript，再在
+      // 同一服务端流程接收首条消息；禁止用 `/new` 或裸 chat.send 模拟建会话。
+      const created = await sessionStore.createWorkspaceConversation(content)
+      sessionKeyInput.value = created.sessionKey
       await router.replace({
         name: 'ChatWorkspace',
-        query: { session: key, ...(route.query.alertReturn === '1' ? { alertReturn: '1' } : {}) },
+        query: { session: created.sessionKey, ...(route.query.alertReturn === '1' ? { alertReturn: '1' } : {}) },
       })
       createdWorkspaceSession = true
+      createdRun = { idempotencyKey: created.idempotencyKey, runId: created.runId }
     }
     const key = ensureSessionKey()
     chatStore.setSessionKey(key)
-    await chatStore.sendMessage(content)
+    if (createdRun) {
+      chatStore.adoptCreatedSessionMessage(content, createdRun)
+      await chatStore.fetchHistory(key, { silent: true, clearError: false })
+    } else {
+      await chatStore.sendMessage(content)
+    }
     if (workspaceMode.value) {
       if (createdWorkspaceSession) {
         sessionStore.registerSuccessfulWorkspaceSession(key, content)

@@ -20,20 +20,50 @@ export const useSessionStore = defineStore('session', () => {
     expiresAt: number
   }>()
 
-  async function createWorkspaceSession(): Promise<string> {
+  async function requestWorkspaceSession(body?: Record<string, unknown>): Promise<{
+    sessionKey: string
+    runStarted: boolean
+    runId?: string
+    idempotencyKey?: string
+  }> {
     const response = await fetch('/api/workspace/sessions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${authStore.getToken() || ''}`,
       },
+      body: JSON.stringify(body || {}),
     })
     const data = await response.json()
     const sessionKey = typeof data?.sessionKey === 'string' ? data.sessionKey.trim() : ''
     if (!response.ok || !data?.ok || !sessionKey) {
       throw new Error(data?.error?.message || data?.error || '创建工作台会话失败')
     }
-    return sessionKey
+    return {
+      sessionKey,
+      runStarted: data?.runStarted === true,
+      runId: typeof data?.runId === 'string' && data.runId.trim() ? data.runId.trim() : undefined,
+      idempotencyKey: typeof data?.idempotencyKey === 'string' && data.idempotencyKey.trim()
+        ? data.idempotencyKey.trim()
+        : undefined,
+    }
+  }
+
+  async function createWorkspaceSession(): Promise<string> {
+    return (await requestWorkspaceSession()).sessionKey
+  }
+
+  async function createWorkspaceConversation(message: string): Promise<{
+    sessionKey: string
+    runStarted: boolean
+    runId?: string
+    idempotencyKey: string
+  }> {
+    const text = message.trim()
+    if (!text) throw new Error('首条消息不能为空')
+    const idempotencyKey = `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const result = await requestWorkspaceSession({ message: text, idempotencyKey })
+    return { ...result, idempotencyKey: result.idempotencyKey || idempotencyKey }
   }
 
   async function waitForGatewaySessionInitialization(sessionKey: string): Promise<void> {
@@ -471,6 +501,7 @@ export const useSessionStore = defineStore('session', () => {
     setLongTermRetention,
     spawnSession,
     createWorkspaceSession,
+    createWorkspaceConversation,
     createInitializedSession,
     patchSessionLabel,
     exportSession,

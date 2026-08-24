@@ -220,4 +220,32 @@ describe('session list progressive loading', () => {
     expect(mocks.sendChatMessage).not.toHaveBeenCalled()
     expect(mocks.listChatHistory).not.toHaveBeenCalled()
   })
+
+  it('requests an atomic Gateway conversation for the first workspace message', async () => {
+    const key = 'agent:main:main:dm:webchat-atomic-first-turn'
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        sessionKey: key,
+        runStarted: true,
+        runId: 'gateway-run-1',
+        idempotencyKey: 'web-request-1',
+      }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useSessionStore()
+
+    await expect(store.createWorkspaceConversation('生成最近七天的综述报告')).resolves.toEqual({
+      sessionKey: key,
+      runStarted: true,
+      runId: 'gateway-run-1',
+      idempotencyKey: 'web-request-1',
+    })
+    const request = fetchMock.mock.calls[0]?.[1]
+    expect(JSON.parse(String(request?.body))).toMatchObject({
+      message: '生成最近七天的综述报告',
+    })
+    expect(mocks.sendChatMessage).not.toHaveBeenCalled()
+  })
 })

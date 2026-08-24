@@ -192,6 +192,27 @@ describe('realtime event routing', () => {
 })
 
 describe('post-send history fallback', () => {
+  it('adopts an atomically created first turn without sending it twice', async () => {
+    vi.useFakeTimers()
+    mocks.listChatHistory.mockResolvedValue([])
+    const store = useChatStore()
+    store.setSessionKey('agent:main:main:dm:webchat-atomic')
+
+    store.adoptCreatedSessionMessage('生成最近七天的综述报告', {
+      idempotencyKey: 'web-request-1',
+      runId: 'gateway-run-1',
+    })
+
+    expect(store.messages).toMatchObject([{
+      id: 'web-request-1',
+      role: 'user',
+      content: '生成最近七天的综述报告',
+    }])
+    expect(mocks.sendChatMessage).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(mocks.listChatHistory).toHaveBeenCalledWith('agent:main:main:dm:webchat-atomic')
+  })
+
   it('keeps the local user turn when an early history refresh is still empty', async () => {
     vi.useFakeTimers()
     mocks.sendChatMessage.mockResolvedValue(undefined)

@@ -1093,6 +1093,29 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function adoptCreatedSessionMessage(
+    content: string,
+    options: { idempotencyKey: string; runId?: string },
+  ) {
+    const text = content.trim()
+    if (!text || !sessionKey.value.trim()) return
+    const match = sessionKey.value.match(/^agent:([^:]+):/)
+    const agentId = match?.[1] || 'default'
+    const runId = options.runId?.trim() || options.idempotencyKey
+    resetAgentProgress(agentId)
+    setAgentStatusPhase(agentId, 'waiting', { runId, detail: null })
+    const alreadyVisible = messages.value.some((item) => item.role === 'user' && item.content === text)
+    if (!alreadyVisible) {
+      messages.value = [...messages.value, {
+        id: options.idempotencyKey,
+        role: 'user',
+        content: text,
+        timestamp: new Date().toISOString(),
+      }]
+    }
+    schedulePostSendRefreshes()
+  }
+
   async function abortActiveRun() {
     if (!sessionKey.value.trim()) {
       throw new Error(byLocale('请先填写会话 Key', 'Please enter the session key', getActiveLocale()))
@@ -1139,6 +1162,7 @@ export const useChatStore = defineStore('chat', () => {
     handleAgentStatusEvent,
     clearTimers,
     sendMessage,
+    adoptCreatedSessionMessage,
     abortActiveRun,
   }
 })
