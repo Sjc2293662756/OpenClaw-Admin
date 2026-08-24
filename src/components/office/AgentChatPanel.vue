@@ -37,10 +37,12 @@ import { useWebSocketStore } from '@/stores/websocket'
 import { useConfigStore } from '@/stores/config'
 import { useSkillStore } from '@/stores/skill'
 import { useSessionStore } from '@/stores/session'
+import { useChatReportAttachments } from '@/composables/useChatReportAttachments'
 import { formatDate, formatRelativeTime, truncate } from '@/utils/format'
 import { renderSimpleMarkdown } from '@/utils/markdown'
 import type { ChatMessage, ChatMessageContent, AgentInstance, Skill, SessionsUsageSession } from '@/api/types'
 import AuthenticatedMediaImage from '@/components/common/AuthenticatedMediaImage.vue'
+import ReportAttachmentList from '@/components/chat/ReportAttachmentList.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -1643,6 +1645,11 @@ function parseStructuredMessage(content: string): StructuredMessageView | null {
 }
 
 const messageList = computed(() => chatStore.messages)
+const {
+  downloadingReportId,
+  downloadReport,
+  reportsForMessage,
+} = useChatReportAttachments(selectedSessionKey, messageList)
 
 const visibleMessageEntries = computed<RenderMessage[]>(() => {
   const list = messageList.value
@@ -2377,6 +2384,13 @@ watch(selectedSessionKey, async (newSessionKey) => {
                   </NTooltip>
                 </div>
               </div>
+
+              <ReportAttachmentList
+                v-if="reportsForMessage(entry.item).length"
+                :reports="reportsForMessage(entry.item)"
+                :downloading-id="downloadingReportId"
+                @download="downloadReport"
+              />
             </div>
           </div>
         </NScrollbar>
@@ -2806,6 +2820,13 @@ watch(selectedSessionKey, async (newSessionKey) => {
                   </NTooltip>
                 </div>
               </div>
+
+              <ReportAttachmentList
+                v-if="reportsForMessage(entry.item).length"
+                :reports="reportsForMessage(entry.item)"
+                :downloading-id="downloadingReportId"
+                @download="downloadReport"
+              />
             </div>
           </div>
         </NScrollbar>

@@ -1229,6 +1229,13 @@ export default {
         preview: 'Image Preview',
         unavailable: 'Image Unavailable',
       },
+      reportAttachment: {
+        download: 'Download report',
+        wordDocument: 'Word document',
+        unavailable: 'Report file is unavailable',
+        loadFailed: 'Failed to load report attachment',
+        downloadFailed: 'Failed to download report',
+      },
       sync: {
         syncing: 'Syncing...',
         syncedAt: 'Synced {time}',
