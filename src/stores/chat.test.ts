@@ -29,6 +29,16 @@ function message(content: string): ChatMessage {
   return { role: 'assistant', content }
 }
 
+function stubAnimationFrames() {
+  const frames: FrameRequestCallback[] = []
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.push(callback)
+    return frames.length
+  })
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  return () => frames.shift()?.(0)
+}
+
 beforeEach(() => {
   setActivePinia(createPinia())
   mocks.listChatHistory.mockReset()
@@ -37,6 +47,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
 })
 
 describe('chat history request coordination', () => {
@@ -98,12 +109,152 @@ describe('chat history request coordination', () => {
 })
 
 describe('realtime event routing', () => {
+  it('keeps agent assistant telemetry out of transcript text', () => {
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-agent-telemetry'
+    store.setSessionKey(sessionKey)
+
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-agent-1',
+      sessionKey,
+      stream: 'assistant',
+      data: {
+        text: '模型内部实时文本',
+        delta: '实时文本',
+        replace: false,
+      },
+    })
+    store.handleRealtimeEvent('agent', {
+      runId: 'run-agent-1',
+      sessionKey,
+      stream: 'assistant',
+      data: {
+        text: '模型内部实时文本',
+        delta: '实时文本',
+        replace: false,
+      },
+    }, { refreshHistory: false, streaming: true })
+
+    expect(store.messages).toEqual([])
+    expect(store.getOrCreateAgentStatus('main').lastMessage).toBe('模型内部实时文本')
+  })
+
+  it('uses one chat projection bubble across a multi-tool report run', () => {
+    const flush = stubAnimationFrames()
+
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-report-stream'
+    const runId = 'run-report-stream'
+    store.setSessionKey(sessionKey)
+
+    const sendChatSnapshot = (content: string) => {
+      store.handleRealtimeEvent('chat', {
+        runId,
+        sessionKey,
+        state: 'delta',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: content }],
+        },
+      }, { refreshHistory: false })
+      flush()
+    }
+    const sendAgentTelemetry = (text: string) => {
+      store.handleRealtimeEvent('agent', {
+        runId,
+        sessionKey,
+        stream: 'assistant',
+        data: { text, delta: text, replace: false },
+      }, { refreshHistory: false, streaming: true })
+    }
+
+    sendChatSnapshot("I'll generate the report.")
+    sendAgentTelemetry('报告数据已采集完成。')
+    sendChatSnapshot("I'll generate the report.报告数据已采集完成。")
+    sendAgentTelemetry('✅ 报告已生成。')
+    sendChatSnapshot("I'll generate the report.报告数据已采集完成。✅ 报告已生成。")
+    sendAgentTelemetry('✅ 报告已生成。需要的话我也可以导出 PDF。')
+    sendChatSnapshot("I'll generate the report.报告数据已采集完成。✅ 报告已生成。需要的话我也可以导出 PDF。")
+
+    expect(store.messages).toEqual([expect.objectContaining({
+      id: `chat-stream:${runId}`,
+      role: 'assistant',
+      content: "I'll generate the report.报告数据已采集完成。✅ 报告已生成。需要的话我也可以导出 PDF。",
+    })])
+    expect(store.messages[0]?.content.match(/✅ 报告已生成。/gu)).toHaveLength(1)
+  })
+
+  it('does not append a new chat stream to the previous persisted assistant turn', async () => {
+    const flush = stubAnimationFrames()
+    const sessionKey = 'agent:main:main:dm:webchat-stream-boundary'
+    mocks.listChatHistory.mockResolvedValue([
+      { id: 'persisted-user', role: 'user', content: '生成报告' },
+      { id: 'persisted-assistant', role: 'assistant', content: '报告数据已采集完成。' },
+      { id: 'persisted-tool', role: 'tool', content: '报告文件已生成。' },
+    ])
+
+    const store = useChatStore()
+    store.setSessionKey(sessionKey)
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+    store.handleRealtimeEvent('chat', {
+      runId: 'run-stream-boundary',
+      sessionKey,
+      state: 'delta',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: '✅ 报告已生成。' }],
+      },
+    }, { refreshHistory: false })
+    flush()
+
+    expect(store.messages).toHaveLength(4)
+    expect(store.messages[1]?.content).toBe('报告数据已采集完成。')
+    expect(store.messages[3]).toEqual(expect.objectContaining({
+      id: 'chat-stream:run-stream-boundary',
+      content: '✅ 报告已生成。',
+    }))
+  })
+
+  it('drops the temporary chat projection after a terminal event and authoritative refresh', async () => {
+    const flush = stubAnimationFrames()
+
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-report-final'
+    const runId = 'run-report-final'
+    const history = [
+      { id: 'persisted-user', role: 'user' as const, content: '生成报告' },
+      { id: 'persisted-assistant', role: 'assistant' as const, content: '报告已生成' },
+    ]
+    mocks.listChatHistory.mockResolvedValue(history)
+    store.setSessionKey(sessionKey)
+    store.handleRealtimeEvent('chat', {
+      runId,
+      sessionKey,
+      state: 'delta',
+      message: { role: 'assistant', content: [{ type: 'text', text: '实时累计正文' }] },
+    }, { refreshHistory: false })
+    flush()
+
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+    expect(store.messages.some((item) => item.id === `chat-stream:${runId}`)).toBe(true)
+
+    store.handleRealtimeEvent('chat', {
+      runId,
+      sessionKey,
+      state: 'final',
+    }, { refreshHistory: false })
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+
+    expect(store.messages).toEqual(history)
+    expect(store.messages.some((item) => item.id?.startsWith('chat-stream:'))).toBe(false)
+  })
+
   it('accepts a nested report event for the selected session', () => {
     const store = useChatStore()
     const sessionKey = 'agent:main:main:dm:webchat-report-1'
     store.setSessionKey(sessionKey)
 
-    store.handleRealtimeEvent({
+    store.handleRealtimeEvent('chat', {
       payload: {
         message: {
           sessionKey,
@@ -127,7 +278,7 @@ describe('realtime event routing', () => {
     const store = useChatStore()
     store.setSessionKey('agent:main:main:dm:webchat-selected')
 
-    store.handleRealtimeEvent({
+    store.handleRealtimeEvent('chat', {
       data: {
         result: {
           message: {
@@ -147,7 +298,7 @@ describe('realtime event routing', () => {
     const sessionKey = 'agent:main:main:dm:webchat-deep-report'
     store.setSessionKey(sessionKey)
 
-    store.handleRealtimeEvent({
+    store.handleRealtimeEvent('chat', {
       payload: {
         data: {
           event: {
@@ -173,7 +324,7 @@ describe('realtime event routing', () => {
     const sessionKey = 'agent:main:main:dm:webchat-context-report'
     store.setSessionKey(sessionKey)
 
-    store.handleRealtimeEvent({
+    store.handleRealtimeEvent('chat', {
       context: {
         envelope: {
           body: {
@@ -249,6 +400,7 @@ describe('post-send history fallback', () => {
 
   it('keeps a realtime report reply while Gateway history is still user-only', async () => {
     vi.useFakeTimers()
+    const flush = stubAnimationFrames()
     const sessionKey = 'agent:main:main:dm:webchat-report-history-lag'
     mocks.sendChatMessage.mockResolvedValue(undefined)
     mocks.listChatHistory.mockResolvedValue([
@@ -258,16 +410,16 @@ describe('post-send history fallback', () => {
     const store = useChatStore()
     store.setSessionKey(sessionKey)
     await store.sendMessage('生成最近七天的综述报告')
-    store.handleRealtimeEvent({
-      payload: {
-        message: {
-          sessionKey,
-          messageId: 'report-reply-1',
-          role: 'assistant',
-          content: '报告已生成：NAPM 系统综述报告',
-        },
+    store.handleRealtimeEvent('chat', {
+      runId: 'run-report-history-lag',
+      sessionKey,
+      state: 'delta',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: '报告已生成：NAPM 系统综述报告' }],
       },
     }, { refreshHistory: false })
+    flush()
 
     await store.fetchHistory(sessionKey, { silent: true, clearError: false })
 

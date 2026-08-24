@@ -91,6 +91,7 @@ export const useChatStore = defineStore('chat', () => {
   let pollTimers: Array<ReturnType<typeof setTimeout>> = []
   let streamFlushRaf: number | null = null
   let pendingStreamMessages: ChatMessage[] = []
+  let activeRealtimeMessageId: string | null = null
   let lastToolPreviewUpdateAtMs = 0
   const finalizedRuns = new Map<string, number>()
   let historyRequestId = 0
@@ -355,6 +356,7 @@ export const useChatStore = defineStore('chat', () => {
     }
     finalizedRuns.clear()
     pendingStreamMessages = []
+    activeRealtimeMessageId = null
     if (streamFlushRaf !== null) {
       cancelAnimationFrame(streamFlushRaf)
       streamFlushRaf = null
@@ -624,12 +626,15 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function mergePendingMessages(history: ChatMessage[]): ChatMessage[] {
-    // A report reply can arrive through realtime events before Gateway writes
-    // it to chat.history. Keep every locally visible turn that is absent from
-    // the response, not only web-/local- user placeholders, so the next
-    // silent refresh cannot make a rendered report disappear.
+    // Only preserve explicit local user placeholders and the one active chat
+    // stream. Agent telemetry and completed realtime projections must never
+    // outlive the authoritative Gateway transcript.
     const merged = [...history]
-    for (const item of messages.value) {
+    const pending = messages.value.filter((item) => {
+      const id = item.id || ''
+      return id.startsWith('web-') || id.startsWith('local-') || id === activeRealtimeMessageId
+    })
+    for (const item of pending) {
       const existingIndex = item.id
         ? merged.findIndex((existing) => existing.id && existing.id === item.id)
         : -1
@@ -661,6 +666,7 @@ export const useChatStore = defineStore('chat', () => {
     nextMessages: ChatMessage[],
     options?: {
       streaming?: boolean
+      replaceExisting?: boolean
     }
   ) {
     if (nextMessages.length === 0) return
@@ -674,9 +680,15 @@ export const useChatStore = defineStore('chat', () => {
           const existing = list[existingIndex]
           if (!existing) continue
           list[existingIndex] =
-            next.content.length >= existing.content.length
+            options?.replaceExisting || next.content.length >= existing.content.length
               ? { ...existing, ...next }
               : existing
+          continue
+        }
+        if (next.id.startsWith('chat-stream:')) {
+          // A live chat projection is its own temporary bubble. Never merge it
+          // into a persisted assistant turn that happened before a tool call.
+          list.push(next)
           continue
         }
       }
@@ -718,31 +730,64 @@ export const useChatStore = defineStore('chat', () => {
     messages.value = list
   }
 
+  function flushPendingStreamMessages() {
+    if (streamFlushRaf !== null) {
+      cancelAnimationFrame(streamFlushRaf)
+      streamFlushRaf = null
+    }
+    if (pendingStreamMessages.length === 0) return
+    const batch = pendingStreamMessages
+    pendingStreamMessages = []
+    mergeRealtimeMessages(batch, { streaming: true, replaceExisting: true })
+  }
+
   function handleRealtimeEvent(
+    eventName: string,
     payload: unknown,
     options?: {
       refreshHistory?: boolean
       streaming?: boolean
     }
   ) {
+    const normalizedEvent = eventName.trim().toLowerCase()
+    // OpenClaw emits both high-level chat projections and low-level agent
+    // telemetry. Only chat events own transcript text; agent events are handled
+    // separately by handleAgentStatusEvent.
+    if (normalizedEvent !== 'chat' && !normalizedEvent.startsWith('chat.')) return
+
     const keyInEvent = extractSessionKey(payload)
     // Administrators receive events from every Gateway channel. Only the
     // exact selected session may update this transcript; an external-channel
     // event must never appear inside an open WebChat conversation.
     if (!shouldApplyRealtimeEvent(sessionKey.value, keyInEvent)) return
 
-    // 从 sessionKey 中提取 agentId
-    let agentId = 'default'
-    if (keyInEvent) {
-      const match = keyInEvent.match(/^agent:([^:]+):/)
-      if (match && match[1]) {
-        agentId = match[1]
-      }
+    const payloadRow = asRecord(payload)
+    const state = resolveChatEventState(normalizedEvent, payloadRow)
+    const runId = extractRunId(payload)
+    const isTerminal = state === 'final' || state === 'done' || state === 'aborted' || state === 'error'
+    const streamMessageId = runId
+      ? `chat-stream:${runId}`
+      : state
+        ? activeRealtimeMessageId || (keyInEvent ? `chat-stream:${keyInEvent}` : '')
+        : ''
+    const realtimeMessages = extractRealtimeMessages(payload).map((item) =>
+      item.role === 'assistant' && streamMessageId
+        ? { ...item, id: streamMessageId }
+        : item
+    )
+    const streaming = state === 'delta' || (options?.streaming ?? false)
+
+    if (state === 'delta' && streamMessageId) {
+      activeRealtimeMessageId = streamMessageId
+    }
+    if (isTerminal) {
+      // Commit any queued delta before the terminal snapshot, then stop
+      // preserving the temporary bubble. The next history refresh replaces it
+      // with the authoritative persisted turns.
+      flushPendingStreamMessages()
     }
 
-    // 处理实时消息
-    const realtimeMessages = extractRealtimeMessages(payload)
-    if (options?.streaming) {
+    if (streaming && !isTerminal) {
       pendingStreamMessages.push(...realtimeMessages)
       if (streamFlushRaf === null) {
         // 对齐浏览器绘制帧合并流式增量，减少滚动“抖动/跳帧”观感
@@ -751,11 +796,15 @@ export const useChatStore = defineStore('chat', () => {
           if (pendingStreamMessages.length === 0) return
           const batch = pendingStreamMessages
           pendingStreamMessages = []
-          mergeRealtimeMessages(batch, { streaming: true })
+          mergeRealtimeMessages(batch, { streaming: true, replaceExisting: true })
         })
       }
     } else {
-      mergeRealtimeMessages(realtimeMessages, { streaming: false })
+      mergeRealtimeMessages(realtimeMessages, { streaming: false, replaceExisting: Boolean(streamMessageId) })
+    }
+
+    if (isTerminal) {
+      activeRealtimeMessageId = null
     }
 
     if (options?.refreshHistory ?? true) {

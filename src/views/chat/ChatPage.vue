@@ -2583,6 +2583,7 @@ onMounted(async () => {
         eventName.startsWith('model.')
       ) {
         const name = eventName.toLowerCase()
+        const isChatEvent = name === 'chat' || name.startsWith('chat.')
         const isStreamingEvent =
           name.includes('stream') ||
           name.includes('delta') ||
@@ -2590,10 +2591,12 @@ onMounted(async () => {
           name.includes('partial') ||
           looksLikeStreamingPayload(data.payload)
         chatStore.handleAgentStatusEvent(eventName, data.payload)
-        chatStore.handleRealtimeEvent(data.payload, {
-          refreshHistory: false,
-          streaming: isStreamingEvent,
-        })
+        if (isChatEvent) {
+          chatStore.handleRealtimeEvent(eventName, data.payload, {
+            refreshHistory: false,
+            streaming: isStreamingEvent,
+          })
+        }
       }
     })
   )
