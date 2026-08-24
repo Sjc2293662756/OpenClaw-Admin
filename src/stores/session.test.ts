@@ -187,7 +187,7 @@ describe('session list progressive loading', () => {
     })
   })
 
-  it('initializes a newly created workspace session before returning it', async () => {
+  it('initializes an explicitly empty session before returning it', async () => {
     const key = 'agent:main:main:dm:webchat-initialized'
     mocks.listSessions.mockResolvedValue([])
     mocks.listChatHistory.mockResolvedValue([{
@@ -201,10 +201,23 @@ describe('session list progressive loading', () => {
     }))
     const store = useSessionStore()
 
-    await expect(store.createSession({})).resolves.toBe(key)
+    await expect(store.createInitializedSession({})).resolves.toBe(key)
     expect(mocks.sendChatMessage).toHaveBeenCalledWith(expect.objectContaining({
       sessionKey: key,
       message: '/new',
     }))
+  })
+
+  it('issues a workspace conversation key without sending a reset command', async () => {
+    const key = 'agent:main:main:dm:webchat-direct-first-turn'
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, sessionKey: key }),
+    }))
+    const store = useSessionStore()
+
+    await expect(store.createWorkspaceSession()).resolves.toBe(key)
+    expect(mocks.sendChatMessage).not.toHaveBeenCalled()
+    expect(mocks.listChatHistory).not.toHaveBeenCalled()
   })
 })

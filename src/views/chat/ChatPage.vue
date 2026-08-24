@@ -2708,9 +2708,9 @@ async function handleSend() {
   try {
     let createdWorkspaceSession = false
     if (workspaceMode.value && !sessionKeyInput.value.trim()) {
-      // 复用统一的新会话流程：先让 Gateway 初始化并持久化会话，
-      // 再发送首条正式需求，避免实时消息只能显示而无法在刷新后回放。
-      const key = await sessionStore.createSession({})
+      // BFF 已签发全新的唯一会话键。首条正式需求直接创建 Gateway
+      // transcript；这里不能先发 `/new`，否则重置落盘会与首条消息竞态。
+      const key = await sessionStore.createWorkspaceSession()
       sessionKeyInput.value = key
       await router.replace({
         name: 'ChatWorkspace',

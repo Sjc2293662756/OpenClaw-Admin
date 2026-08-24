@@ -855,7 +855,7 @@ function handleOpenCreateModal() {
 async function handleCreateSession() {
   creating.value = true
   try {
-    await sessionStore.createSession({
+    await sessionStore.createInitializedSession({
       agentId: createForm.value.agentId || 'main',
       channel: createForm.value.channel || 'main',
       peer: createForm.value.peer || undefined,

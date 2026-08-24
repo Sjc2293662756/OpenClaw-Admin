@@ -416,12 +416,15 @@ export const useSessionStore = defineStore('session', () => {
     return result.sessionKey
   }
 
-  async function createSession(params: {
+  async function createInitializedSession(params: {
     agentId?: string
     channel?: string
     peer?: string
     label?: string
   }): Promise<string> {
+    // 仅供“创建空会话”的管理入口使用。工作台首条正式消息不得调用本方法，
+    // 因为 `/new` 是重置命令；紧接着发送业务消息会与 Gateway transcript
+    // 初始化形成竞态。工作台应调用 createWorkspaceSession 后直接 chat.send。
     // Gateway 会话键只能由 Admin BFF 签发并登记归属。保留旧页面传入的
     // agent/channel/peer 字段，仅兼容其表单调用；它们不再参与会话键拼接。
     const sessionKey = await createWorkspaceSession()
@@ -468,7 +471,7 @@ export const useSessionStore = defineStore('session', () => {
     setLongTermRetention,
     spawnSession,
     createWorkspaceSession,
-    createSession,
+    createInitializedSession,
     patchSessionLabel,
     exportSession,
   }
