@@ -10,6 +10,7 @@ export type ChatReportFile = {
   status: ChatReportStatus
   sourceSessionId?: string | null
   sourceMessageId?: string | null
+  sourceMessagePreview?: string | null
   createdAt: number
 }
 
@@ -43,11 +44,12 @@ export function mapReportsToAssistantMessages(
   reports: ChatReportFile[],
 ): Map<ChatMessage, ChatReportFile[]> {
   const result = new Map<ChatMessage, ChatReportFile[]>()
-  const candidates = messages
+  const assistantMessages = messages
     .map((message, index) => ({ message, index, text: messageText(message) }))
-    .filter(({ message }) => hasReportDocumentReference(message))
+    .filter(({ message, text }) => message.role === 'assistant' && text.trim().length > 0)
+  const reportCandidates = assistantMessages.filter(({ message }) => hasReportDocumentReference(message))
 
-  if (candidates.length === 0) return result
+  if (assistantMessages.length === 0) return result
 
   const messageIndexById = new Map<string, number>()
   messages.forEach((message, index) => {
@@ -56,22 +58,41 @@ export function mapReportsToAssistantMessages(
 
   const sortedReports = [...reports].sort((left, right) => left.createdAt - right.createdAt)
   for (const report of sortedReports) {
-    let target: (typeof candidates)[number] | undefined
-    const sourceIndex = report.sourceMessageId
+    let target: (typeof assistantMessages)[number] | undefined
+    let sourceIndex = report.sourceMessageId
       ? messageIndexById.get(report.sourceMessageId)
       : undefined
+    const sourcePreview = String(report.sourceMessagePreview || '').trim()
+    if (sourceIndex === undefined && sourcePreview) {
+      sourceIndex = messages.findIndex((message) =>
+        message.role === 'user' && messageText(message).trim().slice(0, 500) === sourcePreview
+      )
+      if (sourceIndex < 0) sourceIndex = undefined
+    }
 
     if (sourceIndex !== undefined) {
-      const following = candidates.filter((candidate) => candidate.index > sourceIndex)
-      target = following.find((candidate) => candidate.text.includes(report.name)) || following[0]
+      const nextUserIndex = messages.findIndex((message, index) =>
+        index > sourceIndex && message.role === 'user'
+      )
+      const turnEnd = nextUserIndex >= 0 ? nextUserIndex : messages.length
+      const following = assistantMessages.filter((candidate) =>
+        candidate.index > sourceIndex && candidate.index < turnEnd
+      )
+      target = following.find((candidate) => candidate.text.includes(report.name))
+        || [...following].reverse().find(({ message }) => hasReportDocumentReference(message))
+        || [...following].reverse().find((candidate) => {
+          const timestamp = messageTimestamp(candidate.message)
+          return timestamp !== null && timestamp >= report.createdAt
+        })
+        || following[following.length - 1]
     }
 
     if (!target) {
-      target = candidates.find((candidate) => candidate.text.includes(report.name))
+      target = reportCandidates.find((candidate) => candidate.text.includes(report.name))
     }
 
     if (!target && Number.isFinite(report.createdAt)) {
-      const nearby = candidates
+      const nearby = reportCandidates
         .map((candidate) => ({
           candidate,
           distance: Math.abs((messageTimestamp(candidate.message) ?? Number.POSITIVE_INFINITY) - report.createdAt),
@@ -81,8 +102,8 @@ export function mapReportsToAssistantMessages(
       target = nearby?.candidate
     }
 
-    if (!target && candidates.length === 1 && reports.length === 1) {
-      target = candidates[0]
+    if (!target && reportCandidates.length === 1 && reports.length === 1) {
+      target = reportCandidates[0]
     }
 
     if (!target) continue

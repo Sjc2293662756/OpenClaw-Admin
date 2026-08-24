@@ -1645,11 +1645,6 @@ function parseStructuredMessage(content: string): StructuredMessageView | null {
 }
 
 const messageList = computed(() => chatStore.messages)
-const {
-  downloadingReportId,
-  downloadReport,
-  reportsForMessage,
-} = useChatReportAttachments(selectedSessionKey, messageList)
 
 const visibleMessageEntries = computed<RenderMessage[]>(() => {
   const list = messageList.value
@@ -1708,6 +1703,12 @@ const currentAgentId = computed(() => {
 const currentAgentStatus = computed(() => {
   return chatStore.getOrCreateAgentStatus(currentAgentId.value)
 })
+const reportCompletionSignal = computed(() => currentAgentStatus.value.finishedAtMs)
+const {
+  downloadingReportId,
+  downloadReport,
+  reportsForMessage,
+} = useChatReportAttachments(selectedSessionKey, messageList, reportCompletionSignal)
 
 const agentBusy = computed(() => {
   const phase = currentAgentStatus.value.phase

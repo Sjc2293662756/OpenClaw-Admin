@@ -16,11 +16,12 @@ type ReportsResponse = {
   message?: string
 }
 
-const REGISTRATION_RETRY_DELAYS = [500, 3000, 8000]
+const REGISTRATION_RETRY_DELAYS = [250, 1500, 3500, 7000]
 
 export function useChatReportAttachments(
   sessionKey: Readonly<Ref<string | null | undefined>>,
   messages: Readonly<Ref<ChatMessage[]>>,
+  completionSignal?: Readonly<Ref<unknown>>,
 ) {
   const authStore = useAuthStore()
   const notice = useMessage()
@@ -141,6 +142,12 @@ export function useChatReportAttachments(
   watch(reportMessageSignature, (next, previous) => {
     if (next && next !== previous) scheduleRegistrationRefresh()
   })
+
+  if (completionSignal) {
+    watch(completionSignal, (next, previous) => {
+      if (next && next !== previous) scheduleRegistrationRefresh()
+    })
+  }
 
   onScopeDispose(() => {
     clearScheduledRefreshes()

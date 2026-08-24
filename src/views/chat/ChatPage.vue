@@ -422,12 +422,6 @@ const sessionChannelDisplay = computed(() => {
 })
 
 const messageList = computed(() => chatStore.messages)
-const {
-  downloadingReportId,
-  downloadReport,
-  reportsForMessage,
-} = useChatReportAttachments(normalizedSessionKey, messageList)
-
 function isThinkingOnlyStructuredMessage(structured: StructuredMessageView | null): boolean {
   if (!structured) return false
   if (structured.thinkings.length === 0) return false
@@ -875,6 +869,12 @@ const currentAgentId = computed(() => {
 const currentAgentStatus = computed(() => {
   return chatStore.getOrCreateAgentStatus(currentAgentId.value)
 })
+const reportCompletionSignal = computed(() => currentAgentStatus.value.finishedAtMs)
+const {
+  downloadingReportId,
+  downloadReport,
+  reportsForMessage,
+} = useChatReportAttachments(normalizedSessionKey, messageList, reportCompletionSignal)
 
 const currentToolProgress = computed(() => {
   return chatStore.toolProgress.get(currentAgentId.value) || null

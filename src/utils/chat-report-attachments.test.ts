@@ -15,6 +15,7 @@ function report(overrides: Partial<ChatReportFile> = {}): ChatReportFile {
     status: 'ready',
     sourceSessionId: 'session-1',
     sourceMessageId: 'user-1',
+    sourceMessagePreview: '生成巡检报告',
     createdAt: Date.parse('2026-08-24T02:00:05Z'),
     ...overrides,
   }
@@ -36,6 +37,35 @@ describe('mapReportsToAssistantMessages', () => {
     const mapping = mapReportsToAssistantMessages([user, assistant], [report()])
 
     expect(mapping.get(assistant)?.map((item) => item.id)).toEqual(['report-1'])
+  })
+
+  it('places the card after the final assistant reply even when it omits the filename', () => {
+    const user: ChatMessage = { id: 'user-1', role: 'user', content: '生成巡检报告', timestamp: '2026-08-24T02:00:00Z' }
+    const preparing: ChatMessage = { role: 'assistant', content: '正在整理数据。', timestamp: '2026-08-24T02:00:02Z' }
+    const completed: ChatMessage = { role: 'assistant', content: '报告已经生成完成，可以下载查看。', timestamp: '2026-08-24T02:00:08Z' }
+    const mapping = mapReportsToAssistantMessages([user, preparing, completed], [report()])
+
+    expect(mapping.get(preparing)).toBeUndefined()
+    expect(mapping.get(completed)?.map((item) => item.id)).toEqual(['report-1'])
+  })
+
+  it('does not carry a source report card into the next user turn', () => {
+    const source: ChatMessage = { id: 'user-1', role: 'user', content: '生成巡检报告' }
+    const completed: ChatMessage = { role: 'assistant', content: '报告已经生成完成。' }
+    const nextUser: ChatMessage = { id: 'user-2', role: 'user', content: '谢谢' }
+    const nextReply: ChatMessage = { role: 'assistant', content: '不客气。' }
+    const mapping = mapReportsToAssistantMessages([source, completed, nextUser, nextReply], [report()])
+
+    expect(mapping.get(completed)?.[0]?.id).toBe('report-1')
+    expect(mapping.get(nextReply)).toBeUndefined()
+  })
+
+  it('uses the signed source preview when Gateway history assigns a different message id', () => {
+    const user: ChatMessage = { id: 'gateway-user-9', role: 'user', content: '生成巡检报告' }
+    const completed: ChatMessage = { role: 'assistant', content: '报告已经生成完成。' }
+    const mapping = mapReportsToAssistantMessages([user, completed], [report({ sourceMessageId: 'web-local-id' })])
+
+    expect(mapping.get(completed)?.[0]?.id).toBe('report-1')
   })
 
   it('uses the exact name only as a placement fallback within the fetched session reports', () => {
