@@ -40,7 +40,9 @@ import { stripInternalDocxMediaPaths } from '@/utils/report-media'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { usePermissions } from '@/composables/usePermissions'
+import { useChatReportAttachments } from '@/composables/useChatReportAttachments'
 import AuthenticatedMediaImage from '@/components/common/AuthenticatedMediaImage.vue'
+import ReportAttachmentList from '@/components/chat/ReportAttachmentList.vue'
 import type { AgentInstance, ChatMessage, ChatMessageContent, SessionsUsageSession, Skill } from '@/api/types'
 
 const props = withDefaults(defineProps<{ workspace?: boolean; initialDraft?: string }>(), {
@@ -420,6 +422,12 @@ const sessionChannelDisplay = computed(() => {
 })
 
 const messageList = computed(() => chatStore.messages)
+const {
+  downloadingReportId,
+  downloadReport,
+  reportsForMessage,
+} = useChatReportAttachments(normalizedSessionKey, messageList)
+
 function isThinkingOnlyStructuredMessage(structured: StructuredMessageView | null): boolean {
   if (!structured) return false
   if (structured.thinkings.length === 0) return false
@@ -3145,6 +3153,13 @@ async function handleSend() {
                             v-html="renderChatMarkdown(entry.item.content, entry.item.role)"
                           ></div>
                         </div>
+
+                        <ReportAttachmentList
+                          v-if="reportsForMessage(entry.item).length"
+                          :reports="reportsForMessage(entry.item)"
+                          :downloading-id="downloadingReportId"
+                          @download="downloadReport"
+                        />
                       </div>
                     </template>
 

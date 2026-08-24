@@ -1234,6 +1234,13 @@ export default {
         preview: '图片预览',
         unavailable: '图片不可用',
       },
+      reportAttachment: {
+        download: '下载报告',
+        wordDocument: 'Word 文档',
+        unavailable: '报告文件暂不可用',
+        loadFailed: '报告附件读取失败',
+        downloadFailed: '报告下载失败',
+      },
       sync: {
         syncing: '实时同步中...',
         syncedAt: '已同步 {time}',

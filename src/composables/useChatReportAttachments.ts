@@ -1,0 +1,156 @@
+import { computed, onScopeDispose, ref, watch, type Ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useMessage } from 'naive-ui'
+import { useAuthStore } from '@/stores/auth'
+import type { ChatMessage } from '@/api/types'
+import {
+  hasReportDocumentReference,
+  mapReportsToAssistantMessages,
+  type ChatReportFile,
+} from '@/utils/chat-report-attachments'
+
+type ReportsResponse = {
+  ok?: boolean
+  reports?: ChatReportFile[]
+  error?: string
+  message?: string
+}
+
+const REGISTRATION_RETRY_DELAYS = [500, 3000, 8000]
+
+export function useChatReportAttachments(
+  sessionKey: Readonly<Ref<string | null | undefined>>,
+  messages: Readonly<Ref<ChatMessage[]>>,
+) {
+  const authStore = useAuthStore()
+  const notice = useMessage()
+  const { t } = useI18n()
+  const reports = ref<ChatReportFile[]>([])
+  const downloadingReportId = ref('')
+  const scheduledRefreshes = new Set<ReturnType<typeof setTimeout>>()
+  let requestGeneration = 0
+  let retryGeneration = 0
+
+  const reportsByMessage = computed(() =>
+    mapReportsToAssistantMessages(messages.value, reports.value)
+  )
+
+  const reportMessageSignature = computed(() => {
+    const latest = [...messages.value].reverse().find(hasReportDocumentReference)
+    if (!latest) return ''
+    return `${latest.id || ''}|${latest.timestamp || ''}|${latest.content.length}`
+  })
+
+  function currentSessionKey(): string {
+    return String(sessionKey.value || '').trim()
+  }
+
+  function authorizationHeaders() {
+    return { Authorization: `Bearer ${authStore.getToken()}` }
+  }
+
+  function clearScheduledRefreshes() {
+    retryGeneration += 1
+    for (const timer of scheduledRefreshes) clearTimeout(timer)
+    scheduledRefreshes.clear()
+  }
+
+  async function refreshReports(rawSessionKey = sessionKey.value) {
+    const key = String(rawSessionKey || '').trim()
+    const generation = ++requestGeneration
+    if (!key) {
+      reports.value = []
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/reports?sourceSessionId=${encodeURIComponent(key)}`, {
+        headers: authorizationHeaders(),
+        cache: 'no-store',
+      })
+      const data = await response.json().catch(() => null) as ReportsResponse | null
+      if (!response.ok || !data?.ok || !Array.isArray(data.reports)) {
+        throw new Error(data?.error || data?.message || t('pages.chat.reportAttachment.loadFailed'))
+      }
+      if (generation === requestGeneration && key === currentSessionKey()) {
+        reports.value = data.reports
+      }
+    } catch (error) {
+      if (generation === requestGeneration) {
+        console.warn('[WebChat] Failed to load session reports:', error)
+      }
+    }
+  }
+
+  function scheduleRegistrationRefresh() {
+    clearScheduledRefreshes()
+    const generation = retryGeneration
+    const key = currentSessionKey()
+    if (!key) return
+
+    for (const delay of REGISTRATION_RETRY_DELAYS) {
+      const timer = setTimeout(() => {
+        scheduledRefreshes.delete(timer)
+        if (generation !== retryGeneration || key !== currentSessionKey()) return
+        void refreshReports(key)
+      }, delay)
+      scheduledRefreshes.add(timer)
+    }
+  }
+
+  function reportsForMessage(message: ChatMessage): ChatReportFile[] {
+    return reportsByMessage.value.get(message) || []
+  }
+
+  async function downloadReport(report: ChatReportFile) {
+    if (report.status !== 'ready' || downloadingReportId.value) return
+    downloadingReportId.value = report.id
+    try {
+      const response = await fetch(`/api/reports/${encodeURIComponent(report.id)}/download`, {
+        headers: authorizationHeaders(),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as ReportsResponse | null
+        throw new Error(data?.error || data?.message || t('pages.chat.reportAttachment.downloadFailed'))
+      }
+      const objectUrl = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = report.name
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(objectUrl)
+    } catch (error) {
+      notice.error(error instanceof Error ? error.message : t('pages.chat.reportAttachment.downloadFailed'))
+    } finally {
+      downloadingReportId.value = ''
+    }
+  }
+
+  watch(
+    sessionKey,
+    (key) => {
+      clearScheduledRefreshes()
+      reports.value = []
+      void refreshReports(key)
+    },
+    { immediate: true },
+  )
+
+  watch(reportMessageSignature, (next, previous) => {
+    if (next && next !== previous) scheduleRegistrationRefresh()
+  })
+
+  onScopeDispose(() => {
+    clearScheduledRefreshes()
+    requestGeneration += 1
+  })
+
+  return {
+    downloadingReportId,
+    downloadReport,
+    refreshReports,
+    reportsForMessage,
+  }
+}
