@@ -50,8 +50,24 @@ interface ToolProgress {
 const MAX_AGENT_STEPS = 30
 const TOOL_PREVIEW_MAX_CHARS = 6000
 const FINALIZED_RUN_TTL_MS = 5 * 60 * 1000
-const MAX_EVENT_NESTING = 4
-const EVENT_WRAPPER_KEYS = ['payload', 'data', 'event', 'session', 'message', 'result'] as const
+// Report/tool events can carry the message inside several protocol envelopes.
+// Keep traversal bounded while covering the deepest Gateway envelopes seen in
+// production.
+const MAX_EVENT_NESTING = 8
+const EVENT_WRAPPER_KEYS = [
+  'payload',
+  'data',
+  'event',
+  'session',
+  'message',
+  'result',
+  'context',
+  'meta',
+  'request',
+  'response',
+  'envelope',
+  'body',
+] as const
 const MESSAGE_CONTAINER_KEYS = ['messages', 'items', 'transcript', 'history', 'events', 'turns'] as const
 
 export const useChatStore = defineStore('chat', () => {
@@ -386,9 +402,9 @@ export const useChatStore = defineStore('chat', () => {
         const history = await wsStore.rpc.listChatHistory(normalizedKey)
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
         // Gateway can acknowledge a send before its transcript is visible to
-        // chat.history. Keep optimistic local turns during silent refreshes so
-        // a temporary empty/partial response cannot blank the conversation.
-        messages.value = silent ? mergePendingMessages(history) : history
+        // chat.history. Keep optimistic local turns during every refresh so a
+        // temporary empty/partial response cannot blank a running conversation.
+        messages.value = mergePendingMessages(history)
         lastSyncedAt.value = Date.now()
       } catch (error) {
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
@@ -476,6 +492,15 @@ export const useChatStore = defineStore('chat', () => {
 
     for (const key of EVENT_WRAPPER_KEYS) {
       const nested = extractSessionKey(row[key], depth + 1, visited)
+      if (nested) return nested
+    }
+    // Gateway/plugin versions may introduce a new envelope name. After the
+    // protocol-known keys, inspect other object fields within the same bound
+    // instead of silently dropping the event.
+    for (const [key, value] of Object.entries(row)) {
+      if (key === 'sessionKey' || key === 'key' || key === 'session' || EVENT_WRAPPER_KEYS.includes(key as typeof EVENT_WRAPPER_KEYS[number])) continue
+      if (!value || typeof value !== 'object') continue
+      const nested = extractSessionKey(value, depth + 1, visited)
       if (nested) return nested
     }
     return ''
@@ -577,6 +602,13 @@ export const useChatStore = defineStore('chat', () => {
 
     for (const key of EVENT_WRAPPER_KEYS) {
       const nested = row[key]
+      if (nested && typeof nested === 'object') {
+        messages.push(...extractRealtimeMessages(nested, depth + 1, visited))
+      }
+    }
+
+    for (const [key, nested] of Object.entries(row)) {
+      if (MESSAGE_CONTAINER_KEYS.includes(key as typeof MESSAGE_CONTAINER_KEYS[number]) || EVENT_WRAPPER_KEYS.includes(key as typeof EVENT_WRAPPER_KEYS[number])) continue
       if (nested && typeof nested === 'object') {
         messages.push(...extractRealtimeMessages(nested, depth + 1, visited))
       }
@@ -1015,6 +1047,11 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date().toISOString(),
     }
     messages.value = [...messages.value, localMessage]
+    // Start the fallback while the Gateway is still running the request. Long
+    // report/tool runs may not resolve chat.send until after their transcript
+    // is complete, so waiting for that RPC would leave the UI with no recovery
+    // path if an intermediate event is missed.
+    schedulePostSendRefreshes()
 
     sending.value = true
     lastError.value = null
@@ -1029,8 +1066,12 @@ export const useChatStore = defineStore('chat', () => {
       if (agentStatus.phase === 'sending' && agentStatus.runId === idempotencyKey) {
         setAgentStatusPhase(agentId, 'waiting', { runId: idempotencyKey, detail: null })
       }
+      // Keep a second short polling window after the RPC resolves so the final
+      // assistant turn is picked up even when Gateway transcript persistence is
+      // slightly behind the send acknowledgement.
       schedulePostSendRefreshes()
     } catch (error) {
+      clearTimers()
       lastError.value = error instanceof Error ? error.message : String(error)
       messages.value = messages.value.filter((item) => item.id !== idempotencyKey)
       const agentStatus = getOrCreateAgentStatus(agentId)

@@ -78,6 +78,23 @@ describe('chat history request coordination', () => {
     expect(store.messages.map((item) => item.content)).toEqual(['session-b history'])
     expect(store.loading).toBe(false)
   })
+
+  it('does not let a route history race clear a locally submitted report request', async () => {
+    const history = deferred<ChatMessage[]>()
+    mocks.listChatHistory.mockReturnValue(history.promise)
+    mocks.sendChatMessage.mockResolvedValue(undefined)
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-report-race'
+
+    store.setSessionKey(sessionKey)
+    const historyRequest = store.fetchHistory(sessionKey)
+    await store.sendMessage('生成最近七天的综述报告')
+
+    history.resolve([])
+    await historyRequest
+
+    expect(store.messages.map((item) => item.content)).toEqual(['生成最近七天的综述报告'])
+  })
 })
 
 describe('realtime event routing', () => {
@@ -124,6 +141,54 @@ describe('realtime event routing', () => {
 
     expect(store.messages).toEqual([])
   })
+
+  it('accepts report events wrapped beyond the original four levels', () => {
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-deep-report'
+    store.setSessionKey(sessionKey)
+
+    store.handleRealtimeEvent({
+      payload: {
+        data: {
+          event: {
+            result: {
+              message: {
+                payload: {
+                  sessionKey,
+                  role: 'assistant',
+                  content: '最近七天综述报告已生成',
+                },
+              },
+            },
+          },
+        },
+      },
+    }, { refreshHistory: false })
+
+    expect(store.messages.map((item) => item.content)).toEqual(['最近七天综述报告已生成'])
+  })
+
+  it('routes a report event through context and envelope wrappers', () => {
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-context-report'
+    store.setSessionKey(sessionKey)
+
+    store.handleRealtimeEvent({
+      context: {
+        envelope: {
+          body: {
+            message: {
+              sessionKey,
+              role: 'assistant',
+              content: '报告正文',
+            },
+          },
+        },
+      },
+    }, { refreshHistory: false })
+
+    expect(store.messages.map((item) => item.content)).toEqual(['报告正文'])
+  })
 })
 
 describe('post-send history fallback', () => {
@@ -141,5 +206,23 @@ describe('post-send history fallback', () => {
 
     expect(mocks.listChatHistory).toHaveBeenCalledWith('agent:main:main:dm:webchat-report-2')
     expect(store.messages.map((item) => item.content)).toEqual(['给我回溯238web 最近7天的综述报告！'])
+  })
+
+  it('starts fallback history refresh before a long report send resolves', async () => {
+    vi.useFakeTimers()
+    const send = deferred<undefined>()
+    mocks.sendChatMessage.mockReturnValue(send.promise)
+    mocks.listChatHistory.mockResolvedValue([])
+
+    const store = useChatStore()
+    store.setSessionKey('agent:main:main:dm:webchat-long-report')
+    const request = store.sendMessage('生成最近七天的综述报告')
+
+    await vi.advanceTimersByTimeAsync(1400)
+    expect(mocks.listChatHistory).toHaveBeenCalledWith('agent:main:main:dm:webchat-long-report')
+    expect(store.messages.map((item) => item.content)).toEqual(['生成最近七天的综述报告'])
+
+    send.resolve(undefined)
+    await request
   })
 })

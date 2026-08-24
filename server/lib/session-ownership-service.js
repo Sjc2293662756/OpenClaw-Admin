@@ -689,7 +689,7 @@ export function enrichSessionPayload(db, payload) {
 }
 
 export function extractSessionKeyFromEvent(payload, depth = 0) {
-  if (depth > 4 || !payload || typeof payload !== 'object') return ''
+  if (depth > 8 || !payload || typeof payload !== 'object') return ''
   if (Array.isArray(payload)) {
     for (const item of payload) {
       const key = extractSessionKeyFromEvent(item, depth + 1)
@@ -700,8 +700,28 @@ export function extractSessionKeyFromEvent(payload, depth = 0) {
   const row = asRecord(payload)
   const direct = getSessionKeyFromParams(row)
   if (direct) return direct
-  for (const key of ['payload', 'data', 'event', 'session', 'message', 'result']) {
+  const wrapperKeys = [
+    'payload',
+    'data',
+    'event',
+    'session',
+    'message',
+    'result',
+    'context',
+    'meta',
+    'request',
+    'response',
+    'envelope',
+    'body',
+  ]
+  for (const key of wrapperKeys) {
     const nested = extractSessionKeyFromEvent(row[key], depth + 1)
+    if (nested) return nested
+  }
+  for (const [key, value] of Object.entries(row)) {
+    if (key === 'sessionKey' || key === 'key' || key === 'session' || wrapperKeys.includes(key)) continue
+    if (!value || typeof value !== 'object') continue
+    const nested = extractSessionKeyFromEvent(value, depth + 1)
     if (nested) return nested
   }
   return ''

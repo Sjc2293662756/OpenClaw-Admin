@@ -253,6 +253,24 @@ describe('workspace session ownership service', () => {
     })).toBe('agent:main:main:dm:webchat-123456789012')
   })
 
+  it('finds a session key from a deep report event envelope', () => {
+    expect(extractSessionKeyFromEvent({
+      payload: {
+        data: {
+          event: {
+            result: {
+              message: {
+                payload: {
+                  sessionKey: 'agent:main:main:dm:webchat-deep-report',
+                },
+              },
+            },
+          },
+        },
+      },
+    })).toBe('agent:main:main:dm:webchat-deep-report')
+  })
+
   it('derives and persists a fixed, no-AI WebChat title only from the first request', () => {
     const db = createTestDb()
     const key = createWorkspaceSession(db, alice, 1)
