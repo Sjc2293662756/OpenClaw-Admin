@@ -36,6 +36,31 @@ export const useSessionStore = defineStore('session', () => {
     return sessionKey
   }
 
+  async function waitForGatewaySessionInitialization(sessionKey: string): Promise<void> {
+    // `/new` is acknowledged before OpenClaw has necessarily written the
+    // reset marker/transcript. Do not send the first real request into that
+    // window: long report runs can otherwise leave only the assistant reply.
+    const retryDelays = [0, 200, 400, 800, 1200, 2000, 3000]
+    let lastError: unknown = null
+
+    for (const delay of retryDelays) {
+      if (delay > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
+      try {
+        const history = await wsStore.rpc.listChatHistory(sessionKey)
+        if (history.length > 0) return
+      } catch (error) {
+        lastError = error
+      }
+    }
+
+    if (lastError instanceof Error) {
+      throw new Error(`Gateway 新会话初始化未确认：${lastError.message}`)
+    }
+    throw new Error('Gateway 新会话初始化未确认，请保留当前输入后重试')
+  }
+
   function parseUsageNumber(value: unknown): number | undefined {
     if (typeof value === 'number' && Number.isFinite(value)) {
       return Math.max(0, Math.floor(value))
@@ -407,6 +432,7 @@ export const useSessionStore = defineStore('session', () => {
       message: '/new',
       idempotencyKey,
     })
+    await waitForGatewaySessionInitialization(sessionKey)
 
     if (params.label) {
       await new Promise((resolve) => setTimeout(resolve, 1500))

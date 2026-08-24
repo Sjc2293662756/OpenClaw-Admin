@@ -5,6 +5,7 @@ import { useSessionStore } from './session'
 
 const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
+  listChatHistory: vi.fn(),
   getSessionsUsage: vi.fn(),
   sendChatMessage: vi.fn(),
 }))
@@ -13,6 +14,7 @@ vi.mock('./websocket', () => ({
   useWebSocketStore: () => ({
     rpc: {
       listSessions: mocks.listSessions,
+      listChatHistory: mocks.listChatHistory,
       getSessionsUsage: mocks.getSessionsUsage,
       sendChatMessage: mocks.sendChatMessage,
     },
@@ -50,6 +52,7 @@ function session(key: string, overrides: Partial<Session> = {}): Session {
 beforeEach(() => {
   setActivePinia(createPinia())
   mocks.listSessions.mockReset()
+  mocks.listChatHistory.mockReset()
   mocks.getSessionsUsage.mockReset()
   mocks.sendChatMessage.mockReset()
   mocks.getSessionsUsage.mockResolvedValue({ sessions: [] })
@@ -187,6 +190,10 @@ describe('session list progressive loading', () => {
   it('initializes a newly created workspace session before returning it', async () => {
     const key = 'agent:main:main:dm:webchat-initialized'
     mocks.listSessions.mockResolvedValue([])
+    mocks.listChatHistory.mockResolvedValue([{
+      role: 'assistant',
+      content: '✅ New session started.',
+    }])
     mocks.sendChatMessage.mockResolvedValue({})
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
