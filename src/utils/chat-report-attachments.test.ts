@@ -4,6 +4,7 @@ import {
   hasReportDocumentReference,
   mapReportsToAssistantMessages,
   reportGenerationSignalSignature,
+  shouldDisplayUnplacedReport,
   type ChatReportFile,
 } from './chat-report-attachments'
 
@@ -170,5 +171,66 @@ describe('mapReportsToAssistantMessages', () => {
     const ambiguous = report({ name: '未出现在消息中的文件.docx', sourceMessageId: null, createdAt: Number.NaN })
 
     expect(mapReportsToAssistantMessages([first, second], [ambiguous]).size).toBe(0)
+  })
+
+  it('places a legacy report on its completion reply instead of the later conversation tail', () => {
+    const reportPrompt: ChatMessage = {
+      role: 'user',
+      content: '生成业务综述报告',
+      timestamp: '2026-08-25T05:20:00Z',
+    }
+    const reportReply: ChatMessage = {
+      role: 'assistant',
+      content: '业务综述报告已生成，可以下载查看。',
+      timestamp: '2026-08-25T05:20:08Z',
+    }
+    const laterUser: ChatMessage = {
+      role: 'user',
+      content: '你是？',
+      timestamp: '2026-08-25T05:32:56Z',
+    }
+    const laterReply: ChatMessage = {
+      role: 'assistant',
+      content: '我是观枢AI。',
+      timestamp: '2026-08-25T05:32:57Z',
+    }
+    const legacyReport = report({
+      name: '业务综述报告.docx',
+      sourceMessageId: null,
+      sourceMessagePreview: null,
+      createdAt: Date.parse('2026-08-25T05:20:07Z'),
+    })
+    const mapping = mapReportsToAssistantMessages(
+      [reportPrompt, reportReply, laterUser, laterReply],
+      [legacyReport],
+    )
+
+    expect(mapping.get(reportReply)?.map((item) => item.id)).toEqual(['report-1'])
+    expect(mapping.get(laterReply)).toBeUndefined()
+  })
+})
+
+describe('shouldDisplayUnplacedReport', () => {
+  it('hides a fallback card after a later ordinary user turn', () => {
+    const legacyReport = report({
+      sourceMessageId: null,
+      sourceMessagePreview: null,
+      createdAt: Date.parse('2026-08-25T05:20:07Z'),
+    })
+    const messages: ChatMessage[] = [
+      { role: 'user', content: '你是？', timestamp: '2026-08-25T05:32:56Z' },
+      { role: 'assistant', content: '我是观枢AI。', timestamp: '2026-08-25T05:32:57Z' },
+    ]
+
+    expect(shouldDisplayUnplacedReport(messages, legacyReport)).toBe(false)
+  })
+
+  it('keeps the fallback during the report turn while history is lagging', () => {
+    const pendingReport = report({ createdAt: Date.parse('2026-08-25T05:20:07Z') })
+    const messages: ChatMessage[] = [
+      { id: 'user-1', role: 'user', content: '生成巡检报告', timestamp: '2026-08-25T05:20:00Z' },
+    ]
+
+    expect(shouldDisplayUnplacedReport(messages, pendingReport)).toBe(true)
   })
 })

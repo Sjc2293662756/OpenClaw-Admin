@@ -225,4 +225,34 @@ describe('useChatReportAttachments', () => {
     expect(attachments.unplacedReports.value).toBe(initialReports)
     scope.stop()
   })
+
+  it('does not keep an older unplaced report below a later ordinary reply', async () => {
+    const oldReport = {
+      id: 'old-unplaced-report',
+      name: '业务综述报告.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 55296,
+      status: 'ready',
+      sourceSessionId: 'agent:main:main:dm:webchat-card-tail',
+      sourceMessageId: null,
+      sourceMessagePreview: null,
+      createdAt: Date.parse('2026-08-25T05:20:07Z'),
+    }
+    const fetchMock = vi.fn(async () => response([oldReport]))
+    vi.stubGlobal('fetch', fetchMock)
+    const sessionKey = ref('agent:main:main:dm:webchat-card-tail')
+    const messages = ref<ChatMessage[]>([
+      { role: 'user', content: '你是？', timestamp: '2026-08-25T05:32:56Z' },
+      { role: 'assistant', content: '我是观枢AI。', timestamp: '2026-08-25T05:32:57Z' },
+    ])
+    const scope = effectScope()
+    const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await attachments.refreshReports(sessionKey.value)
+    await nextTick()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(attachments.unplacedReports.value).toEqual([])
+    scope.stop()
+  })
 })

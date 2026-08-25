@@ -38,6 +38,17 @@ function hasReportExportToolCall(message: ChatMessage): boolean {
   )
 }
 
+function hasReportCompletionSignal(message: ChatMessage): boolean {
+  if (message.role !== 'assistant') return false
+  const text = messageText(message).trim()
+  return DOCX_REFERENCE_PATTERN.test(text)
+    || REPORT_COMPLETION_TEXT_PATTERN.test(text)
+}
+
+function hasReportGenerationSignal(message: ChatMessage): boolean {
+  return hasReportExportToolCall(message) || hasReportCompletionSignal(message)
+}
+
 /**
  * Produce a stable, session-local signal when a report export starts or its
  * assistant reply completes. The report Skill may omit a literal `.docx`
@@ -49,9 +60,7 @@ export function reportGenerationSignalSignature(messages: ChatMessage[]): string
     if (!message || message.role !== 'assistant') continue
     const text = messageText(message).trim()
     if (
-      !hasReportExportToolCall(message)
-      && !DOCX_REFERENCE_PATTERN.test(text)
-      && !REPORT_COMPLETION_TEXT_PATTERN.test(text)
+      !hasReportGenerationSignal(message)
     ) continue
     return [
       index,
@@ -102,6 +111,7 @@ function pickFollowingTarget(
 ) {
   return following.find((candidate) => candidate.text.includes(report.name))
     || [...following].reverse().find(({ message }) => hasReportDocumentReference(message))
+    || [...following].reverse().find(({ message }) => hasReportCompletionSignal(message))
     || [...following].reverse().find((candidate) => {
       const timestamp = messageTimestamp(candidate.message)
       return timestamp !== null && timestamp >= report.createdAt
@@ -122,7 +132,7 @@ export function mapReportsToAssistantMessages(
   const assistantMessages = messages
     .map((message, index) => ({ message, index, text: messageText(message) }))
     .filter(({ message, text }) => message.role === 'assistant' && text.trim().length > 0)
-  const reportCandidates = assistantMessages.filter(({ message }) => hasReportDocumentReference(message))
+  const reportCandidates = assistantMessages.filter(({ message }) => hasReportCompletionSignal(message))
 
   if (assistantMessages.length === 0) return result
 
@@ -207,4 +217,52 @@ export function mapReportsToAssistantMessages(
   }
 
   return result
+}
+
+/**
+ * An independent attachment is only a short-lived bridge while the report
+ * completion turn is missing from a lagging history snapshot. It must not
+ * follow later ordinary user turns at the bottom of the conversation.
+ */
+export function shouldDisplayUnplacedReport(
+  messages: ChatMessage[],
+  report: ChatReportFile,
+): boolean {
+  const createdAt = Number(report.createdAt)
+  if (Number.isFinite(createdAt)) {
+    const hasLaterUserTurn = messages.some((message) => {
+      if (message.role !== 'user') return false
+      const timestamp = messageTimestamp(message)
+      return timestamp !== null && timestamp > createdAt
+    })
+    if (hasLaterUserTurn) return false
+  }
+
+  const sourcePreview = normalizedSourcePreview(String(report.sourceMessagePreview || ''))
+  let reportTurnIndex = -1
+  messages.forEach((message, index) => {
+    if (message.role === 'user') {
+      const exactId = Boolean(report.sourceMessageId && message.id === report.sourceMessageId)
+      const exactPreview = Boolean(
+        sourcePreview
+        && normalizedSourcePreview(messageText(message).slice(0, 1000)) === sourcePreview
+      )
+      if (exactId || exactPreview) reportTurnIndex = index
+      return
+    }
+    if (hasReportCompletionSignal(message)) {
+      const timestamp = messageTimestamp(message)
+      if (
+        !Number.isFinite(createdAt)
+        || (timestamp !== null && Math.abs(timestamp - createdAt) <= 30 * 60 * 1000)
+      ) {
+        reportTurnIndex = index
+      }
+    }
+  })
+
+  if (reportTurnIndex < 0) return true
+  return !messages.some((message, index) =>
+    index > reportTurnIndex && message.role === 'user'
+  )
 }

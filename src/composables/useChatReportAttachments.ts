@@ -6,6 +6,7 @@ import type { ChatMessage } from '@/api/types'
 import {
   mapReportsToAssistantMessages,
   reportGenerationSignalSignature,
+  shouldDisplayUnplacedReport,
   type ChatReportFile,
 } from '@/utils/chat-report-attachments'
 
@@ -67,11 +68,14 @@ export function useChatReportAttachments(
     return ids
   })
 
-  // Gateway history is allowed to replace a live assistant projection with an
-  // older persisted snapshot. Keep every session-owned report visible as an
-  // independent attachment until a concrete assistant turn is available.
+  // An independent card bridges only the short window in which Gateway history
+  // has not exposed the report completion turn. Never carry it past a later
+  // ordinary user turn at the bottom of the conversation.
   const unplacedReports = computed(() =>
-    reports.value.filter((report) => !placedReportIds.value.has(report.id))
+    reports.value.filter((report) =>
+      !placedReportIds.value.has(report.id)
+      && shouldDisplayUnplacedReport(messages.value, report)
+    )
   )
 
   const reportMessageSignature = computed(() =>
