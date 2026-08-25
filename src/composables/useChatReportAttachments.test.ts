@@ -105,39 +105,7 @@ describe('useChatReportAttachments', () => {
     scope.stop()
   })
 
-  it('clears the previous report synchronously when entering a blank new conversation', async () => {
-    const oldReport = {
-      id: 'old-session-report',
-      name: '旧会话报告.docx',
-      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      size: 2048,
-      status: 'ready',
-      sourceSessionId: 'agent:main:main:dm:webchat-old',
-      sourceMessageId: 'old-source',
-      sourceMessagePreview: '生成旧会话报告',
-      createdAt: 1787622913043,
-    }
-    const fetchMock = vi.fn(async () => response([oldReport]))
-    vi.stubGlobal('fetch', fetchMock)
-
-    const sessionKey = ref('agent:main:main:dm:webchat-old')
-    const messages = ref<ChatMessage[]>([])
-    const scope = effectScope()
-    const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
-    await vi.waitFor(() => expect(attachments.unplacedReports.value).toHaveLength(1))
-
-    // The workspace sets its session key to an empty string before rendering
-    // the unstarted conversation. No old card may survive even for one tick.
-    sessionKey.value = ''
-    expect(attachments.unplacedReports.value).toEqual([])
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-
-    await nextTick()
-    expect(attachments.unplacedReports.value).toEqual([])
-    scope.stop()
-  })
-
-  it('keeps a report visible across an empty retry and an older history snapshot', async () => {
+  it('keeps a report available across an empty retry and an older history snapshot', async () => {
     const readyReport = {
       id: 'stable-report-id',
       name: '稳定报告.docx',
@@ -178,17 +146,16 @@ describe('useChatReportAttachments', () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
     expect(attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)).toEqual(['stable-report-id'])
 
-    // chat.history can briefly lag behind the live completion reply. The card
-    // becomes an independent session attachment instead of disappearing.
+    // A lagging history snapshot temporarily has no completion anchor, so no
+    // card is appended at the conversation tail.
     messages.value = [{ ...source }]
     await nextTick()
-    expect(attachments.unplacedReports.value.map((item) => item.id)).toEqual(['stable-report-id'])
+    expect(attachments.reportsForMessage(messages.value[0]!)).toEqual([])
 
     const persistedReply: ChatMessage = { role: 'assistant', content: '报告已生成，格式：docx。' }
     messages.value = [{ ...source }, persistedReply]
     await nextTick()
     expect(attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)).toEqual(['stable-report-id'])
-    expect(attachments.unplacedReports.value).toEqual([])
     scope.stop()
   })
 
@@ -208,51 +175,22 @@ describe('useChatReportAttachments', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const sessionKey = ref('agent:main:main:dm:webchat-stable-retry')
-    const messages = ref<ChatMessage[]>([])
+    const source: ChatMessage = { id: 'stable-source', role: 'user', content: '生成稳定重试报告' }
+    const completed: ChatMessage = { role: 'assistant', content: '报告已生成，格式：docx。' }
+    const messages = ref<ChatMessage[]>([source, completed])
     const scope = effectScope()
     const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
 
     await attachments.refreshReports(sessionKey.value)
-    await nextTick()
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(attachments.unplacedReports.value).toHaveLength(1)
-    const initialReports = attachments.unplacedReports.value
+    await vi.waitFor(() => expect(attachments.reportsForMessage(messages.value[1]!)).toHaveLength(1))
+    const initialReports = attachments.reportsForMessage(messages.value[1]!)
 
     await attachments.refreshReports(sessionKey.value, { preserveExisting: true })
     await nextTick()
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(attachments.unplacedReports.value).toBe(initialReports)
-    scope.stop()
-  })
-
-  it('does not keep an older unplaced report below a later ordinary reply', async () => {
-    const oldReport = {
-      id: 'old-unplaced-report',
-      name: '业务综述报告.docx',
-      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      size: 55296,
-      status: 'ready',
-      sourceSessionId: 'agent:main:main:dm:webchat-card-tail',
-      sourceMessageId: null,
-      sourceMessagePreview: null,
-      createdAt: Date.parse('2026-08-25T05:20:07Z'),
-    }
-    const fetchMock = vi.fn(async () => response([oldReport]))
-    vi.stubGlobal('fetch', fetchMock)
-    const sessionKey = ref('agent:main:main:dm:webchat-card-tail')
-    const messages = ref<ChatMessage[]>([
-      { role: 'user', content: '你是？', timestamp: '2026-08-25T05:32:56Z' },
-      { role: 'assistant', content: '我是观枢AI。', timestamp: '2026-08-25T05:32:57Z' },
-    ])
-    const scope = effectScope()
-    const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
-
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-    await attachments.refreshReports(sessionKey.value)
-    await nextTick()
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(attachments.unplacedReports.value).toEqual([])
+    expect(attachments.reportsForMessage(messages.value[1]!)).toBe(initialReports)
     scope.stop()
   })
 })

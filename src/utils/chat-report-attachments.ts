@@ -119,64 +119,6 @@ function pickFollowingTarget(
     || following[following.length - 1]
 }
 
-function pickChronologicalTurnTarget(
-  messages: ChatMessage[],
-  assistantMessages: Array<{ message: ChatMessage; index: number; text: string }>,
-  report: ChatReportFile,
-) {
-  if (!Number.isFinite(report.createdAt)) return undefined
-
-  const sourcePreview = normalizedSourcePreview(String(report.sourceMessagePreview || ''))
-  const timestampedUsers = messages
-    .map((message, index) => ({ message, index, timestamp: messageTimestamp(message) }))
-    .filter((entry): entry is { message: ChatMessage; index: number; timestamp: number } =>
-      entry.message.role === 'user' && entry.timestamp !== null
-    )
-  const sourceTimestamp = timestampedUsers
-    .filter((entry) => entry.timestamp <= report.createdAt)
-    .sort((left, right) => right.timestamp - left.timestamp)[0]?.timestamp ?? Number.NEGATIVE_INFINITY
-  const nextUserTimestamp = timestampedUsers
-    .filter((entry) => entry.timestamp > report.createdAt)
-    .sort((left, right) => left.timestamp - right.timestamp)[0]?.timestamp ?? Number.POSITIVE_INFINITY
-  const timestamped = assistantMessages
-    .map((candidate) => ({ candidate, timestamp: messageTimestamp(candidate.message) }))
-    .filter((entry): entry is { candidate: (typeof assistantMessages)[number]; timestamp: number } =>
-      entry.timestamp !== null
-      && entry.timestamp >= sourceTimestamp
-      && entry.timestamp < nextUserTimestamp
-      && Math.abs(entry.timestamp - report.createdAt) <= 30 * 60 * 1000
-    )
-  const firstAfterCreation = timestamped
-    .filter((entry) => entry.timestamp >= report.createdAt)
-    .sort((left, right) => left.timestamp - right.timestamp)[0]
-  if (firstAfterCreation) return firstAfterCreation.candidate
-
-  const lastBeforeCreation = timestamped
-    .filter((entry) => entry.timestamp < report.createdAt)
-    .sort((left, right) => right.timestamp - left.timestamp)[0]
-  if (lastBeforeCreation) return lastBeforeCreation.candidate
-
-  // Timestamp-less legacy messages are still bounded by a positively matched
-  // source id/preview and the next user turn in array order.
-  const sourceIndex = messages
-    .map((message, index) => ({ message, index }))
-    .filter(({ message }) =>
-      message.role === 'user'
-      && (
-        Boolean(report.sourceMessageId && message.id === report.sourceMessageId)
-        || Boolean(
-          sourcePreview
-          && normalizedSourcePreview(messageText(message).slice(0, 1000)) === sourcePreview
-        )
-      )
-    )
-    .map(({ index }) => index)
-    .sort((left, right) => left - right)[0]
-  if (sourceIndex === undefined) return undefined
-  const following = followingAssistantMessages(messages, assistantMessages, sourceIndex)
-  return following[following.length - 1]
-}
-
 /**
  * Associate session-owned report records with the assistant reply that announced
  * them. Source message id is authoritative. Filename and time are placement-only
@@ -264,14 +206,6 @@ export function mapReportsToAssistantMessages(
       target = nearby?.candidate
     }
 
-    // Historical reports can predate signed source ids and their visible reply
-    // may use arbitrary wording. Keep the card as a normal transcript record by
-    // locating the assistant turn immediately after creation, bounded by the
-    // surrounding user turns. Later ordinary replies are never candidates.
-    if (!target) {
-      target = pickChronologicalTurnTarget(messages, assistantMessages, report)
-    }
-
     if (!target && reportCandidates.length === 1 && reports.length === 1) {
       target = reportCandidates[0]
     }
@@ -283,52 +217,4 @@ export function mapReportsToAssistantMessages(
   }
 
   return result
-}
-
-/**
- * An independent attachment is only a short-lived bridge while the report
- * completion turn is missing from a lagging history snapshot. It must not
- * follow later ordinary user turns at the bottom of the conversation.
- */
-export function shouldDisplayUnplacedReport(
-  messages: ChatMessage[],
-  report: ChatReportFile,
-): boolean {
-  const createdAt = Number(report.createdAt)
-  if (Number.isFinite(createdAt)) {
-    const hasLaterUserTurn = messages.some((message) => {
-      if (message.role !== 'user') return false
-      const timestamp = messageTimestamp(message)
-      return timestamp !== null && timestamp > createdAt
-    })
-    if (hasLaterUserTurn) return false
-  }
-
-  const sourcePreview = normalizedSourcePreview(String(report.sourceMessagePreview || ''))
-  let reportTurnIndex = -1
-  messages.forEach((message, index) => {
-    if (message.role === 'user') {
-      const exactId = Boolean(report.sourceMessageId && message.id === report.sourceMessageId)
-      const exactPreview = Boolean(
-        sourcePreview
-        && normalizedSourcePreview(messageText(message).slice(0, 1000)) === sourcePreview
-      )
-      if (exactId || exactPreview) reportTurnIndex = index
-      return
-    }
-    if (hasReportCompletionSignal(message)) {
-      const timestamp = messageTimestamp(message)
-      if (
-        !Number.isFinite(createdAt)
-        || (timestamp !== null && Math.abs(timestamp - createdAt) <= 30 * 60 * 1000)
-      ) {
-        reportTurnIndex = index
-      }
-    }
-  })
-
-  if (reportTurnIndex < 0) return true
-  return !messages.some((message, index) =>
-    index > reportTurnIndex && message.role === 'user'
-  )
 }

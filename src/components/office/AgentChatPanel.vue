@@ -1679,7 +1679,6 @@ const {
   downloadingReportId,
   downloadReport,
   reportsForMessage,
-  unplacedReports,
 } = useChatReportAttachments(selectedSessionKey, messageList, reportCompletionSignal)
 
 const agentBusy = computed(() => {
@@ -2141,17 +2140,17 @@ watch(selectedSessionKey, async (newSessionKey) => {
         </div>
 
         <NScrollbar ref="scrollRef" class="chat-messages" @scroll="handleTranscriptScroll">
-          <div v-if="visibleMessageEntries.length === 0 && unplacedReports.length === 0" class="chat-empty">
+          <div v-if="visibleMessageEntries.length === 0" class="chat-empty">
             <NEmpty :description="t('pages.office.chat.noMessages')" />
           </div>
           <div v-else class="message-list">
             <div
               v-for="entry in visibleMessageEntries"
               :key="entry.key"
-              class="chat-bubble"
-              :class="`is-${entry.item.role}`"
+              class="chat-turn"
             >
-              <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
+              <div class="chat-bubble" :class="`is-${entry.item.role}`">
+                <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
                 <NSpace align="center" :size="6">
                   <NTag size="small" :type="roleType(entry.item.role)" :bordered="false" round>
                     {{ roleLabel(entry.item.role) }}
@@ -2362,19 +2361,17 @@ watch(selectedSessionKey, async (newSessionKey) => {
                 </div>
               </div>
 
-              <ReportAttachmentList
+              </div>
+              <div
                 v-if="reportsForMessage(entry.item).length"
-                :reports="reportsForMessage(entry.item)"
-                :downloading-id="downloadingReportId"
-                @download="downloadReport"
-              />
-            </div>
-            <div v-if="unplacedReports.length" class="chat-bubble is-assistant">
-              <ReportAttachmentList
-                :reports="unplacedReports"
-                :downloading-id="downloadingReportId"
-                @download="downloadReport"
-              />
+                class="chat-bubble is-assistant chat-report-message"
+              >
+                <ReportAttachmentList
+                  :reports="reportsForMessage(entry.item)"
+                  :downloading-id="downloadingReportId"
+                  @download="downloadReport"
+                />
+              </div>
             </div>
           </div>
         </NScrollbar>
@@ -2622,17 +2619,17 @@ watch(selectedSessionKey, async (newSessionKey) => {
 
       <template v-else>
         <NScrollbar ref="expandedScrollRef" class="expanded-chat-messages" @scroll="handleExpandedScroll">
-          <div v-if="visibleMessageEntries.length === 0 && unplacedReports.length === 0" class="chat-empty">
+          <div v-if="visibleMessageEntries.length === 0" class="chat-empty">
             <NEmpty :description="t('pages.office.chat.noMessages')" />
           </div>
           <div v-else class="message-list expanded">
             <div
               v-for="entry in visibleMessageEntries"
               :key="entry.key"
-              class="chat-bubble"
-              :class="`is-${entry.item.role}`"
+              class="chat-turn"
             >
-              <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
+              <div class="chat-bubble" :class="`is-${entry.item.role}`">
+                <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
                 <NSpace align="center" :size="6">
                   <NTag size="small" :type="roleType(entry.item.role)" :bordered="false" round>
                     {{ roleLabel(entry.item.role) }}
@@ -2805,19 +2802,17 @@ watch(selectedSessionKey, async (newSessionKey) => {
                 </div>
               </div>
 
-              <ReportAttachmentList
+              </div>
+              <div
                 v-if="reportsForMessage(entry.item).length"
-                :reports="reportsForMessage(entry.item)"
-                :downloading-id="downloadingReportId"
-                @download="downloadReport"
-              />
-            </div>
-            <div v-if="unplacedReports.length" class="chat-bubble is-assistant">
-              <ReportAttachmentList
-                :reports="unplacedReports"
-                :downloading-id="downloadingReportId"
-                @download="downloadReport"
-              />
+                class="chat-bubble is-assistant chat-report-message"
+              >
+                <ReportAttachmentList
+                  :reports="reportsForMessage(entry.item)"
+                  :downloading-id="downloadingReportId"
+                  @download="downloadReport"
+                />
+              </div>
             </div>
           </div>
         </NScrollbar>
@@ -3255,6 +3250,10 @@ watch(selectedSessionKey, async (newSessionKey) => {
   gap: 20px;
 }
 
+.chat-turn {
+  display: contents;
+}
+
 .chat-bubble {
   padding: 12px;
   background: var(--bg-secondary);
@@ -3267,6 +3266,10 @@ watch(selectedSessionKey, async (newSessionKey) => {
 
 .chat-bubble.is-assistant {
   background: rgba(32, 128, 240, 0.06);
+}
+
+.chat-report-message :deep(.report-attachment-list) {
+  margin-top: 0;
 }
 
 .chat-bubble.is-tool {

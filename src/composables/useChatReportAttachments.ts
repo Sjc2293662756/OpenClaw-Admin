@@ -6,7 +6,6 @@ import type { ChatMessage } from '@/api/types'
 import {
   mapReportsToAssistantMessages,
   reportGenerationSignalSignature,
-  shouldDisplayUnplacedReport,
   type ChatReportFile,
 } from '@/utils/chat-report-attachments'
 
@@ -58,24 +57,6 @@ export function useChatReportAttachments(
 
   const reportsByMessage = computed(() =>
     mapReportsToAssistantMessages(messages.value, reports.value)
-  )
-
-  const placedReportIds = computed(() => {
-    const ids = new Set<string>()
-    for (const attached of reportsByMessage.value.values()) {
-      for (const report of attached) ids.add(report.id)
-    }
-    return ids
-  })
-
-  // An independent card bridges only the short window in which Gateway history
-  // has not exposed the report completion turn. Never carry it past a later
-  // ordinary user turn at the bottom of the conversation.
-  const unplacedReports = computed(() =>
-    reports.value.filter((report) =>
-      !placedReportIds.value.has(report.id)
-      && shouldDisplayUnplacedReport(messages.value, report)
-    )
   )
 
   const reportMessageSignature = computed(() =>
@@ -214,6 +195,5 @@ export function useChatReportAttachments(
     downloadReport,
     refreshReports,
     reportsForMessage,
-    unplacedReports,
   }
 }

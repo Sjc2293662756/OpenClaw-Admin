@@ -878,7 +878,6 @@ const {
   downloadingReportId,
   downloadReport,
   reportsForMessage,
-  unplacedReports,
 } = useChatReportAttachments(normalizedSessionKey, messageList, reportCompletionSignal)
 
 const currentToolProgress = computed(() => {
@@ -2942,7 +2941,7 @@ async function handleSend() {
           
           <div class="chat-main-column">
             <NCard embedded :bordered="false" class="chat-transcript-card">
-              <NSpace v-if="!workspaceMode || renderedMessages.length || unplacedReports.length" justify="space-between" align="center" style="margin-bottom: 10px;">
+              <NSpace v-if="!workspaceMode || renderedMessages.length" justify="space-between" align="center" style="margin-bottom: 10px;">
                 <NSpace align="center" :size="8">
                   <NTag size="small" type="info" :bordered="false" round>
                     {{ t('pages.chat.sessionTag', { key: normalizedSessionKey }) }}
@@ -2959,7 +2958,7 @@ async function handleSend() {
               <div class="chat-transcript-shell">
                 <NSpin :show="transcriptLoading" class="chat-transcript-spin">
                   <div ref="transcriptRef" class="chat-transcript" @scroll="handleTranscriptScroll">
-                    <template v-if="renderedMessages.length || unplacedReports.length">
+                    <template v-if="renderedMessages.length">
                       <div
                         v-for="entry in renderedMessages"
                         :key="entry.key"
@@ -2974,10 +2973,10 @@ async function handleSend() {
                           ttsIsLoading,
                           locale,
                         ]"
-                        class="chat-bubble"
-                        :class="`is-${entry.item.role}`"
+                        class="chat-turn"
                       >
-                        <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
+                        <div class="chat-bubble" :class="`is-${entry.item.role}`">
+                          <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
                           <NSpace align="center" :size="6">
                             <NTag size="small" :type="roleType(entry.item.role)" :bordered="false" round>
                               {{ roleLabel(entry.item.role) }}
@@ -3186,19 +3185,17 @@ async function handleSend() {
                           ></div>
                         </div>
 
-                        <ReportAttachmentList
+                        </div>
+                        <div
                           v-if="reportsForMessage(entry.item).length"
-                          :reports="reportsForMessage(entry.item)"
-                          :downloading-id="downloadingReportId"
-                          @download="downloadReport"
-                        />
-                      </div>
-                      <div v-if="unplacedReports.length" class="chat-bubble is-assistant">
-                        <ReportAttachmentList
-                          :reports="unplacedReports"
-                          :downloading-id="downloadingReportId"
-                          @download="downloadReport"
-                        />
+                          class="chat-bubble is-assistant chat-report-message"
+                        >
+                          <ReportAttachmentList
+                            :reports="reportsForMessage(entry.item)"
+                            :downloading-id="downloadingReportId"
+                            @download="downloadReport"
+                          />
+                        </div>
                       </div>
                     </template>
 
@@ -4157,6 +4154,14 @@ async function handleSend() {
   border-radius: 10px;
   border: 1px solid var(--border-color);
   background: var(--bg-secondary);
+}
+
+.chat-turn {
+  display: contents;
+}
+
+.chat-report-message :deep(.report-attachment-list) {
+  margin-top: 0;
 }
 
 .chat-bubble-content-wrapper {
