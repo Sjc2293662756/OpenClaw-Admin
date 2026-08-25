@@ -877,6 +877,7 @@ const {
   downloadingReportId,
   downloadReport,
   reportsForMessage,
+  unplacedReports,
 } = useChatReportAttachments(normalizedSessionKey, messageList, reportCompletionSignal)
 
 const currentToolProgress = computed(() => {
@@ -2934,7 +2935,7 @@ async function handleSend() {
           
           <div class="chat-main-column">
             <NCard embedded :bordered="false" class="chat-transcript-card">
-              <NSpace v-if="!workspaceMode || renderedMessages.length" justify="space-between" align="center" style="margin-bottom: 10px;">
+              <NSpace v-if="!workspaceMode || renderedMessages.length || unplacedReports.length" justify="space-between" align="center" style="margin-bottom: 10px;">
                 <NSpace align="center" :size="8">
                   <NTag size="small" type="info" :bordered="false" round>
                     {{ t('pages.chat.sessionTag', { key: normalizedSessionKey }) }}
@@ -2951,7 +2952,7 @@ async function handleSend() {
               <div class="chat-transcript-shell">
                 <NSpin :show="transcriptLoading" class="chat-transcript-spin">
                   <div ref="transcriptRef" class="chat-transcript" @scroll="handleTranscriptScroll">
-                    <template v-if="renderedMessages.length">
+                    <template v-if="renderedMessages.length || unplacedReports.length">
                       <div
                         v-for="entry in renderedMessages"
                         :key="entry.key"
@@ -3170,6 +3171,13 @@ async function handleSend() {
                         <ReportAttachmentList
                           v-if="reportsForMessage(entry.item).length"
                           :reports="reportsForMessage(entry.item)"
+                          :downloading-id="downloadingReportId"
+                          @download="downloadReport"
+                        />
+                      </div>
+                      <div v-if="unplacedReports.length" class="chat-bubble is-assistant">
+                        <ReportAttachmentList
+                          :reports="unplacedReports"
                           :downloading-id="downloadingReportId"
                           @download="downloadReport"
                         />

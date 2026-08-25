@@ -104,4 +104,59 @@ describe('useChatReportAttachments', () => {
     )
     scope.stop()
   })
+
+  it('keeps a report visible across an empty retry and an older history snapshot', async () => {
+    const readyReport = {
+      id: 'stable-report-id',
+      name: '稳定报告.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 4096,
+      status: 'ready',
+      sourceSessionId: 'agent:main:main:dm:webchat-stable',
+      sourceMessageId: 'user-source',
+      sourceMessagePreview: '生成稳定报告',
+      createdAt: 1787622913043,
+    }
+    let requestCount = 0
+    const fetchMock = vi.fn(async () => {
+      requestCount += 1
+      if (requestCount === 2) return response([readyReport])
+      return response([])
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const sessionKey = ref('agent:main:main:dm:webchat-stable')
+    const source: ChatMessage = { id: 'user-source', role: 'user', content: '生成稳定报告' }
+    const completed: ChatMessage = { role: 'assistant', content: '报告已生成，格式：docx。' }
+    const messages = ref<ChatMessage[]>([source])
+    const scope = effectScope()
+    const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    messages.value = [source, completed]
+    await nextTick()
+    await vi.advanceTimersByTimeAsync(250)
+    await vi.waitFor(() => expect(
+      attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)
+    ).toEqual(['stable-report-id']))
+
+    // A later registration retry must not erase a report which was already
+    // returned for this exact session.
+    await vi.advanceTimersByTimeAsync(1250)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)).toEqual(['stable-report-id'])
+
+    // chat.history can briefly lag behind the live completion reply. The card
+    // becomes an independent session attachment instead of disappearing.
+    messages.value = [{ ...source }]
+    await nextTick()
+    expect(attachments.unplacedReports.value.map((item) => item.id)).toEqual(['stable-report-id'])
+
+    const persistedReply: ChatMessage = { role: 'assistant', content: '报告已生成，格式：docx。' }
+    messages.value = [{ ...source }, persistedReply]
+    await nextTick()
+    expect(attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)).toEqual(['stable-report-id'])
+    expect(attachments.unplacedReports.value).toEqual([])
+    scope.stop()
+  })
 })

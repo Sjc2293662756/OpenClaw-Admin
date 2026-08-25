@@ -1711,6 +1711,7 @@ const {
   downloadingReportId,
   downloadReport,
   reportsForMessage,
+  unplacedReports,
 } = useChatReportAttachments(selectedSessionKey, messageList, reportCompletionSignal)
 
 const agentBusy = computed(() => {
@@ -2171,7 +2172,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
         </div>
 
         <NScrollbar ref="scrollRef" class="chat-messages" @scroll="handleTranscriptScroll">
-          <div v-if="visibleMessageEntries.length === 0" class="chat-empty">
+          <div v-if="visibleMessageEntries.length === 0 && unplacedReports.length === 0" class="chat-empty">
             <NEmpty :description="t('pages.office.chat.noMessages')" />
           </div>
           <div v-else class="message-list">
@@ -2395,6 +2396,13 @@ watch(selectedSessionKey, async (newSessionKey) => {
               <ReportAttachmentList
                 v-if="reportsForMessage(entry.item).length"
                 :reports="reportsForMessage(entry.item)"
+                :downloading-id="downloadingReportId"
+                @download="downloadReport"
+              />
+            </div>
+            <div v-if="unplacedReports.length" class="chat-bubble is-assistant">
+              <ReportAttachmentList
+                :reports="unplacedReports"
                 :downloading-id="downloadingReportId"
                 @download="downloadReport"
               />
@@ -2645,7 +2653,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
 
       <template v-else>
         <NScrollbar ref="expandedScrollRef" class="expanded-chat-messages" @scroll="handleExpandedScroll">
-          <div v-if="visibleMessageEntries.length === 0" class="chat-empty">
+          <div v-if="visibleMessageEntries.length === 0 && unplacedReports.length === 0" class="chat-empty">
             <NEmpty :description="t('pages.office.chat.noMessages')" />
           </div>
           <div v-else class="message-list expanded">
@@ -2831,6 +2839,13 @@ watch(selectedSessionKey, async (newSessionKey) => {
               <ReportAttachmentList
                 v-if="reportsForMessage(entry.item).length"
                 :reports="reportsForMessage(entry.item)"
+                :downloading-id="downloadingReportId"
+                @download="downloadReport"
+              />
+            </div>
+            <div v-if="unplacedReports.length" class="chat-bubble is-assistant">
+              <ReportAttachmentList
+                :reports="unplacedReports"
                 :downloading-id="downloadingReportId"
                 @download="downloadReport"
               />

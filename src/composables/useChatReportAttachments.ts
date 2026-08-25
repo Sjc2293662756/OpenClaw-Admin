@@ -36,6 +36,21 @@ export function useChatReportAttachments(
     mapReportsToAssistantMessages(messages.value, reports.value)
   )
 
+  const placedReportIds = computed(() => {
+    const ids = new Set<string>()
+    for (const attached of reportsByMessage.value.values()) {
+      for (const report of attached) ids.add(report.id)
+    }
+    return ids
+  })
+
+  // Gateway history is allowed to replace a live assistant projection with an
+  // older persisted snapshot. Keep every session-owned report visible as an
+  // independent attachment until a concrete assistant turn is available.
+  const unplacedReports = computed(() =>
+    reports.value.filter((report) => !placedReportIds.value.has(report.id))
+  )
+
   const reportMessageSignature = computed(() =>
     reportGenerationSignalSignature(messages.value)
   )
@@ -54,7 +69,10 @@ export function useChatReportAttachments(
     scheduledRefreshes.clear()
   }
 
-  async function refreshReports(rawSessionKey = sessionKey.value) {
+  async function refreshReports(
+    rawSessionKey = sessionKey.value,
+    options?: { preserveExisting?: boolean },
+  ) {
     const key = String(rawSessionKey || '').trim()
     const generation = ++requestGeneration
     if (!key) {
@@ -72,7 +90,13 @@ export function useChatReportAttachments(
         throw new Error(data?.error || data?.message || t('pages.chat.reportAttachment.loadFailed'))
       }
       if (generation === requestGeneration && key === currentSessionKey()) {
-        reports.value = data.reports
+        if (options?.preserveExisting) {
+          const merged = new Map(reports.value.map((report) => [report.id, report]))
+          for (const report of data.reports) merged.set(report.id, report)
+          reports.value = [...merged.values()].sort((left, right) => left.createdAt - right.createdAt)
+        } else {
+          reports.value = data.reports
+        }
       }
     } catch (error) {
       if (generation === requestGeneration) {
@@ -91,7 +115,7 @@ export function useChatReportAttachments(
       const timer = setTimeout(() => {
         scheduledRefreshes.delete(timer)
         if (generation !== retryGeneration || key !== currentSessionKey()) return
-        void refreshReports(key)
+        void refreshReports(key, { preserveExisting: true })
       }, delay)
       scheduledRefreshes.add(timer)
     }
@@ -157,5 +181,6 @@ export function useChatReportAttachments(
     downloadReport,
     refreshReports,
     reportsForMessage,
+    unplacedReports,
   }
 }
