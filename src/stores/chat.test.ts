@@ -109,7 +109,7 @@ describe('chat history request coordination', () => {
 })
 
 describe('realtime event routing', () => {
-  it('uses exact-session agent assistant text as a stable realtime fallback', () => {
+  it('keeps exact-session agent assistant text out of the transcript', () => {
     const store = useChatStore()
     const sessionKey = 'agent:main:main:dm:webchat-agent-telemetry'
     store.setSessionKey(sessionKey)
@@ -145,15 +145,12 @@ describe('realtime event routing', () => {
       },
     }, { refreshHistory: false, streaming: true })
 
-    expect(store.messages).toEqual([expect.objectContaining({
-      id: 'chat-stream:run-agent-1',
-      role: 'assistant',
-      content: '模型内部实时文本已经完成',
-    })])
+    expect(store.messages).toEqual([])
+    expect(store.getOrCreateAgentStatus('main').phase).toBe('replying')
     expect(store.getOrCreateAgentStatus('main').lastMessage).toBe('模型内部实时文本已经完成')
   })
 
-  it('lets a canonical chat snapshot take ownership from the agent fallback', () => {
+  it('uses only the canonical chat snapshot for the visible transcript', () => {
     const flush = stubAnimationFrames()
     const store = useChatStore()
     const sessionKey = 'agent:main:main:dm:webchat-agent-handoff'
@@ -164,7 +161,7 @@ describe('realtime event routing', () => {
       runId,
       sessionKey,
       stream: 'assistant',
-      data: { text: 'agent 兜底正文' },
+      data: { text: 'agent 运行遥测' },
     })
     store.handleRealtimeEvent('chat', {
       runId,
@@ -177,7 +174,7 @@ describe('realtime event routing', () => {
       runId,
       sessionKey,
       stream: 'assistant',
-      data: { text: '不应覆盖 chat 的旧投影' },
+      data: { text: '不应进入对话正文' },
     })
 
     expect(store.messages).toEqual([expect.objectContaining({

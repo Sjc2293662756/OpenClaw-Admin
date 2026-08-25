@@ -93,7 +93,6 @@ export const useChatStore = defineStore('chat', () => {
   let pendingStreamMessages: ChatMessage[] = []
   let activeRealtimeMessageId: string | null = null
   let activeRealtimeRunId: string | null = null
-  let activeRealtimeProjectionSource: 'agent' | 'chat' | null = null
   let activeRealtimeTerminal = false
   let activeTurnUserContent: string | null = null
   let convergenceTimer: ReturnType<typeof setTimeout> | null = null
@@ -722,7 +721,6 @@ export const useChatStore = defineStore('chat', () => {
   function resetActiveRealtimeProjection() {
     activeRealtimeMessageId = null
     activeRealtimeRunId = null
-    activeRealtimeProjectionSource = null
     activeRealtimeTerminal = false
   }
 
@@ -752,53 +750,6 @@ export const useChatStore = defineStore('chat', () => {
     ) {
       activeRealtimeTerminal = true
     }
-  }
-
-  function projectAgentAssistantFallback(
-    keyInEvent: string,
-    runId: string,
-    data: Record<string, unknown>
-  ): string {
-    if (!shouldApplyRealtimeEvent(sessionKey.value, keyInEvent)) return ''
-
-    const normalizedRunId = runId.trim()
-    if (
-      activeRealtimeProjectionSource === 'chat' &&
-      (!normalizedRunId || !activeRealtimeRunId || activeRealtimeRunId === normalizedRunId)
-    ) {
-      return ''
-    }
-
-    const snapshot = asString(data.text || data.content)
-    const delta = asString(data.delta)
-    if (!snapshot.trim() && !delta) return ''
-
-    const canReuseActive = Boolean(
-      activeRealtimeMessageId &&
-      (!normalizedRunId || !activeRealtimeRunId || activeRealtimeRunId === normalizedRunId)
-    )
-    const messageId = canReuseActive
-      ? activeRealtimeMessageId!
-      : `chat-stream:${normalizedRunId || keyInEvent}`
-    const existing = messages.value.find((item) => item.id === messageId)
-    const rawContent = snapshot.trim()
-      ? snapshot
-      : data.replace === true || !existing
-        ? delta
-        : `${existing.content}${delta}`
-    const content = rawContent.replace(/\n{3,}/g, '\n\n').trim()
-    if (!content) return ''
-
-    activeRealtimeMessageId = messageId
-    activeRealtimeRunId = normalizedRunId || activeRealtimeRunId
-    activeRealtimeProjectionSource = 'agent'
-    activeRealtimeTerminal = false
-    mergeRealtimeMessages([{
-      id: messageId,
-      role: 'assistant',
-      content,
-    }], { streaming: false, replaceExisting: true })
-    return content
   }
 
   function mergePendingMessages(history: ChatMessage[]): ChatMessage[] {
@@ -934,9 +885,8 @@ export const useChatStore = defineStore('chat', () => {
     }
   ) {
     const normalizedEvent = eventName.trim().toLowerCase()
-    // Canonical chat projections take ownership when present. A narrowly
-    // scoped agent.assistant fallback is handled by handleAgentStatusEvent for
-    // Gateway runs that do not emit a browser-visible chat projection.
+    // The transcript accepts canonical chat projections only. Agent events are
+    // operational telemetry and must never become temporary message bubbles.
     if (normalizedEvent !== 'chat' && !normalizedEvent.startsWith('chat.')) return
 
     const keyInEvent = extractSessionKey(payload)
@@ -968,7 +918,6 @@ export const useChatStore = defineStore('chat', () => {
     if (streamMessageId && (streaming || projection)) {
       activeRealtimeMessageId = streamMessageId
       activeRealtimeRunId = runId || activeRealtimeRunId
-      activeRealtimeProjectionSource = 'chat'
       activeRealtimeTerminal = false
     }
     if (isTerminal) {
@@ -1219,11 +1168,10 @@ export const useChatStore = defineStore('chat', () => {
 
         if (stream === 'assistant') {
           // touchAgentStatus(agentId)
-          // Some production Gateway runs only expose assistant text through the
-          // agent stream. Project it for the exact selected session until a
-          // canonical chat event or authoritative history takes over.
-          const content = projectAgentAssistantFallback(keyInEvent, runIdInEvent, data)
-          const lastMessage = content || agentStatus.lastMessage
+          // Assistant stream data belongs to agent telemetry. It may update the
+          // run status, but only a canonical chat event or chat.history may
+          // write the visible conversation transcript.
+          const lastMessage = asText(data.text ?? data.content ?? data.delta).trim() || agentStatus.lastMessage
           
           if (agentStatus.phase !== 'replying' && agentStatus.phase !== 'tool') {
             // chat delta 可能因节流略晚于 agent assistant stream，这里做兜底提示
