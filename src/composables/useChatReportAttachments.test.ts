@@ -105,6 +105,38 @@ describe('useChatReportAttachments', () => {
     scope.stop()
   })
 
+  it('clears the previous report synchronously when entering a blank new conversation', async () => {
+    const oldReport = {
+      id: 'old-session-report',
+      name: '旧会话报告.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 2048,
+      status: 'ready',
+      sourceSessionId: 'agent:main:main:dm:webchat-old',
+      sourceMessageId: 'old-source',
+      sourceMessagePreview: '生成旧会话报告',
+      createdAt: 1787622913043,
+    }
+    const fetchMock = vi.fn(async () => response([oldReport]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const sessionKey = ref('agent:main:main:dm:webchat-old')
+    const messages = ref<ChatMessage[]>([])
+    const scope = effectScope()
+    const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
+    await vi.waitFor(() => expect(attachments.unplacedReports.value).toHaveLength(1))
+
+    // The workspace sets its session key to an empty string before rendering
+    // the unstarted conversation. No old card may survive even for one tick.
+    sessionKey.value = ''
+    expect(attachments.unplacedReports.value).toEqual([])
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await nextTick()
+    expect(attachments.unplacedReports.value).toEqual([])
+    scope.stop()
+  })
+
   it('keeps a report visible across an empty retry and an older history snapshot', async () => {
     const readyReport = {
       id: 'stable-report-id',

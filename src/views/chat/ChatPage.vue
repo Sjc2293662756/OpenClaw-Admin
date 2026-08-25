@@ -264,6 +264,10 @@ const sessionOptions = computed(() => {
 const normalizedSessionKey = computed(() => {
   const input = sessionKeyInput.value.trim()
   if (input) return input
+  // The workspace's empty state is an unstarted conversation, not an alias
+  // for the first persisted session. In particular, session-owned report
+  // attachments must never leak into a new-conversation draft.
+  if (workspaceMode.value) return ''
   const firstSession = sessionStore.sessions[0]
   return firstSession?.key || ''
 })

@@ -158,7 +158,9 @@ export function useChatReportAttachments(
       reports.value = []
       void refreshReports(key)
     },
-    { immediate: true },
+    // Clear the old session's attachments before Vue renders the new session.
+    // This also prevents a one-frame flash when entering a blank conversation.
+    { immediate: true, flush: 'sync' },
   )
 
   watch(reportMessageSignature, (next, previous) => {
