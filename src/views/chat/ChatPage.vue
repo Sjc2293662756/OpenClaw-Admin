@@ -2588,14 +2588,14 @@ onMounted(async () => {
       ) {
         const name = eventName.toLowerCase()
         const isChatEvent = name === 'chat' || name.startsWith('chat.')
-        const isStreamingEvent =
-          name.includes('stream') ||
-          name.includes('delta') ||
-          name.includes('chunk') ||
-          name.includes('partial') ||
-          looksLikeStreamingPayload(data.payload)
         chatStore.handleAgentStatusEvent(eventName, data.payload)
         if (isChatEvent) {
+          const isStreamingEvent =
+            name.includes('stream') ||
+            name.includes('delta') ||
+            name.includes('chunk') ||
+            name.includes('partial') ||
+            looksLikeStreamingPayload(data.payload)
           chatStore.handleRealtimeEvent(eventName, data.payload, {
             refreshHistory: false,
             streaming: isStreamingEvent,

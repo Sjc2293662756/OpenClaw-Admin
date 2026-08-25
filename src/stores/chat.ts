@@ -500,6 +500,16 @@ export const useChatStore = defineStore('chat', () => {
     pollTimers = []
   }
 
+  function updateAgentLastMessage(agentId: string, lastMessage: string) {
+    const status = getOrCreateAgentStatus(agentId)
+    if (!lastMessage || status.lastMessage === lastMessage) return
+    // Assistant telemetry is only a live preview for surfaces such as MyWorld.
+    // Mutate the preview fields in place so transcript consumers which only
+    // depend on phase/detail are not invalidated for every token.
+    status.lastMessage = lastMessage
+    status.updatedAtMs = Date.now()
+  }
+
   function finishHistoryConvergence() {
     if (convergenceTimer) {
       clearTimeout(convergenceTimer)
@@ -1149,18 +1159,26 @@ export const useChatStore = defineStore('chat', () => {
                 lastToolPreviewUpdateAtMs = now
                 const partialPreview = toJsonPreview(data.partialResult)
                 const prevProgress = getOrCreateToolProgress(agentId)
-                toolProgress.value.set(agentId, {
-                  toolCallId,
-                  name: toolName,
-                  phase: 'update',
-                  meta: prevProgress?.meta || null,
-                  isError: prevProgress?.isError ?? null,
-                  argsPreview: prevProgress?.argsPreview || null,
-                  partialPreview: partialPreview || prevProgress?.partialPreview || null,
-                  resultPreview: null,
-                  startedAtMs: prevProgress?.startedAtMs || now,
-                  updatedAtMs: now,
-                })
+                if (prevProgress && prevProgress.toolCallId === toolCallId && prevProgress.name === toolName) {
+                  // Keep the progress object stable while only its optional
+                  // preview grows. Status labels do not depend on this field.
+                  prevProgress.phase = 'update'
+                  prevProgress.partialPreview = partialPreview || prevProgress.partialPreview || null
+                  prevProgress.updatedAtMs = now
+                } else {
+                  toolProgress.value.set(agentId, {
+                    toolCallId,
+                    name: toolName,
+                    phase: 'update',
+                    meta: prevProgress?.meta || null,
+                    isError: prevProgress?.isError ?? null,
+                    argsPreview: prevProgress?.argsPreview || null,
+                    partialPreview: partialPreview || prevProgress?.partialPreview || null,
+                    resultPreview: null,
+                    startedAtMs: prevProgress?.startedAtMs || now,
+                    updatedAtMs: now,
+                  })
+                }
               }
             } else if (toolPhase === 'result') {
               const prevProgress = getOrCreateToolProgress(agentId)
@@ -1226,13 +1244,8 @@ export const useChatStore = defineStore('chat', () => {
               sessionKey: keyInEvent,
               lastMessage,
             })
-          } else if (lastMessage && lastMessage !== agentStatus.lastMessage) {
-            // 更新消息内容
-            agentStatuses.value.set(agentId, {
-              ...agentStatus,
-              lastMessage,
-              updatedAtMs: Date.now(),
-            })
+          } else if (lastMessage) {
+            updateAgentLastMessage(agentId, lastMessage)
           }
           return
         }

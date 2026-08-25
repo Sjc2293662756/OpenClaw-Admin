@@ -115,7 +115,6 @@ export class ApiClient {
   private handleMessage(data: string): void {
     try {
       const message = JSON.parse(data)
-      console.log('[ApiClient] Received message type:', message.type, 'data:', JSON.stringify(message).substring(0, 200))
 
       switch (message.type) {
         case 'connected':

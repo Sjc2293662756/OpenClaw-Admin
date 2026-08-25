@@ -152,6 +152,7 @@ describe('realtime event routing', () => {
         replace: false,
       },
     })
+    const stableStatus = store.getOrCreateAgentStatus('main')
     store.handleAgentStatusEvent('agent', {
       runId: 'run-agent-1',
       sessionKey,
@@ -174,8 +175,46 @@ describe('realtime event routing', () => {
     }, { refreshHistory: false, streaming: true })
 
     expect(store.messages).toEqual([])
+    expect(store.getOrCreateAgentStatus('main')).toBe(stableStatus)
     expect(store.getOrCreateAgentStatus('main').phase).toBe('replying')
     expect(store.getOrCreateAgentStatus('main').lastMessage).toBe('模型内部实时文本已经完成')
+  })
+
+  it('updates tool previews without replacing the progress object', () => {
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-tool-preview'
+    store.setSessionKey(sessionKey)
+
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-tool-preview',
+      sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'start',
+        name: 'napm-skill-query',
+        toolCallId: 'tool-preview-1',
+        args: { target: '238web' },
+      },
+    })
+    const stableProgress = store.toolProgress.get('main')
+
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-tool-preview',
+      sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'update',
+        name: 'napm-skill-query',
+        toolCallId: 'tool-preview-1',
+        partialResult: { collected: 8 },
+      },
+    })
+
+    expect(store.toolProgress.get('main')).toBe(stableProgress)
+    expect(stableProgress).toEqual(expect.objectContaining({
+      phase: 'update',
+      partialPreview: expect.stringContaining('collected'),
+    }))
   })
 
   it('uses only the canonical chat snapshot for the visible transcript', () => {
