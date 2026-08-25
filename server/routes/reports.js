@@ -369,6 +369,13 @@ function publicDelivery(row) {
   }
 }
 
+function publicReportName(row) {
+  const originalName = safeText(row?.original_name) || basename(String(row?.stored_name || '')) || 'report'
+  const storedExtension = extname(basename(String(row?.stored_name || ''))).toLowerCase()
+  if (!storedExtension || originalName.toLowerCase().endsWith(storedExtension)) return originalName
+  return `${originalName}${storedExtension}`
+}
+
 function publicReport(row, delivery = null) {
   const filePath = resolveStoredReportPath(row.stored_name)
   let status = row.status
@@ -380,7 +387,7 @@ function publicReport(row, delivery = null) {
   }
   return {
     id: row.id,
-    name: row.original_name,
+    name: publicReportName(row),
     reportType: row.report_type,
     sourceSessionId: row.source_session_id || null,
     sourceSessionTitle: row.source_session_title || null,
@@ -422,11 +429,12 @@ function resolveReportOrError(db, id, res, user) {
 }
 
 function streamReport(res, filePath, row, disposition) {
-  const extension = extname(row.original_name).toLowerCase()
+  const downloadName = publicReportName(row)
+  const extension = extname(downloadName).toLowerCase()
   const contentType = row.mime_type || (extension === '.pdf' ? 'application/pdf' : 'application/octet-stream')
   res.setHeader('Content-Type', contentType)
   res.setHeader('Content-Length', statSync(filePath).size)
-  res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(row.original_name)}`)
+  res.setHeader('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(downloadName)}`)
   const stream = createReadStream(filePath)
   stream.on('error', () => {
     if (!res.headersSent) sendError(res, { code: 'REPORT_STREAM_FAILED', message: '报告文件读取失败' })
@@ -559,13 +567,14 @@ export function createReportsRouter({ db, authMiddleware, adminMiddleware, recor
     const report = resolveReportOrError(db, req.params.id, res, req.user)
     if (!report) return
     recordAudit(req.user, '预览报告文件', report.row.original_name, `报告类型：${report.row.report_type}`)
-    const extension = extname(report.row.original_name).toLowerCase()
+    const downloadName = publicReportName(report.row)
+    const extension = extname(downloadName).toLowerCase()
     if (extension !== '.pdf' && !previewableTextExtensions.has(extension)) {
       return sendError(res, { status: 415, code: 'REPORT_PREVIEW_UNSUPPORTED', message: '该报告格式暂不支持在线预览，请下载后查看' })
     }
     if (extension === '.pdf') return streamReport(res, report.filePath, report.row, 'inline')
     res.type('text/plain; charset=utf-8')
-    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(report.row.original_name)}`)
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(downloadName)}`)
     createReadStream(report.filePath).pipe(res)
   })
 
@@ -587,6 +596,7 @@ export const __test__ = {
   archiveDirectorySegment,
   canReadReport,
   inferMimeType,
+  publicReportName,
   readExactFilter,
   resolveStoredReportPath,
   syncGeneratedReports,

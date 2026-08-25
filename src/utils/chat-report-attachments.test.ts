@@ -3,6 +3,7 @@ import type { ChatMessage } from '@/api/types'
 import {
   hasReportDocumentReference,
   mapReportsToAssistantMessages,
+  reportGenerationSignalSignature,
   type ChatReportFile,
 } from './chat-report-attachments'
 
@@ -29,6 +30,27 @@ it('recognizes docx references in assistant text and raw content', () => {
     rawContent: [{ type: 'text', text: 'MEDIA:/srv/reports/系统巡检报告.docx' }],
   })).toBe(true)
   expect(hasReportDocumentReference({ role: 'user', content: '系统巡检报告.docx' })).toBe(false)
+})
+
+it('recognizes report generation without depending on a literal .docx path', () => {
+  expect(reportGenerationSignalSignature([{
+    role: 'assistant',
+    content: '报告已生成：238web_业务综述报告\n格式：docx\n完整报告将以附件形式发送。',
+  }])).not.toBe('')
+  expect(reportGenerationSignalSignature([{
+    role: 'assistant',
+    content: '',
+    rawContent: [{ type: 'tool_call', name: 'napm-report-export', arguments: {} }],
+  }])).not.toBe('')
+  expect(reportGenerationSignalSignature([{
+    role: 'assistant',
+    content: '',
+    rawContent: [{ type: 'toolCall' as never, name: 'napm-report-export', arguments: {} }],
+  }])).not.toBe('')
+  expect(reportGenerationSignalSignature([{
+    role: 'assistant',
+    content: '下面介绍如何设计报告模板。',
+  }])).toBe('')
 })
 describe('mapReportsToAssistantMessages', () => {
   it('uses the signed source message id to attach a report to the following reply', () => {
@@ -112,6 +134,25 @@ describe('mapReportsToAssistantMessages', () => {
 
     expect(mapping.get(firstReply)).toBeUndefined()
     expect(mapping.get(secondReply)?.[0]?.id).toBe('report-1')
+  })
+
+  it('maps the production format-only reply after the report list refreshes', () => {
+    const prompt = '给我回溯238web 最近3天的综述报告！'
+    const user: ChatMessage = { role: 'user', content: prompt, timestamp: '1787622904849' }
+    const completed: ChatMessage = {
+      role: 'assistant',
+      content: '报告已生成：238web_业务综述报告\n格式：docx\n完整报告将以附件形式发送。',
+      timestamp: '1787622913234',
+    }
+    const mapping = mapReportsToAssistantMessages([user, completed], [report({
+      id: '238web_业务综述报告_20260825_095513',
+      name: '238web_业务综述报告.docx',
+      sourceMessageId: 'web-1787622899420-v4tcu5te',
+      sourceMessagePreview: prompt,
+      createdAt: 1787622913043,
+    })])
+
+    expect(mapping.get(completed)?.map((item) => item.id)).toEqual(['238web_业务综述报告_20260825_095513'])
   })
 
   it('uses the exact name only as a placement fallback within the fetched session reports', () => {

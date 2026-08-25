@@ -1139,7 +1139,11 @@ export const useChatStore = defineStore('chat', () => {
 
     const idempotencyKey = `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
     resetAgentProgress(agentId)
-    setAgentStatusPhase(agentId, 'sending', { runId: idempotencyKey, detail: null })
+    setAgentStatusPhase(agentId, 'sending', {
+      runId: idempotencyKey,
+      detail: null,
+      sessionKey: sessionKey.value.trim(),
+    })
     const localMessage: ChatMessage = {
       id: idempotencyKey,
       role: 'user',
@@ -1194,7 +1198,11 @@ export const useChatStore = defineStore('chat', () => {
     const agentId = match?.[1] || 'default'
     const runId = options.runId?.trim() || options.idempotencyKey
     resetAgentProgress(agentId)
-    setAgentStatusPhase(agentId, 'waiting', { runId, detail: null })
+    setAgentStatusPhase(agentId, 'waiting', {
+      runId,
+      detail: null,
+      sessionKey: sessionKey.value.trim(),
+    })
     const alreadyVisible = messages.value.some((item) => item.role === 'user' && item.content === text)
     if (!alreadyVisible) {
       messages.value = [...messages.value, {

@@ -4,8 +4,8 @@ import { useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import type { ChatMessage } from '@/api/types'
 import {
-  hasReportDocumentReference,
   mapReportsToAssistantMessages,
+  reportGenerationSignalSignature,
   type ChatReportFile,
 } from '@/utils/chat-report-attachments'
 
@@ -16,7 +16,7 @@ type ReportsResponse = {
   message?: string
 }
 
-const REGISTRATION_RETRY_DELAYS = [250, 1500, 3500, 7000]
+const REGISTRATION_RETRY_DELAYS = [250, 1500, 3500, 7000, 15000]
 
 export function useChatReportAttachments(
   sessionKey: Readonly<Ref<string | null | undefined>>,
@@ -36,11 +36,9 @@ export function useChatReportAttachments(
     mapReportsToAssistantMessages(messages.value, reports.value)
   )
 
-  const reportMessageSignature = computed(() => {
-    const latest = [...messages.value].reverse().find(hasReportDocumentReference)
-    if (!latest) return ''
-    return `${latest.id || ''}|${latest.timestamp || ''}|${latest.content.length}`
-  })
+  const reportMessageSignature = computed(() =>
+    reportGenerationSignalSignature(messages.value)
+  )
 
   function currentSessionKey(): string {
     return String(sessionKey.value || '').trim()

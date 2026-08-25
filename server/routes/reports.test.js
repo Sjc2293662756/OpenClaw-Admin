@@ -226,7 +226,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.equal(payload.reports.length, 3)
     const reportOne = payload.reports.find((report) => report.id === 'report-1')
     assert.deepEqual(reportOne, {
-      id: 'report-1', name: '正式归档测试报告', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', longTermKeep: false, retentionState: 'active', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: reportOne.createdAt, updatedAt: reportOne.updatedAt,
+      id: 'report-1', name: '正式归档测试报告.docx', reportType: 'quick report', sourceSessionId: 'session-a', sourceSessionTitle: null, sourceUserId: 'user a', sourceChannel: 'web', sourceChannelUserId: 'user a', sourceChannelUserName: '用户A', sourceMessageId: 'message-a', sourceMessagePreview: '请生成今天的系统运行综述报告', dataSourceId: 'data-source-a', dataSourceName: '101.254.114.238NAPM', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 6, status: 'ready', longTermKeep: false, retentionState: 'active', delivery: { attemptId: 'delivery-1', channel: 'wecom', status: 'handed_off', preparedAt: Date.parse(preparedAt), handedOffAt: Date.parse(handedOffAt), confirmedAt: null, failedAt: null, errorCode: null, updatedAt: Date.parse(handedOffAt) }, createdAt: reportOne.createdAt, updatedAt: reportOne.updatedAt,
     })
     assert.equal(payload.reports.find((report) => report.id === 'legacy-report-id')?.status, 'ready')
     assert.deepEqual(
@@ -260,6 +260,7 @@ test('formal report archive imports only a matched audit pair and isolates the o
       headers: { 'x-test-role': 'auditor' },
     })
     assert.equal(auditorDownload.status, 200)
+    assert.match(String(auditorDownload.headers.get('content-disposition')), /%E6%AD%A3%E5%BC%8F%E5%BD%92%E6%A1%A3%E6%B5%8B%E8%AF%95%E6%8A%A5%E5%91%8A\.docx/)
     assert.equal(await auditorDownload.text(), 'report')
   } finally {
     server.close()
@@ -268,6 +269,18 @@ test('formal report archive imports only a matched audit pair and isolates the o
     if (previousAttributionIndex === undefined) delete process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH
     else process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH = previousAttributionIndex
   }
+})
+
+test('public report name appends the stored extension after dotted data-source text', async () => {
+  const { __test__ } = await import(`./reports.js?public-report-name-test=${Date.now()}-${Math.random()}`)
+  assert.equal(__test__.publicReportName({
+    original_name: '101.254.114.238NAPM_业务综述报告',
+    stored_name: 'user/summary/report.docx',
+  }), '101.254.114.238NAPM_业务综述报告.docx')
+  assert.equal(__test__.publicReportName({
+    original_name: '已有扩展名.docx',
+    stored_name: 'user/summary/report.docx',
+  }), '已有扩展名.docx')
 })
 
 test('report list failures remain JSON responses', async () => {

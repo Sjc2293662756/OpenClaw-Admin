@@ -15,6 +15,8 @@ export type ChatReportFile = {
 }
 
 const DOCX_REFERENCE_PATTERN = /\.docx(?![a-z0-9_])/i
+const REPORT_EXPORT_TOOL_NAMES = new Set(['napm-report-export'])
+const REPORT_COMPLETION_TEXT_PATTERN = /(?:报告(?:文件)?(?:已经|已)?生成|report\s+(?:file\s+)?(?:is\s+)?(?:ready|generated)|格式\s*[:：]\s*(?:docx|word)|完整报告.{0,20}(?:附件|attachment))/iu
 const TRANSPORT_TIMESTAMP_PREFIX_PATTERN = /^\[[A-Z][a-z]{2}\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?:\s+[A-Z]{2,5}(?:[+-]\d{1,2}(?::\d{2})?)?)?\]\s*/u
 
 function messageText(message: ChatMessage): string {
@@ -28,6 +30,40 @@ function messageText(message: ChatMessage): string {
 
 export function hasReportDocumentReference(message: ChatMessage): boolean {
   return message.role === 'assistant' && DOCX_REFERENCE_PATTERN.test(messageText(message))
+}
+
+function hasReportExportToolCall(message: ChatMessage): boolean {
+  return message.role === 'assistant' && (message.rawContent || []).some((part) =>
+    REPORT_EXPORT_TOOL_NAMES.has(String(part.name || '').trim().toLowerCase())
+  )
+}
+
+/**
+ * Produce a stable, session-local signal when a report export starts or its
+ * assistant reply completes. The report Skill may omit a literal `.docx`
+ * path, so the browser must not depend on one exact wording.
+ */
+export function reportGenerationSignalSignature(messages: ChatMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (!message || message.role !== 'assistant') continue
+    const text = messageText(message).trim()
+    if (
+      !hasReportExportToolCall(message)
+      && !DOCX_REFERENCE_PATTERN.test(text)
+      && !REPORT_COMPLETION_TEXT_PATTERN.test(text)
+    ) continue
+    return [
+      index,
+      message.id || '',
+      message.timestamp || '',
+      message.stopReason || '',
+      text.length,
+      text.slice(0, 120),
+      text.slice(-120),
+    ].join('|')
+  }
+  return ''
 }
 
 function messageTimestamp(message: ChatMessage): number | null {

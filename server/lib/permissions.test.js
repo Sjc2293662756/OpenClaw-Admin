@@ -154,13 +154,17 @@ test('basic REST boundary allows only workspace transport and own password chang
     ['POST', '/api/workspace/sessions'],
     ['GET', '/api/events'],
     ['GET', '/api/media?path=image.png'],
+    ['GET', '/api/reports?sourceSessionId=owned'],
+    ['GET', '/api/reports/owned-report/download'],
     ['PUT', '/api/users/basic-1/password'],
   ]) {
     assert.equal(isBasicWorkspaceApiRequest(basic, method, path), true, `${method} ${path}`)
   }
   for (const [method, path] of [
     ['GET', '/api/dashboard/summary'],
-    ['GET', '/api/reports'],
+    ['GET', '/api/reports/owned-report/preview'],
+    ['GET', '/api/reports/retention/recovery'],
+    ['DELETE', '/api/reports/owned-report'],
     ['GET', '/api/channels/config'],
     ['GET', '/api/system-settings/sessions'],
     ['PUT', '/api/users/other-user/password'],
@@ -181,6 +185,8 @@ test('basic REST middleware rejects direct management requests and preserves hea
   app.get('/api/health', (_req, res) => res.json({ ok: true }))
   app.post('/api/rpc', (_req, res) => res.json({ ok: true }))
   app.get('/api/reports', (_req, res) => res.json({ ok: true }))
+  app.get('/api/reports/:id/download', (_req, res) => res.json({ ok: true }))
+  app.get('/api/reports/:id/preview', (_req, res) => res.json({ ok: true }))
   app.put('/api/users/:id/password', (_req, res) => res.json({ ok: true }))
 
   const server = app.listen(0)
@@ -190,7 +196,9 @@ test('basic REST middleware rejects direct management requests and preserves hea
   try {
     assert.equal((await fetch(`${baseUrl}/api/health`)).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/rpc`, { method: 'POST' })).status, 200)
-    const denied = await fetch(`${baseUrl}/api/reports`)
+    assert.equal((await fetch(`${baseUrl}/api/reports?sourceSessionId=owned`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/reports/owned-report/download`)).status, 200)
+    const denied = await fetch(`${baseUrl}/api/reports/owned-report/preview`)
     assert.equal(denied.status, 403)
     assert.equal((await denied.json()).code, 'BASIC_WORKSPACE_ONLY')
     assert.equal((await fetch(`${baseUrl}/api/users/basic-1/password`, { method: 'PUT' })).status, 200)

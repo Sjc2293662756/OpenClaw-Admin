@@ -415,6 +415,7 @@ describe('post-send history fallback', () => {
       role: 'user',
       content: '生成最近七天的综述报告',
     }])
+    expect(store.getOrCreateAgentStatus('main').sessionKey).toBe('agent:main:main:dm:webchat-atomic')
     expect(mocks.sendChatMessage).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1400)
     expect(mocks.listChatHistory).toHaveBeenCalledWith('agent:main:main:dm:webchat-atomic')
@@ -445,6 +446,8 @@ describe('post-send history fallback', () => {
     const store = useChatStore()
     store.setSessionKey('agent:main:main:dm:webchat-long-report')
     const request = store.sendMessage('生成最近七天的综述报告')
+
+    expect(store.getOrCreateAgentStatus('main').sessionKey).toBe('agent:main:main:dm:webchat-long-report')
 
     await vi.advanceTimersByTimeAsync(1400)
     expect(mocks.listChatHistory).toHaveBeenCalledWith('agent:main:main:dm:webchat-long-report')

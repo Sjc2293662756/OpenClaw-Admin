@@ -1703,7 +1703,10 @@ const currentAgentId = computed(() => {
 const currentAgentStatus = computed(() => {
   return chatStore.getOrCreateAgentStatus(currentAgentId.value)
 })
-const reportCompletionSignal = computed(() => currentAgentStatus.value.finishedAtMs)
+const reportCompletionSignal = computed(() => {
+  const status = currentAgentStatus.value
+  return status.sessionKey === selectedSessionKey.value ? status.finishedAtMs : null
+})
 const {
   downloadingReportId,
   downloadReport,
