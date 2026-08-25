@@ -92,6 +92,12 @@ export const useChatStore = defineStore('chat', () => {
   let streamFlushRaf: number | null = null
   let pendingStreamMessages: ChatMessage[] = []
   let activeRealtimeMessageId: string | null = null
+  let activeRealtimeRunId: string | null = null
+  let activeRealtimeProjectionSource: 'agent' | 'chat' | null = null
+  let activeRealtimeTerminal = false
+  let activeTurnUserContent: string | null = null
+  let convergenceTimer: ReturnType<typeof setTimeout> | null = null
+  let convergenceGeneration = 0
   let lastToolPreviewUpdateAtMs = 0
   const finalizedRuns = new Map<string, number>()
   let historyRequestId = 0
@@ -374,6 +380,7 @@ export const useChatStore = defineStore('chat', () => {
     const normalizedKey = key.trim()
     const changed = normalizedKey !== sessionKey.value
     if (changed) {
+      clearTimers()
       historyRequestId += 1
       activeHistoryKey = ''
       activeHistoryRequest = null
@@ -392,7 +399,8 @@ export const useChatStore = defineStore('chat', () => {
     }
     finalizedRuns.clear()
     pendingStreamMessages = []
-    activeRealtimeMessageId = null
+    resetActiveRealtimeProjection()
+    activeTurnUserContent = null
     if (streamFlushRaf !== null) {
       cancelAnimationFrame(streamFlushRaf)
       streamFlushRaf = null
@@ -439,6 +447,10 @@ export const useChatStore = defineStore('chat', () => {
       try {
         const history = await wsStore.rpc.listChatHistory(normalizedKey)
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
+        if (activeRealtimeTerminal && hasAuthoritativeAssistantReply(history)) {
+          resetActiveRealtimeProjection()
+          activeTurnUserContent = null
+        }
         // Gateway can acknowledge a send before its transcript is visible to
         // chat.history. Keep optimistic local turns during every refresh so a
         // temporary empty/partial response cannot blank a running conversation.
@@ -478,6 +490,11 @@ export const useChatStore = defineStore('chat', () => {
       clearTimeout(timer)
     }
     pollTimers = []
+    if (convergenceTimer) {
+      clearTimeout(convergenceTimer)
+      convergenceTimer = null
+    }
+    convergenceGeneration += 1
     if (streamFlushRaf !== null) {
       cancelAnimationFrame(streamFlushRaf)
       streamFlushRaf = null
@@ -500,7 +517,10 @@ export const useChatStore = defineStore('chat', () => {
   function schedulePostSendRefreshes() {
     const key = sessionKey.value.trim()
     if (!key) return
-    clearTimers()
+    for (const timer of pollTimers) {
+      clearTimeout(timer)
+    }
+    pollTimers = []
     // 发送后做低频兜底刷新，避免高频回拉导致列表抖动
     for (const delay of [1400, 4200, 10000]) {
       const timer = setTimeout(() => {
@@ -508,6 +528,44 @@ export const useChatStore = defineStore('chat', () => {
       }, delay)
       pollTimers.push(timer)
     }
+  }
+
+  function scheduleHistoryConvergence(runId = '') {
+    const key = sessionKey.value.trim()
+    if (!key) return
+    if (convergenceTimer) {
+      clearTimeout(convergenceTimer)
+      convergenceTimer = null
+    }
+    const generation = ++convergenceGeneration
+    const delays = [100, 600, 2000, 6000]
+
+    const refreshNext = (index: number) => {
+      if (index >= delays.length) return
+      convergenceTimer = setTimeout(async () => {
+        convergenceTimer = null
+        if (generation !== convergenceGeneration || sessionKey.value.trim() !== key) return
+        await fetchHistory(key, { silent: true, clearError: false })
+        if (generation !== convergenceGeneration || sessionKey.value.trim() !== key) return
+        if (index === delays.length - 1) {
+          const normalizedRunId = runId.trim()
+          if (
+            activeRealtimeTerminal &&
+            (!normalizedRunId || !activeRealtimeRunId || activeRealtimeRunId === normalizedRunId)
+          ) {
+            resetActiveRealtimeProjection()
+            activeTurnUserContent = null
+            await fetchHistory(key, { silent: true, clearError: false })
+          }
+          return
+        }
+        refreshNext(index + 1)
+      }, delays[index])
+    }
+
+    // Run the refreshes sequentially. If the first one reuses an older
+    // in-flight request, the next one is guaranteed to start after it settles.
+    refreshNext(0)
   }
 
   function extractSessionKey(payload: unknown, depth = 0, visited = new Set<object>()): string {
@@ -661,6 +719,88 @@ export const useChatStore = defineStore('chat', () => {
     })
   }
 
+  function resetActiveRealtimeProjection() {
+    activeRealtimeMessageId = null
+    activeRealtimeRunId = null
+    activeRealtimeProjectionSource = null
+    activeRealtimeTerminal = false
+  }
+
+  function hasAuthoritativeAssistantReply(history: ChatMessage[]): boolean {
+    let latestUserIndex = -1
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      const item = history[index]
+      if (
+        item?.role === 'user' &&
+        (!activeTurnUserContent || item.content.trim() === activeTurnUserContent)
+      ) {
+        latestUserIndex = index
+        break
+      }
+    }
+    if (latestUserIndex < 0) return false
+    return history.slice(latestUserIndex + 1).some((item) =>
+      item.role === 'assistant' && item.content.trim().length > 0
+    )
+  }
+
+  function markActiveRealtimeTerminal(runId: string) {
+    const normalizedRunId = runId.trim()
+    if (
+      activeRealtimeMessageId &&
+      (!normalizedRunId || !activeRealtimeRunId || activeRealtimeRunId === normalizedRunId)
+    ) {
+      activeRealtimeTerminal = true
+    }
+  }
+
+  function projectAgentAssistantFallback(
+    keyInEvent: string,
+    runId: string,
+    data: Record<string, unknown>
+  ): string {
+    if (!shouldApplyRealtimeEvent(sessionKey.value, keyInEvent)) return ''
+
+    const normalizedRunId = runId.trim()
+    if (
+      activeRealtimeProjectionSource === 'chat' &&
+      (!normalizedRunId || !activeRealtimeRunId || activeRealtimeRunId === normalizedRunId)
+    ) {
+      return ''
+    }
+
+    const snapshot = asString(data.text || data.content)
+    const delta = asString(data.delta)
+    if (!snapshot.trim() && !delta) return ''
+
+    const canReuseActive = Boolean(
+      activeRealtimeMessageId &&
+      (!normalizedRunId || !activeRealtimeRunId || activeRealtimeRunId === normalizedRunId)
+    )
+    const messageId = canReuseActive
+      ? activeRealtimeMessageId!
+      : `chat-stream:${normalizedRunId || keyInEvent}`
+    const existing = messages.value.find((item) => item.id === messageId)
+    const rawContent = snapshot.trim()
+      ? snapshot
+      : data.replace === true || !existing
+        ? delta
+        : `${existing.content}${delta}`
+    const content = rawContent.replace(/\n{3,}/g, '\n\n').trim()
+    if (!content) return ''
+
+    activeRealtimeMessageId = messageId
+    activeRealtimeRunId = normalizedRunId || activeRealtimeRunId
+    activeRealtimeProjectionSource = 'agent'
+    activeRealtimeTerminal = false
+    mergeRealtimeMessages([{
+      id: messageId,
+      role: 'assistant',
+      content,
+    }], { streaming: false, replaceExisting: true })
+    return content
+  }
+
   function mergePendingMessages(history: ChatMessage[]): ChatMessage[] {
     // Only preserve explicit local user placeholders and the one active chat
     // stream. Agent telemetry and completed realtime projections must never
@@ -794,9 +934,9 @@ export const useChatStore = defineStore('chat', () => {
     }
   ) {
     const normalizedEvent = eventName.trim().toLowerCase()
-    // OpenClaw emits both high-level chat projections and low-level agent
-    // telemetry. Only chat events own transcript text; agent events are handled
-    // separately by handleAgentStatusEvent.
+    // Canonical chat projections take ownership when present. A narrowly
+    // scoped agent.assistant fallback is handled by handleAgentStatusEvent for
+    // Gateway runs that do not emit a browser-visible chat projection.
     if (normalizedEvent !== 'chat' && !normalizedEvent.startsWith('chat.')) return
 
     const keyInEvent = extractSessionKey(payload)
@@ -810,17 +950,26 @@ export const useChatStore = defineStore('chat', () => {
     const isTerminal = state === 'final' || state === 'done' || state === 'aborted' || state === 'error'
     const streaming = state === 'delta' || (options?.streaming ?? false)
     const needsProjectionId = streaming || isTerminal
+    const canReuseActive = Boolean(
+      activeRealtimeMessageId &&
+      (!runId || !activeRealtimeRunId || activeRealtimeRunId === runId)
+    )
     const streamMessageId = needsProjectionId
-      ? activeRealtimeMessageId
+      ? canReuseActive
+        ? activeRealtimeMessageId
         || `chat-stream:${runId || keyInEvent || sessionKey.value}`
+        : `chat-stream:${runId || keyInEvent || sessionKey.value}`
       : ''
     const projection = extractChatProjectionMessage(payload)
     const realtimeMessages = projection
       ? [{ ...projection, id: streamMessageId || projection.id }]
       : []
 
-    if (streaming && streamMessageId) {
+    if (streamMessageId && (streaming || projection)) {
       activeRealtimeMessageId = streamMessageId
+      activeRealtimeRunId = runId || activeRealtimeRunId
+      activeRealtimeProjectionSource = 'chat'
+      activeRealtimeTerminal = false
     }
     if (isTerminal) {
       // Commit any queued delta before the terminal snapshot, then stop
@@ -846,11 +995,19 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (isTerminal) {
-      activeRealtimeMessageId = null
+      if (state === 'final' || state === 'done') {
+        markActiveRealtimeTerminal(runId)
+      } else {
+        resetActiveRealtimeProjection()
+      }
     }
 
     if (options?.refreshHistory ?? true) {
-      scheduleHistoryRefresh(200)
+      if (isTerminal) {
+        scheduleHistoryConvergence(runId)
+      } else {
+        scheduleHistoryRefresh(200)
+      }
     }
   }
 
@@ -913,20 +1070,23 @@ export const useChatStore = defineStore('chat', () => {
       if (state === 'final' || state === 'done') {
         if (runIdInEvent) markRunFinal(runIdInEvent)
         setAgentStatusPhase(agentId, 'done', { runId: null, detail: null })
-        scheduleHistoryRefresh(100)
+        markActiveRealtimeTerminal(runIdInEvent)
+        scheduleHistoryConvergence(runIdInEvent)
         return
       }
       if (state === 'aborted') {
         if (runIdInEvent) markRunFinal(runIdInEvent)
         setAgentStatusPhase(agentId, 'aborted', { runId: null, detail: null })
-        scheduleHistoryRefresh(100)
+        resetActiveRealtimeProjection()
+        scheduleHistoryConvergence(runIdInEvent)
         return
       }
       if (state === 'error') {
         if (runIdInEvent) markRunFinal(runIdInEvent)
         const errorMessage = asString(payloadRow?.errorMessage).trim() || null
         setAgentStatusPhase(agentId, 'error', { runId: null, detail: errorMessage })
-        scheduleHistoryRefresh(100)
+        resetActiveRealtimeProjection()
+        scheduleHistoryConvergence(runIdInEvent)
         return
       }
       return
@@ -955,14 +1115,16 @@ export const useChatStore = defineStore('chat', () => {
           if (phase === 'end') {
             if (runIdInEvent) markRunFinal(runIdInEvent)
             setAgentStatusPhase(agentId, 'done', { runId: null, detail: null })
-            scheduleHistoryRefresh(100)
+            markActiveRealtimeTerminal(runIdInEvent)
+            scheduleHistoryConvergence(runIdInEvent)
             return
           }
           if (phase === 'error') {
             if (runIdInEvent) markRunFinal(runIdInEvent)
             const errorText = asText(data.error).trim() || null
             setAgentStatusPhase(agentId, 'error', { runId: null, detail: errorText })
-            scheduleHistoryRefresh(100)
+            resetActiveRealtimeProjection()
+            scheduleHistoryConvergence(runIdInEvent)
             return
           }
         }
@@ -1057,9 +1219,10 @@ export const useChatStore = defineStore('chat', () => {
 
         if (stream === 'assistant') {
           // touchAgentStatus(agentId)
-          // 提取消息内容
-          const rawContent = asString(data.content || data.text || data.delta)
-          const content = rawContent.replace(/\n{3,}/g, '\n\n').trim()
+          // Some production Gateway runs only expose assistant text through the
+          // agent stream. Project it for the exact selected session until a
+          // canonical chat event or authoritative history takes over.
+          const content = projectAgentAssistantFallback(keyInEvent, runIdInEvent, data)
           const lastMessage = content || agentStatus.lastMessage
           
           if (agentStatus.phase !== 'replying' && agentStatus.phase !== 'tool') {
@@ -1095,7 +1258,8 @@ export const useChatStore = defineStore('chat', () => {
       }
       if (normalizedEvent === 'agent.done') {
         setAgentStatusPhase(agentId, 'done', { runId: null, detail: null })
-        scheduleHistoryRefresh(100)
+        markActiveRealtimeTerminal(runIdInEvent)
+        scheduleHistoryConvergence(runIdInEvent)
         return
       }
     }
@@ -1138,6 +1302,8 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     const idempotencyKey = `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    resetActiveRealtimeProjection()
+    activeTurnUserContent = text
     resetAgentProgress(agentId)
     setAgentStatusPhase(agentId, 'sending', {
       runId: idempotencyKey,
@@ -1197,6 +1363,8 @@ export const useChatStore = defineStore('chat', () => {
     const match = sessionKey.value.match(/^agent:([^:]+):/)
     const agentId = match?.[1] || 'default'
     const runId = options.runId?.trim() || options.idempotencyKey
+    resetActiveRealtimeProjection()
+    activeTurnUserContent = text
     resetAgentProgress(agentId)
     setAgentStatusPhase(agentId, 'waiting', {
       runId,

@@ -109,7 +109,7 @@ describe('chat history request coordination', () => {
 })
 
 describe('realtime event routing', () => {
-  it('keeps agent assistant telemetry out of transcript text', () => {
+  it('uses exact-session agent assistant text as a stable realtime fallback', () => {
     const store = useChatStore()
     const sessionKey = 'agent:main:main:dm:webchat-agent-telemetry'
     store.setSessionKey(sessionKey)
@@ -124,6 +124,16 @@ describe('realtime event routing', () => {
         replace: false,
       },
     })
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-agent-1',
+      sessionKey,
+      stream: 'assistant',
+      data: {
+        text: '模型内部实时文本已经完成',
+        delta: '已经完成',
+        replace: false,
+      },
+    })
     store.handleRealtimeEvent('agent', {
       runId: 'run-agent-1',
       sessionKey,
@@ -135,8 +145,59 @@ describe('realtime event routing', () => {
       },
     }, { refreshHistory: false, streaming: true })
 
+    expect(store.messages).toEqual([expect.objectContaining({
+      id: 'chat-stream:run-agent-1',
+      role: 'assistant',
+      content: '模型内部实时文本已经完成',
+    })])
+    expect(store.getOrCreateAgentStatus('main').lastMessage).toBe('模型内部实时文本已经完成')
+  })
+
+  it('lets a canonical chat snapshot take ownership from the agent fallback', () => {
+    const flush = stubAnimationFrames()
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-agent-handoff'
+    const runId = 'run-agent-handoff'
+    store.setSessionKey(sessionKey)
+
+    store.handleAgentStatusEvent('agent', {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: 'agent 兜底正文' },
+    })
+    store.handleRealtimeEvent('chat', {
+      runId,
+      sessionKey,
+      state: 'delta',
+      message: { role: 'assistant', content: 'chat 权威正文' },
+    }, { refreshHistory: false })
+    flush()
+    store.handleAgentStatusEvent('agent', {
+      runId,
+      sessionKey,
+      stream: 'assistant',
+      data: { text: '不应覆盖 chat 的旧投影' },
+    })
+
+    expect(store.messages).toEqual([expect.objectContaining({
+      id: `chat-stream:${runId}`,
+      content: 'chat 权威正文',
+    })])
+  })
+
+  it('does not project another session agent stream into the selected conversation', () => {
+    const store = useChatStore()
+    store.setSessionKey('agent:main:main:dm:webchat-selected-agent')
+
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-other-agent',
+      sessionKey: 'agent:main:main:dm:webchat-other-agent',
+      stream: 'assistant',
+      data: { text: '不应显示' },
+    })
+
     expect(store.messages).toEqual([])
-    expect(store.getOrCreateAgentStatus('main').lastMessage).toBe('模型内部实时文本')
   })
 
   it('uses one chat projection bubble across a multi-tool report run', () => {
@@ -399,6 +460,46 @@ describe('realtime event routing', () => {
 })
 
 describe('post-send history fallback', () => {
+  it('runs a fresh terminal refresh after an older history request settles', async () => {
+    vi.useFakeTimers()
+    const firstHistory = deferred<ChatMessage[]>()
+    const authoritativeHistory: ChatMessage[] = [
+      { role: 'user', content: '当前系统流量趋势怎么样？' },
+      { role: 'assistant', content: '系统流量整体平稳。' },
+    ]
+    mocks.listChatHistory
+      .mockReturnValueOnce(firstHistory.promise)
+      .mockResolvedValue(authoritativeHistory)
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-terminal-refresh'
+    store.setSessionKey(sessionKey)
+
+    const initialRequest = store.fetchHistory(sessionKey)
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-terminal-refresh',
+      sessionKey,
+      stream: 'assistant',
+      data: { text: '系统流量整体平稳。' },
+    })
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-terminal-refresh',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    })
+
+    vi.advanceTimersByTime(100)
+    expect(mocks.listChatHistory).toHaveBeenCalledTimes(1)
+    firstHistory.resolve([{ role: 'user', content: '当前系统流量趋势怎么样？' }])
+    await initialRequest
+    await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(600)
+
+    expect(mocks.listChatHistory).toHaveBeenCalledTimes(2)
+    expect(store.messages).toEqual(authoritativeHistory)
+    store.clearTimers()
+  })
+
   it('adopts an atomically created first turn without sending it twice', async () => {
     vi.useFakeTimers()
     mocks.listChatHistory.mockResolvedValue([])
