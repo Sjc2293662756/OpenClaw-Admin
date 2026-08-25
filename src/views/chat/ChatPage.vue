@@ -45,6 +45,7 @@ import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { usePermissions } from '@/composables/usePermissions'
 import { useChatReportAttachments } from '@/composables/useChatReportAttachments'
+import { useProgressiveChatPresentation } from '@/composables/useProgressiveChatPresentation'
 import AuthenticatedMediaImage from '@/components/common/AuthenticatedMediaImage.vue'
 import ReportAttachmentList from '@/components/chat/ReportAttachmentList.vue'
 import type { AgentInstance, ChatMessage, ChatMessageContent, SessionsUsageSession, Skill } from '@/api/types'
@@ -430,6 +431,7 @@ const sessionChannelDisplay = computed(() => {
 })
 
 const messageList = computed(() => chatStore.messages)
+const { presentedMessages } = useProgressiveChatPresentation(normalizedSessionKey, messageList)
 function isThinkingOnlyStructuredMessage(structured: StructuredMessageView | null): boolean {
   if (!structured) return false
   if (structured.thinkings.length === 0) return false
@@ -654,7 +656,7 @@ function prepareMessageRender(item: ChatMessage): CachedMessageRender {
 }
 
 const visibleMessageEntries = computed<RenderMessage[]>(() => {
-  const list = messageList.value
+  const list = presentedMessages.value
   const rendered: RenderMessage[] = []
 
   for (let idx = 0; idx < list.length; idx += 1) {

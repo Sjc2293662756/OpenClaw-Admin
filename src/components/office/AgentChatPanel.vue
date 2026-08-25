@@ -38,6 +38,7 @@ import { useConfigStore } from '@/stores/config'
 import { useSkillStore } from '@/stores/skill'
 import { useSessionStore } from '@/stores/session'
 import { useChatReportAttachments } from '@/composables/useChatReportAttachments'
+import { useProgressiveChatPresentation } from '@/composables/useProgressiveChatPresentation'
 import { formatDate, formatRelativeTime, truncate } from '@/utils/format'
 import { renderSimpleMarkdown } from '@/utils/markdown'
 import {
@@ -1618,9 +1619,10 @@ function parseStructuredMessage(content: string): StructuredMessageView | null {
 }
 
 const messageList = computed(() => chatStore.messages)
+const { presentedMessages } = useProgressiveChatPresentation(selectedSessionKey, messageList)
 
 const visibleMessageEntries = computed<RenderMessage[]>(() => {
-  const list = messageList.value
+  const list = presentedMessages.value
   const rendered: RenderMessage[] = []
 
   for (let idx = 0; idx < list.length; idx += 1) {
