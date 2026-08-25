@@ -191,4 +191,38 @@ describe('useChatReportAttachments', () => {
     expect(attachments.unplacedReports.value).toEqual([])
     scope.stop()
   })
+
+  it('preserves attachment list identity when a retry returns identical report metadata', async () => {
+    const readyReport = {
+      id: 'stable-retry-report',
+      name: '稳定重试报告.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 8192,
+      status: 'ready',
+      sourceSessionId: 'agent:main:main:dm:webchat-stable-retry',
+      sourceMessageId: 'stable-source',
+      sourceMessagePreview: '生成稳定重试报告',
+      createdAt: 1787622913043,
+    }
+    const fetchMock = vi.fn(async () => response([readyReport]))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const sessionKey = ref('agent:main:main:dm:webchat-stable-retry')
+    const messages = ref<ChatMessage[]>([])
+    const scope = effectScope()
+    const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
+
+    await attachments.refreshReports(sessionKey.value)
+    await nextTick()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(attachments.unplacedReports.value).toHaveLength(1)
+    const initialReports = attachments.unplacedReports.value
+
+    await attachments.refreshReports(sessionKey.value, { preserveExisting: true })
+    await nextTick()
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(attachments.unplacedReports.value).toBe(initialReports)
+    scope.stop()
+  })
 })

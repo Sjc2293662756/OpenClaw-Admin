@@ -17,6 +17,29 @@ type ReportsResponse = {
 }
 
 const REGISTRATION_RETRY_DELAYS = [250, 1500, 3500, 7000, 15000]
+const EMPTY_REPORTS: ChatReportFile[] = []
+
+function areReportListsEquivalent(left: ChatReportFile[], right: ChatReportFile[]): boolean {
+  if (left === right) return true
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index += 1) {
+    const current = left[index]
+    const next = right[index]
+    if (!current || !next) return false
+    if (
+      current.id !== next.id
+      || current.name !== next.name
+      || current.mimeType !== next.mimeType
+      || current.size !== next.size
+      || current.status !== next.status
+      || current.sourceSessionId !== next.sourceSessionId
+      || current.sourceMessageId !== next.sourceMessageId
+      || current.sourceMessagePreview !== next.sourceMessagePreview
+      || current.createdAt !== next.createdAt
+    ) return false
+  }
+  return true
+}
 
 export function useChatReportAttachments(
   sessionKey: Readonly<Ref<string | null | undefined>>,
@@ -90,12 +113,16 @@ export function useChatReportAttachments(
         throw new Error(data?.error || data?.message || t('pages.chat.reportAttachment.loadFailed'))
       }
       if (generation === requestGeneration && key === currentSessionKey()) {
+        let nextReports: ChatReportFile[]
         if (options?.preserveExisting) {
           const merged = new Map(reports.value.map((report) => [report.id, report]))
           for (const report of data.reports) merged.set(report.id, report)
-          reports.value = [...merged.values()].sort((left, right) => left.createdAt - right.createdAt)
+          nextReports = [...merged.values()].sort((left, right) => left.createdAt - right.createdAt)
         } else {
-          reports.value = data.reports
+          nextReports = data.reports
+        }
+        if (!areReportListsEquivalent(reports.value, nextReports)) {
+          reports.value = nextReports
         }
       }
     } catch (error) {
@@ -122,7 +149,7 @@ export function useChatReportAttachments(
   }
 
   function reportsForMessage(message: ChatMessage): ChatReportFile[] {
-    return reportsByMessage.value.get(message) || []
+    return reportsByMessage.value.get(message) || EMPTY_REPORTS
   }
 
   async function downloadReport(report: ChatReportFile) {

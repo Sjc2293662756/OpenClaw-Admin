@@ -102,7 +102,7 @@ const QUICK_REPLY_STORAGE_KEY = 'openclaw_chat_quick_replies_v1'
 const SESSION_KEY_STORAGE_KEY = 'openclaw_chat_selected_session_v1'
 const ALERT_ANALYSIS_DRAFT_STORAGE_KEY = 'gaiop.alert-analysis-draft'
 let pendingForceScroll = false
-let pendingScroll = false
+let pendingScrollFrame: number | null = null
 let destroyed = false
 const quickReplies = ref<Array<{
   id: string
@@ -611,6 +611,48 @@ function parseRawContent(rawContent: ChatMessageContent[]): StructuredMessageVie
   }
 }
 
+const messageRenderCache = new WeakMap<ChatMessage, CachedMessageRender>()
+
+function prepareMessageRender(item: ChatMessage): CachedMessageRender {
+  const cached = messageRenderCache.get(item)
+  if (cached !== undefined) return cached
+
+  let structured: StructuredMessageView | null = null
+  if (item.rawContent && Array.isArray(item.rawContent)) {
+    const parsed = parseRawContent(item.rawContent)
+    if (parsed) {
+      structured = projectConversationStructuredMessage(parsed)
+      if (!structured) {
+        messageRenderCache.set(item, null)
+        return null
+      }
+    }
+  }
+
+  if (!structured) {
+    const parsed = parseStructuredMessage(item.content)
+    if (isThinkingOnlyStructuredMessage(parsed)) {
+      messageRenderCache.set(item, null)
+      return null
+    }
+    structured = parsed ? projectConversationStructuredMessage(parsed) : null
+    if (parsed && !structured) {
+      messageRenderCache.set(item, null)
+      return null
+    }
+  }
+
+  const markdownSource = structured
+    ? structured.plainTexts.join('\n')
+    : item.content
+  const prepared = {
+    structured,
+    html: renderChatMarkdown(markdownSource, item.role),
+  }
+  messageRenderCache.set(item, prepared)
+  return prepared
+}
+
 const visibleMessageEntries = computed<RenderMessage[]>(() => {
   const list = messageList.value
   const rendered: RenderMessage[] = []
@@ -619,29 +661,13 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
     const item = list[idx]
     if (!item) continue
     if (!isConversationTranscriptRole(item.role)) continue
-    
-    if (item.rawContent && Array.isArray(item.rawContent)) {
-      const parsed = parseRawContent(item.rawContent)
-      if (parsed) {
-        const structured = projectConversationStructuredMessage(parsed)
-        if (!structured) continue
-        rendered.push({
-          key: item.id || `${item.role}-${idx}`,
-          item,
-          structured,
-        })
-        continue
-      }
-    }
-
-    const parsed = parseStructuredMessage(item.content)
-    if (isThinkingOnlyStructuredMessage(parsed)) continue
-    const structured = parsed ? projectConversationStructuredMessage(parsed) : null
-    if (parsed && !structured) continue
+    const prepared = prepareMessageRender(item)
+    if (!prepared) continue
     rendered.push({
       key: item.id || `${item.role}-${idx}`,
       item,
-      structured,
+      structured: prepared.structured,
+      html: prepared.html,
     })
   }
 
@@ -700,7 +726,10 @@ interface RenderMessage {
   key: string
   item: ChatMessage
   structured: StructuredMessageView | null
+  html: string
 }
+
+type CachedMessageRender = Pick<RenderMessage, 'structured' | 'html'> | null
 
 interface SlashCommandPreset {
   command: string
@@ -1595,13 +1624,10 @@ function requestScrollToBottom(options?: { force?: boolean }) {
   const force = options?.force ?? false
   if (!force && !autoFollowBottom.value) return
   if (force) pendingForceScroll = true
-  if (pendingScroll) return
+  if (pendingScrollFrame !== null) return
 
-  pendingScroll = true
-  const schedule =
-    typeof queueMicrotask === 'function' ? queueMicrotask : (fn: () => void) => Promise.resolve().then(fn)
-  schedule(() => {
-    pendingScroll = false
+  pendingScrollFrame = requestAnimationFrame(() => {
+    pendingScrollFrame = null
     if (destroyed) return
     const forceNow = pendingForceScroll
     pendingForceScroll = false
@@ -1612,7 +1638,10 @@ function requestScrollToBottom(options?: { force?: boolean }) {
 function cancelPendingScroll() {
   destroyed = true
   pendingForceScroll = false
-  pendingScroll = false
+  if (pendingScrollFrame !== null) {
+    cancelAnimationFrame(pendingScrollFrame)
+    pendingScrollFrame = null
+  }
 }
 
 function roleType(role: string): 'default' | 'success' | 'info' | 'warning' {
@@ -2636,10 +2665,15 @@ onUnmounted(() => {
 // ---- Auto Play TTS for new assistant messages ----
 
 watch(
-  () => chatStore.messages,
-  (messages) => {
+  [
+    () => chatStore.sending,
+    () => chatStore.messages,
+    () => ttsSettings.value.autoPlay,
+    () => ttsSettings.value.enabled,
+  ],
+  ([isSending, messages, autoPlay, enabled]) => {
     // Check if auto-play is enabled
-    if (!ttsSettings.value.autoPlay || !ttsSettings.value.enabled) return
+    if (!autoPlay || !enabled) return
     
     // Find the last assistant message
     const lastAssistantMsg = [...messages].reverse().find(m => m.role === 'assistant')
@@ -2650,14 +2684,14 @@ watch(
     if (playingMessageId.value === lastAssistantMsg.id) return
     
     // Skip if currently streaming
-    if (chatStore.sending) return
+    if (isSending) return
     
     // Play the message
     console.log('[ChatPage] Auto-playing TTS for message:', lastAssistantMsg.id)
     lastPlayedMessageId.value = lastAssistantMsg.id
     playTTS(lastAssistantMsg)
   },
-  { deep: true }
+  { flush: 'post' }
 )
 
 watch(
@@ -2927,6 +2961,17 @@ async function handleSend() {
                       <div
                         v-for="entry in renderedMessages"
                         :key="entry.key"
+                        v-memo="[
+                          entry.item,
+                          entry.html,
+                          reportsForMessage(entry.item),
+                          expandedToolCalls,
+                          expandedToolResults,
+                          downloadingReportId,
+                          playingMessageId,
+                          ttsIsLoading,
+                          locale,
+                        ]"
                         class="chat-bubble"
                         :class="`is-${entry.item.role}`"
                       >
@@ -3103,7 +3148,7 @@ async function handleSend() {
                             class="chat-bubble-content-wrapper"
                           >
                             <div class="chat-bubble-content structured-plain-text chat-markdown"
-                              v-html="renderChatMarkdown(entry.structured.plainTexts.join('\n'), entry.item.role)"
+                              v-html="entry.html"
                             ></div>
                           </div>
 
@@ -3135,7 +3180,7 @@ async function handleSend() {
                         <div v-else class="chat-bubble-content-wrapper">
                           <div
                             class="chat-bubble-content chat-markdown"
-                            v-html="renderChatMarkdown(entry.item.content, entry.item.role)"
+                            v-html="entry.html"
                           ></div>
                         </div>
 
