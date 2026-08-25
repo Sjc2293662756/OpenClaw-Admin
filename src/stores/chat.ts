@@ -87,7 +87,6 @@ export const useChatStore = defineStore('chat', () => {
   const agentSteps = ref<Map<string, AgentStep[]>>(new Map())
   const toolProgress = ref<Map<string, ToolProgress | null>>(new Map())
   
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null
   let pollTimers: Array<ReturnType<typeof setTimeout>> = []
   let streamFlushRaf: number | null = null
   let pendingStreamMessages: ChatMessage[] = []
@@ -97,6 +96,9 @@ export const useChatStore = defineStore('chat', () => {
   let activeTurnUserContent: string | null = null
   let convergenceTimer: ReturnType<typeof setTimeout> | null = null
   let convergenceGeneration = 0
+  let convergenceActive = false
+  let convergenceSessionKey = ''
+  let authoritativeReplyObserved = false
   let lastToolPreviewUpdateAtMs = 0
   const finalizedRuns = new Map<string, number>()
   let historyRequestId = 0
@@ -400,6 +402,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingStreamMessages = []
     resetActiveRealtimeProjection()
     activeTurnUserContent = null
+    authoritativeReplyObserved = false
     if (streamFlushRaf !== null) {
       cancelAnimationFrame(streamFlushRaf)
       streamFlushRaf = null
@@ -446,15 +449,25 @@ export const useChatStore = defineStore('chat', () => {
       try {
         const history = await wsStore.rpc.listChatHistory(normalizedKey)
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
-        if (activeRealtimeTerminal && hasAuthoritativeAssistantReply(history)) {
+        const hasCompletedTurn =
+          (convergenceActive || activeRealtimeTerminal) &&
+          hasAuthoritativeAssistantReply(history)
+        if (hasCompletedTurn) {
+          authoritativeReplyObserved = true
           resetActiveRealtimeProjection()
           activeTurnUserContent = null
         }
         // Gateway can acknowledge a send before its transcript is visible to
         // chat.history. Keep optimistic local turns during every refresh so a
         // temporary empty/partial response cannot blank a running conversation.
-        messages.value = mergePendingMessages(history)
-        lastSyncedAt.value = Date.now()
+        const nextMessages = mergePendingMessages(history)
+        const changed = !areMessageListsEquivalent(messages.value, nextMessages)
+        if (changed) {
+          messages.value = nextMessages
+        }
+        if (changed || !silent) {
+          lastSyncedAt.value = Date.now()
+        }
       } catch (error) {
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
         if (!silent || clearError) {
@@ -480,19 +493,25 @@ export const useChatStore = defineStore('chat', () => {
     return request
   }
 
-  function clearTimers() {
-    if (refreshTimer) {
-      clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
+  function cancelPostSendRefreshes() {
     for (const timer of pollTimers) {
       clearTimeout(timer)
     }
     pollTimers = []
+  }
+
+  function finishHistoryConvergence() {
     if (convergenceTimer) {
       clearTimeout(convergenceTimer)
       convergenceTimer = null
     }
+    convergenceActive = false
+    convergenceSessionKey = ''
+  }
+
+  function clearTimers() {
+    cancelPostSendRefreshes()
+    finishHistoryConvergence()
     convergenceGeneration += 1
     if (streamFlushRaf !== null) {
       cancelAnimationFrame(streamFlushRaf)
@@ -501,29 +520,17 @@ export const useChatStore = defineStore('chat', () => {
     pendingStreamMessages = []
   }
 
-  function scheduleHistoryRefresh(delay = 250) {
-    const key = sessionKey.value.trim()
-    if (!key) return
-    if (refreshTimer) {
-      clearTimeout(refreshTimer)
-      refreshTimer = null
-    }
-    refreshTimer = setTimeout(() => {
-      fetchHistory(key, { silent: true, clearError: false })
-    }, delay)
-  }
-
   function schedulePostSendRefreshes() {
     const key = sessionKey.value.trim()
-    if (!key) return
-    for (const timer of pollTimers) {
-      clearTimeout(timer)
-    }
-    pollTimers = []
-    // 发送后做低频兜底刷新，避免高频回拉导致列表抖动
+    if (!key || convergenceActive || authoritativeReplyObserved) return
+    cancelPostSendRefreshes()
+    // Only one fallback strategy is active before a terminal event. Once
+    // terminal convergence starts these timers are cancelled as a group.
     for (const delay of [1400, 4200, 10000]) {
-      const timer = setTimeout(() => {
-        fetchHistory(key, { silent: true, clearError: false })
+      const timer = setTimeout(async () => {
+        if (sessionKey.value.trim() !== key || convergenceActive) return
+        await fetchHistory(key, { silent: true, clearError: false })
+        if (authoritativeReplyObserved) cancelPostSendRefreshes()
       }, delay)
       pollTimers.push(timer)
     }
@@ -531,11 +538,12 @@ export const useChatStore = defineStore('chat', () => {
 
   function scheduleHistoryConvergence(runId = '') {
     const key = sessionKey.value.trim()
-    if (!key) return
-    if (convergenceTimer) {
-      clearTimeout(convergenceTimer)
-      convergenceTimer = null
-    }
+    if (!key || authoritativeReplyObserved) return
+    if (convergenceActive && convergenceSessionKey === key) return
+    cancelPostSendRefreshes()
+    finishHistoryConvergence()
+    convergenceActive = true
+    convergenceSessionKey = key
     const generation = ++convergenceGeneration
     const delays = [100, 600, 2000, 6000]
 
@@ -546,6 +554,10 @@ export const useChatStore = defineStore('chat', () => {
         if (generation !== convergenceGeneration || sessionKey.value.trim() !== key) return
         await fetchHistory(key, { silent: true, clearError: false })
         if (generation !== convergenceGeneration || sessionKey.value.trim() !== key) return
+        if (authoritativeReplyObserved) {
+          finishHistoryConvergence()
+          return
+        }
         if (index === delays.length - 1) {
           const normalizedRunId = runId.trim()
           if (
@@ -556,14 +568,15 @@ export const useChatStore = defineStore('chat', () => {
             activeTurnUserContent = null
             await fetchHistory(key, { silent: true, clearError: false })
           }
+          finishHistoryConvergence()
           return
         }
         refreshNext(index + 1)
       }, delays[index])
     }
 
-    // Run the refreshes sequentially. If the first one reuses an older
-    // in-flight request, the next one is guaranteed to start after it settles.
+    // Run refreshes sequentially and stop as soon as a completed authoritative
+    // turn appears. Duplicate terminal events share this one convergence run.
     refreshNext(0)
   }
 
@@ -737,9 +750,45 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
     if (latestUserIndex < 0) return false
-    return history.slice(latestUserIndex + 1).some((item) =>
-      item.role === 'assistant' && item.content.trim().length > 0
-    )
+    const completedTurn = history
+      .slice(latestUserIndex + 1)
+      .filter((item) => item.role !== 'system')
+    const last = completedTurn[completedTurn.length - 1]
+    return last?.role === 'assistant' && last.content.trim().length > 0
+  }
+
+  function areMessageListsEquivalent(left: ChatMessage[], right: ChatMessage[]): boolean {
+    if (left === right) return true
+    if (left.length !== right.length) return false
+
+    for (let index = 0; index < left.length; index += 1) {
+      const current = left[index]
+      const next = right[index]
+      if (!current || !next) return false
+      if (
+        current.id !== next.id ||
+        current.role !== next.role ||
+        current.content !== next.content ||
+        current.timestamp !== next.timestamp ||
+        current.name !== next.name ||
+        current.model !== next.model ||
+        current.provider !== next.provider ||
+        current.stopReason !== next.stopReason ||
+        current.toolCallId !== next.toolCallId ||
+        current.toolName !== next.toolName ||
+        current.isError !== next.isError
+      ) {
+        return false
+      }
+      if (
+        current.rawContent !== next.rawContent &&
+        JSON.stringify(current.rawContent ?? null) !== JSON.stringify(next.rawContent ?? null)
+      ) {
+        return false
+      }
+    }
+
+    return true
   }
 
   function markActiveRealtimeTerminal(runId: string) {
@@ -951,12 +1000,8 @@ export const useChatStore = defineStore('chat', () => {
       }
     }
 
-    if (options?.refreshHistory ?? true) {
-      if (isTerminal) {
-        scheduleHistoryConvergence(runId)
-      } else {
-        scheduleHistoryRefresh(200)
-      }
+    if ((options?.refreshHistory ?? true) && isTerminal) {
+      scheduleHistoryConvergence(runId)
     }
   }
 
@@ -1250,7 +1295,9 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     const idempotencyKey = `web-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    clearTimers()
     resetActiveRealtimeProjection()
+    authoritativeReplyObserved = false
     activeTurnUserContent = text
     resetAgentProgress(agentId)
     setAgentStatusPhase(agentId, 'sending', {
@@ -1311,7 +1358,9 @@ export const useChatStore = defineStore('chat', () => {
     const match = sessionKey.value.match(/^agent:([^:]+):/)
     const agentId = match?.[1] || 'default'
     const runId = options.runId?.trim() || options.idempotencyKey
+    clearTimers()
     resetActiveRealtimeProjection()
+    authoritativeReplyObserved = false
     activeTurnUserContent = text
     resetAgentProgress(agentId)
     setAgentStatusPhase(agentId, 'waiting', {

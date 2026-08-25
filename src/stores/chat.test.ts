@@ -90,6 +90,34 @@ describe('chat history request coordination', () => {
     expect(store.loading).toBe(false)
   })
 
+  it('keeps the same message array when a background history refresh is unchanged', async () => {
+    const largeToolResult = 'x'.repeat(16_000)
+    const history: ChatMessage[] = [
+      { id: 'user-1', role: 'user', content: '生成综述报告' },
+      {
+        id: 'tool-1',
+        role: 'tool',
+        content: largeToolResult,
+        toolCallId: 'call-1',
+        toolName: 'napm-skill-query',
+        rawContent: [{ type: 'text', text: largeToolResult }],
+      },
+      { id: 'assistant-1', role: 'assistant', content: '报告已生成' },
+    ]
+    mocks.listChatHistory.mockImplementation(async () => history.map((item) => ({
+      ...item,
+      rawContent: item.rawContent?.map((part) => ({ ...part })),
+    })))
+    const store = useChatStore()
+
+    await store.fetchHistory('session-stable-history')
+    const appliedMessages = store.messages
+    await store.fetchHistory('session-stable-history', { silent: true, clearError: false })
+
+    expect(store.messages).toBe(appliedMessages)
+    expect(mocks.listChatHistory).toHaveBeenCalledTimes(2)
+  })
+
   it('does not let a route history race clear a locally submitted report request', async () => {
     const history = deferred<ChatMessage[]>()
     mocks.listChatHistory.mockReturnValue(history.promise)
@@ -195,6 +223,26 @@ describe('realtime event routing', () => {
     })
 
     expect(store.messages).toEqual([])
+  })
+
+  it('does not pull the full history for a nonterminal chat snapshot', async () => {
+    vi.useFakeTimers()
+    const flush = stubAnimationFrames()
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-stream-without-polling'
+    store.setSessionKey(sessionKey)
+
+    store.handleRealtimeEvent('chat', {
+      runId: 'run-stream-without-polling',
+      sessionKey,
+      state: 'delta',
+      message: { role: 'assistant', content: '实时回复' },
+    })
+    flush()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    expect(store.messages.map((item) => item.content)).toEqual(['实时回复'])
+    expect(mocks.listChatHistory).not.toHaveBeenCalled()
   })
 
   it('uses one chat projection bubble across a multi-tool report run', () => {
@@ -457,6 +505,39 @@ describe('realtime event routing', () => {
 })
 
 describe('post-send history fallback', () => {
+  it('uses one terminal convergence run and stops after authoritative history arrives', async () => {
+    vi.useFakeTimers()
+    const sessionKey = 'agent:main:main:dm:webchat-smooth-convergence'
+    const authoritativeHistory: ChatMessage[] = [
+      { role: 'user', content: '生成最近三天的综述报告' },
+      { role: 'assistant', content: '报告已生成' },
+    ]
+    mocks.sendChatMessage.mockResolvedValue(undefined)
+    mocks.listChatHistory.mockResolvedValue(authoritativeHistory)
+    const store = useChatStore()
+    store.setSessionKey(sessionKey)
+    await store.sendMessage('生成最近三天的综述报告')
+
+    const terminalEvent = {
+      runId: 'run-smooth-convergence',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    }
+    store.handleAgentStatusEvent('agent', terminalEvent)
+    store.handleAgentStatusEvent('agent', terminalEvent)
+
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mocks.listChatHistory).toHaveBeenCalledTimes(1)
+    const appliedMessages = store.messages
+
+    store.handleAgentStatusEvent('agent', terminalEvent)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(mocks.listChatHistory).toHaveBeenCalledTimes(1)
+    expect(store.messages).toBe(appliedMessages)
+    store.clearTimers()
+  })
+
   it('runs a fresh terminal refresh after an older history request settles', async () => {
     vi.useFakeTimers()
     const firstHistory = deferred<ChatMessage[]>()
