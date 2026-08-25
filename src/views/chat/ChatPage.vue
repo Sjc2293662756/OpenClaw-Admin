@@ -37,6 +37,10 @@ import { renderSimpleMarkdown } from '@/utils/markdown'
 import { loadSelectedSessionWithBackgroundList } from '@/utils/session-loading'
 import { selectWorkspacePromptTexts } from '@/utils/workspace-prompts'
 import { stripInternalDocxMediaPaths } from '@/utils/report-media'
+import {
+  isConversationTranscriptRole,
+  projectConversationStructuredMessage,
+} from '@/utils/chat-transcript-projection'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
 import { useTTSSettings } from '@/composables/useTTSSettings'
 import { usePermissions } from '@/composables/usePermissions'
@@ -437,37 +441,6 @@ function isThinkingOnlyStructuredMessage(structured: StructuredMessageView | nul
   )
 }
 
-function parseToolResultMessage(item: ChatMessage): StructuredMessageView | null {
-  const toolResults: ToolResultItemView[] = []
-  
-  let contentText = ''
-  if (item.rawContent && Array.isArray(item.rawContent)) {
-    for (const part of item.rawContent) {
-      if (part.type === 'text' && part.text) {
-        contentText = part.text
-      }
-    }
-  } else if (item.content) {
-    contentText = item.content
-  }
-  
-  toolResults.push({
-    id: item.toolCallId,
-    name: item.toolName || 'unknown',
-    status: item.isError ? 'error' : undefined,
-    content: stripInternalDocxMediaPaths(contentText),
-  })
-  
-  return {
-    toolCalls: [],
-    thinkings: [],
-    toolResults,
-    validationErrors: [],
-    plainTexts: [],
-    images: [],
-  }
-}
-
 function buildImageUrl(part: ChatMessageContent): string | undefined {
   if (part.data) {
     const mimeType = part.mimeType || 'image/png'
@@ -645,22 +618,13 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
   for (let idx = 0; idx < list.length; idx += 1) {
     const item = list[idx]
     if (!item) continue
-    
-    if (item.role === 'tool') {
-      const structured = parseToolResultMessage(item)
-      if (structured) {
-        rendered.push({
-          key: item.id || `tool-${idx}`,
-          item,
-          structured,
-        })
-      }
-      continue
-    }
+    if (!isConversationTranscriptRole(item.role)) continue
     
     if (item.rawContent && Array.isArray(item.rawContent)) {
-      const structured = parseRawContent(item.rawContent)
-      if (structured && (structured.toolCalls.length > 0 || structured.thinkings.length > 0 || structured.toolResults.length > 0 || structured.plainTexts.length > 0 || structured.images.length > 0)) {
+      const parsed = parseRawContent(item.rawContent)
+      if (parsed) {
+        const structured = projectConversationStructuredMessage(parsed)
+        if (!structured) continue
         rendered.push({
           key: item.id || `${item.role}-${idx}`,
           item,
@@ -669,9 +633,11 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
         continue
       }
     }
-    
-    const structured = parseStructuredMessage(item.content)
-    if (isThinkingOnlyStructuredMessage(structured)) continue
+
+    const parsed = parseStructuredMessage(item.content)
+    if (isThinkingOnlyStructuredMessage(parsed)) continue
+    const structured = parsed ? projectConversationStructuredMessage(parsed) : null
+    if (parsed && !structured) continue
     rendered.push({
       key: item.id || `${item.role}-${idx}`,
       item,
@@ -912,19 +878,20 @@ const agentBusyToolName = computed(() => {
   if (phase === 'replying' || phase === 'aborting') return ''
 
   const runId = currentAgentStatus.value.runId
-  const list = visibleMessageEntries.value
+  const list = messageList.value
   let startIndex = 0
   if (runId) {
-    const idx = list.findIndex((entry) => entry.item.id === runId)
+    const idx = list.findIndex((item) => item.id === runId)
     if (idx >= 0) startIndex = idx + 1
   }
 
   for (let i = list.length - 1; i >= startIndex; i -= 1) {
-    const entry = list[i]
-    if (!entry) continue
-    const item = entry.item
+    const item = list[i]
+    if (!item) continue
     if (item.role !== 'assistant') continue
-    const structured = entry.structured
+    const structured = item.rawContent && Array.isArray(item.rawContent)
+      ? parseRawContent(item.rawContent)
+      : parseStructuredMessage(item.content)
     if (!structured) return ''
 
     if (structured.toolCalls.length === 0) return ''
