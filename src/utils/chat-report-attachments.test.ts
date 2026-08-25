@@ -208,6 +208,53 @@ describe('mapReportsToAssistantMessages', () => {
     expect(mapping.get(reportReply)?.map((item) => item.id)).toEqual(['report-1'])
     expect(mapping.get(laterReply)).toBeUndefined()
   })
+
+  it('uses the report turn chronology when the completion wording is arbitrary', () => {
+    const reportPrompt: ChatMessage = {
+      role: 'user',
+      content: '整理成文档',
+      timestamp: '2026-08-25T05:20:00Z',
+    }
+    const preparing: ChatMessage = {
+      role: 'assistant',
+      content: '正在处理。',
+      timestamp: '2026-08-25T05:20:04Z',
+    }
+    const completed: ChatMessage = {
+      role: 'assistant',
+      content: '文档处理完毕，请查收。',
+      timestamp: '2026-08-25T05:20:08Z',
+    }
+    const laterUser: ChatMessage = {
+      role: 'user',
+      content: '你是？',
+      timestamp: '2026-08-25T05:32:56Z',
+    }
+    const laterReply: ChatMessage = {
+      role: 'assistant',
+      content: '我是观枢AI。',
+      timestamp: '2026-08-25T05:32:57Z',
+    }
+    const optimisticSource: ChatMessage = {
+      id: 'web-source-appended-late',
+      role: 'user',
+      content: '整理成文档',
+      timestamp: '2026-08-25T05:20:00Z',
+    }
+    const legacyReport = report({
+      sourceMessageId: optimisticSource.id,
+      sourceMessagePreview: null,
+      createdAt: Date.parse('2026-08-25T05:20:07Z'),
+    })
+    const mapping = mapReportsToAssistantMessages(
+      [reportPrompt, preparing, completed, laterUser, laterReply, optimisticSource],
+      [legacyReport],
+    )
+
+    expect(mapping.get(preparing)).toBeUndefined()
+    expect(mapping.get(completed)?.map((item) => item.id)).toEqual(['report-1'])
+    expect(mapping.get(laterReply)).toBeUndefined()
+  })
 })
 
 describe('shouldDisplayUnplacedReport', () => {
