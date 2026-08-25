@@ -68,6 +68,52 @@ describe('mapReportsToAssistantMessages', () => {
     expect(mapping.get(completed)?.[0]?.id).toBe('report-1')
   })
 
+  it('recovers a persisted turn when the exact optimistic source is appended after the reply', () => {
+    const prompt = '给我回溯238web 最近3天的综述报告！'
+    const persistedUser: ChatMessage = {
+      id: 'gateway-user-9',
+      role: 'user',
+      content: `[Sun 2026-08-24 20:26 GMT+8] ${prompt}`,
+      timestamp: '1787574389661',
+    }
+    const preparing: ChatMessage = { role: 'assistant', content: '正在生成报告。', timestamp: '1787574393561' }
+    const completed: ChatMessage = { role: 'assistant', content: '报告已经生成完成，可以下载查看。', timestamp: '1787574395847' }
+    const optimisticUser: ChatMessage = {
+      id: 'web-1787574383916-k806hibc',
+      role: 'user',
+      content: prompt,
+      timestamp: '2026-08-24T12:26:23.916Z',
+    }
+    const mapping = mapReportsToAssistantMessages(
+      [persistedUser, preparing, completed, optimisticUser],
+      [report({
+        name: '238web 最近3天综述报告',
+        sourceMessageId: optimisticUser.id,
+        sourceMessagePreview: prompt,
+        createdAt: 1787574395092,
+      })],
+    )
+
+    expect(mapping.get(preparing)).toBeUndefined()
+    expect(mapping.get(completed)?.[0]?.id).toBe('report-1')
+  })
+
+  it('uses report time to distinguish repeated source previews', () => {
+    const prompt = '生成巡检报告'
+    const firstUser: ChatMessage = { role: 'user', content: prompt }
+    const firstReply: ChatMessage = { role: 'assistant', content: '第一份报告已生成。', timestamp: '1787570000000' }
+    const secondUser: ChatMessage = { role: 'user', content: `[Sun 2026-08-24 20:20 GMT+8] ${prompt}` }
+    const secondReply: ChatMessage = { role: 'assistant', content: '第二份报告已生成。', timestamp: '1787574300000' }
+    const trailingSource: ChatMessage = { id: 'web-local-id', role: 'user', content: prompt }
+    const mapping = mapReportsToAssistantMessages(
+      [firstUser, firstReply, secondUser, secondReply, trailingSource],
+      [report({ sourceMessageId: trailingSource.id, sourceMessagePreview: prompt, createdAt: 1787574299000 })],
+    )
+
+    expect(mapping.get(firstReply)).toBeUndefined()
+    expect(mapping.get(secondReply)?.[0]?.id).toBe('report-1')
+  })
+
   it('uses the exact name only as a placement fallback within the fetched session reports', () => {
     const first: ChatMessage = { role: 'assistant', content: '旧报告.docx', timestamp: '2026-08-24T01:00:00Z' }
     const second: ChatMessage = { role: 'assistant', content: '新报告.docx', timestamp: '2026-08-24T02:00:00Z' }

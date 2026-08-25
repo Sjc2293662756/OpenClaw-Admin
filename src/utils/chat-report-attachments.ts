@@ -15,6 +15,7 @@ export type ChatReportFile = {
 }
 
 const DOCX_REFERENCE_PATTERN = /\.docx(?![a-z0-9_])/i
+const TRANSPORT_TIMESTAMP_PREFIX_PATTERN = /^\[[A-Z][a-z]{2}\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?:\s+[A-Z]{2,5}(?:[+-]\d{1,2}(?::\d{2})?)?)?\]\s*/u
 
 function messageText(message: ChatMessage): string {
   const parts = [message.content || '']
@@ -30,8 +31,46 @@ export function hasReportDocumentReference(message: ChatMessage): boolean {
 }
 
 function messageTimestamp(message: ChatMessage): number | null {
-  const value = Date.parse(message.timestamp || '')
+  const raw = String(message.timestamp || '').trim()
+  const numeric = Number(raw)
+  const value = raw && Number.isFinite(numeric) && numeric > 0
+    ? numeric
+    : Date.parse(raw)
   return Number.isFinite(value) ? value : null
+}
+
+function normalizedSourcePreview(value: string): string {
+  return value
+    .replace(TRANSPORT_TIMESTAMP_PREFIX_PATTERN, '')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+function followingAssistantMessages(
+  messages: ChatMessage[],
+  assistantMessages: Array<{ message: ChatMessage; index: number; text: string }>,
+  sourceIndex: number,
+) {
+  const nextUserIndex = messages.findIndex((message, index) =>
+    index > sourceIndex && message.role === 'user'
+  )
+  const turnEnd = nextUserIndex >= 0 ? nextUserIndex : messages.length
+  return assistantMessages.filter((candidate) =>
+    candidate.index > sourceIndex && candidate.index < turnEnd
+  )
+}
+
+function pickFollowingTarget(
+  following: Array<{ message: ChatMessage; index: number; text: string }>,
+  report: ChatReportFile,
+) {
+  return following.find((candidate) => candidate.text.includes(report.name))
+    || [...following].reverse().find(({ message }) => hasReportDocumentReference(message))
+    || [...following].reverse().find((candidate) => {
+      const timestamp = messageTimestamp(candidate.message)
+      return timestamp !== null && timestamp >= report.createdAt
+    })
+    || following[following.length - 1]
 }
 
 /**
@@ -59,32 +98,51 @@ export function mapReportsToAssistantMessages(
   const sortedReports = [...reports].sort((left, right) => left.createdAt - right.createdAt)
   for (const report of sortedReports) {
     let target: (typeof assistantMessages)[number] | undefined
-    let sourceIndex = report.sourceMessageId
+    const exactSourceIndex = report.sourceMessageId
       ? messageIndexById.get(report.sourceMessageId)
       : undefined
     const sourcePreview = String(report.sourceMessagePreview || '').trim()
-    if (sourceIndex === undefined && sourcePreview) {
-      sourceIndex = messages.findIndex((message) =>
-        message.role === 'user' && messageText(message).trim().slice(0, 500) === sourcePreview
+
+    if (exactSourceIndex !== undefined) {
+      target = pickFollowingTarget(
+        followingAssistantMessages(messages, assistantMessages, exactSourceIndex),
+        report,
       )
-      if (sourceIndex < 0) sourceIndex = undefined
     }
 
-    if (sourceIndex !== undefined) {
-      const nextUserIndex = messages.findIndex((message, index) =>
-        index > sourceIndex && message.role === 'user'
-      )
-      const turnEnd = nextUserIndex >= 0 ? nextUserIndex : messages.length
-      const following = assistantMessages.filter((candidate) =>
-        candidate.index > sourceIndex && candidate.index < turnEnd
-      )
-      target = following.find((candidate) => candidate.text.includes(report.name))
-        || [...following].reverse().find(({ message }) => hasReportDocumentReference(message))
-        || [...following].reverse().find((candidate) => {
-          const timestamp = messageTimestamp(candidate.message)
-          return timestamp !== null && timestamp >= report.createdAt
-        })
-        || following[following.length - 1]
+    // A Gateway history refresh can preserve the browser's optimistic `web-*`
+    // source message at the end of the list while the persisted user turn has a
+    // new id and an inbound timestamp envelope.  An exact id with no following
+    // assistant is therefore not a usable turn boundary; fall back to the
+    // signed source preview and choose the nearest completed persisted turn.
+    if (!target && sourcePreview) {
+      const normalizedPreview = normalizedSourcePreview(sourcePreview)
+      const previewTurns = messages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message }) =>
+          message.role === 'user'
+          && normalizedSourcePreview(messageText(message).slice(0, 1000)) === normalizedPreview
+        )
+        .map(({ index }) => ({
+          index,
+          following: followingAssistantMessages(messages, assistantMessages, index),
+        }))
+        .filter(({ following }) => following.length > 0)
+        .map(({ index, following }) => ({
+          index,
+          target: pickFollowingTarget(following, report),
+        }))
+        .filter((candidate): candidate is { index: number; target: (typeof assistantMessages)[number] } => Boolean(candidate.target))
+
+      previewTurns.sort((left, right) => {
+        const leftTimestamp = messageTimestamp(left.target.message)
+        const rightTimestamp = messageTimestamp(right.target.message)
+        if (leftTimestamp !== null && rightTimestamp !== null && Number.isFinite(report.createdAt)) {
+          return Math.abs(leftTimestamp - report.createdAt) - Math.abs(rightTimestamp - report.createdAt)
+        }
+        return right.index - left.index
+      })
+      target = previewTurns[0]?.target
     }
 
     if (!target) {
