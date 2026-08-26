@@ -70,7 +70,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | GET `/api/health` | 健康 | 是 | 公开 | 公开 | 公开 | 公开 | 公开 | 固定健康和连接摘要 | 保留 |
 | GET `/api/status` | Gateway 状态 | 是 | — | 403 | 只读 | 只读 | 只读 | Gateway 状态 | 基础用户由工作台 SSE/RPC 获取必要状态 |
 | POST `/api/rpc` | Gateway BFF | 是 | — | 显式集合 | 显式集合 | 显式只读 | 显式管理集合 | 业务数据；见第 4 节 | 收紧为默认拒绝 |
-| GET `/api/events` | 实时事件 | 是 | — | 本人事件 | 本人事件 | 全量只读事件 | 全量事件 | 会话事件流 | 保留；Bearer fetch SSE、心跳和隔离 |
+| GET `/api/events` | 实时事件 | 是 | — | 本人 Gateway 事件；无告警事件 | 本人 Gateway 事件；告警只读 | 全量只读事件和告警 | 全量事件和告警 | 会话事件流、告警页面模型和非敏感告警流状态 | 保留；Bearer fetch SSE、心跳、会话隔离和告警角色过滤 |
 | GET `/api/dashboard/summary` | 仪表盘 | 是 | — | 403 | 本人会话口径 | 全量只读 | 全量 | 聚合指标 | 基础用户不进入管理控制台 |
 | GET `/api/dashboard/usage` | 仪表盘 Usage | 是 | — | 403 | 本人聚合 | 全量只读 | 全量 | 消息、Token、趋势、模型、工具聚合 | 基础用户不进入管理控制台 |
 | GET `/api/channels/config` | 频道 | 是 | — | 403 | 安全状态 | 安全状态 | 管理读取 | 非管理员无地址、密钥、原始配置 | 基础用户不进入管理控制台 |
@@ -303,6 +303,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | 分帧 | `TextDecoder` 支持跨 chunk 缓冲、CRLF 归一和多 `data:` 行合并 | 以 `data: <JSON>\n\n` 发送业务事件 | 不假定一个 fetch chunk 就是一个 SSE 事件 |
 | 心跳 | 忽略以 `:` 开头的 SSE 注释 | 每 15 秒写入 `: heartbeat` | 心跳不进入业务事件解析 |
 | 事件隔离 | 仅消费服务端已筛选的事件 | 非管理员的 `event` 必须提取到 sessionKey 且通过归属检查 | 前端过滤不是安全边界 |
+| 告警事件 | 阶段四消费 `alert` / `alertStreamState`，当前前端可忽略未知类型 | 标准、审计、管理员允许；基础用户拒绝；告警投影与 `GET /api/alerts` 一致 | 基础用户不得获得告警字段、序列边界或流状态 |
 | 断线重连 | 传输异常/正常 EOF 后按 1.5 倍退避，上限 30 秒、默认最多 20 次 | 释放断开的 clientId | connection generation 防止旧请求回写新状态 |
 | 401 | 进入 failed，发出 `unauthorized`，清除本地登录并不再重连 | 返回稳定 401 JSON，不升级为 SSE | 过期登录不会形成无限重连 |
 | 退出/页面卸载 | 清理 timer，递增 generation，Abort 当前 fetch | request close 清理心跳和 client 记录 | 退出后不留后台连接 |
@@ -321,6 +322,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 ### 5.3 特殊保留的原因
 
 - `/api/events` 是正式页面 Gateway 连接状态和会话实时更新通道，不能改为 410。
+- 2026-08-26 起该通道同时承载 Admin BFF 重新签发的告警实时事件；上游 Receiver URL/Token 和原始信封不进入浏览器，详细契约见[GAIOP 告警实时 SSE BFF 接口](2026-08-26-GAIOP告警实时SSE-BFF接口.md)。
 - `/api/media` 被聊天页和 Office 对话面板用于展示 Gateway 生成的图片，不能改为 410。
 - `/api/system-upgrade/*` 是已发布的正式升级 BFF；与已 410 的 `/api/npm/*` 和 `/api/backup/*` 互不替代。
 

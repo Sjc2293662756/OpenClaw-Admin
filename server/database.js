@@ -8,6 +8,7 @@ import { migratePersonalWechatMetadata } from './lib/personal-wechat-metadata.js
 import { migrateReportRetention } from './lib/report-retention-schema.js'
 import { migrateSessionRetentionTables } from './lib/session-retention-service.js'
 import { migrateStorageWatermarkTables } from './lib/storage-watermark-service.js'
+import { migrateAlertStreamState } from './lib/alert-stream-state.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -242,6 +243,7 @@ migratePersonalWechatMetadata(db)
 migrateReportRetention(db)
 migrateSessionRetentionTables(db)
 migrateStorageWatermarkTables(db)
+migrateAlertStreamState(db)
 
 try {
   db.exec('ALTER TABLE scenarios ADD COLUMN execution_log TEXT DEFAULT \'[]\'')

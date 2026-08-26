@@ -48,6 +48,8 @@ import { createStorageWatermarkRouter } from './routes/storage-watermark.js'
 import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
+import { AlertReceiverStreamClient } from './lib/alert-receiver-stream.js'
+import { canReceiveSseData as canReceiveSseDataForUser } from './lib/sse-access.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
   enrichSessionRetentionPayload,
@@ -120,6 +122,8 @@ function loadEnvConfig() {
     GAIOP_SESSION_RETENTION_AUTO_DELETE: value('GAIOP_SESSION_RETENTION_AUTO_DELETE', 'false'),
     GAIOP_SESSION_RETENTION_DAYS: value('GAIOP_SESSION_RETENTION_DAYS', '180'),
     GAIOP_SESSION_RETENTION_GRACE_DAYS: value('GAIOP_SESSION_RETENTION_GRACE_DAYS', '7'),
+    GAIOP_ALERT_RECEIVER_URL: value('GAIOP_ALERT_RECEIVER_URL'),
+    GAIOP_ALERT_RECEIVER_TOKEN: value('GAIOP_ALERT_RECEIVER_TOKEN'),
   }
 }
 
@@ -162,6 +166,7 @@ app.use(createAuditRejectionMiddleware({ recordAuditEvent }))
 registerRetiredApiBarriers(app)
 
 let gateway = new OpenClawGateway(envConfig.OPENCLAW_WS_URL, envConfig.OPENCLAW_AUTH_TOKEN, envConfig.OPENCLAW_AUTH_PASSWORD, envConfig.LOG_LEVEL)
+let alertStreamClient = null
 
 const sseClients = new Map()
 
@@ -353,6 +358,7 @@ function broadcastSSE(data) {
       sseClients.delete(id)
     }
   }
+  return true
 }
 
 function isAuthEnabled() {
@@ -379,14 +385,31 @@ function saveGAIOPServiceConfig({ endpoint, accessToken }) {
   gateway = new OpenClawGateway(envConfig.OPENCLAW_WS_URL, envConfig.OPENCLAW_AUTH_TOKEN, envConfig.OPENCLAW_AUTH_PASSWORD, envConfig.LOG_LEVEL)
   bindGAIOPServiceEvents(gateway)
   gateway.connect()
+  alertStreamClient?.configure(getAlertStreamEnv())
   return getGAIOPServiceConfig()
 }
 
 function canReceiveSseData(user, data) {
-  if (data?.type !== 'event' || user?.role === 'admin') return true
-  const sessionKey = extractSessionKeyFromEvent(data.payload)
-  return !!sessionKey && canAccessWorkspaceSession(db, user, sessionKey)
+  return canReceiveSseDataForUser(user, data, {
+    extractSessionKey: extractSessionKeyFromEvent,
+    canAccessSession: (candidate, sessionKey) => canAccessWorkspaceSession(db, candidate, sessionKey),
+  })
 }
+
+function getAlertStreamEnv() {
+  return {
+    NODE_ENV: process.env.NODE_ENV,
+    GAIOP_ALERT_RECEIVER_URL: envConfig.GAIOP_ALERT_RECEIVER_URL,
+    GAIOP_ALERT_RECEIVER_TOKEN: envConfig.GAIOP_ALERT_RECEIVER_TOKEN,
+  }
+}
+
+alertStreamClient = new AlertReceiverStreamClient({
+  db,
+  env: getAlertStreamEnv(),
+  broadcastAlert: broadcastSSE,
+  broadcastState: broadcastSSE,
+})
 
 function hashPassword(password) {
   const salt = randomBytes(16).toString('base64')
@@ -805,6 +828,7 @@ app.post('/api/config', adminMiddleware, (req, res) => {
     
     const oldConfig = { ...envConfig }
     envConfig = loadEnvConfig()
+    alertStreamClient?.configure(getAlertStreamEnv())
     
     const wsUrlChanged = oldConfig.OPENCLAW_WS_URL !== envConfig.OPENCLAW_WS_URL
     const tokenChanged = oldConfig.OPENCLAW_AUTH_TOKEN !== envConfig.OPENCLAW_AUTH_TOKEN
@@ -1708,6 +1732,11 @@ app.get('/api/events', authMiddleware, (req, res) => {
     version: initialState === 'connected' ? gatewayVersion : null,
     updateAvailable: initialState === 'connected' ? updateInfo : null
   })}\n\n`)
+
+  const alertStreamState = alertStreamClient.getBrowserStateEvent()
+  if (canReceiveSseData(req.user, alertStreamState)) {
+    res.write(`data: ${JSON.stringify(alertStreamState)}\n\n`)
+  }
 
   const heartbeat = setInterval(() => {
     if (!res.writableEnded && !res.destroyed) res.write(': heartbeat\n\n')
@@ -4466,26 +4495,24 @@ server.listen(envConfig.PORT, envConfig.GAIOP_BIND_HOST, () => {
   } catch (err) {
     console.error('[Backup] Failed to cleanup interrupted tasks:', err.message)
   }
+
+  void alertStreamClient.start()
 })
 
-process.on('SIGINT', () => {
-  console.log('\nShutting down...')
+let shuttingDown = false
+async function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`\nShutting down (${signal})...`)
   stopReportRegistrySync()
   cleanupAllTerminalSessions()
+  await alertStreamClient.stop()
   gateway.disconnect()
   server.close(() => {
     console.log('Server closed')
     process.exit(0)
   })
-})
+}
 
-process.on('SIGTERM', () => {
-  console.log('\nShutting down (SIGTERM)...')
-  stopReportRegistrySync()
-  cleanupAllTerminalSessions()
-  gateway.disconnect()
-  server.close(() => {
-    console.log('Server closed')
-    process.exit(0)
-  })
-})
+process.on('SIGINT', () => { void shutdown('SIGINT') })
+process.on('SIGTERM', () => { void shutdown('SIGTERM') })

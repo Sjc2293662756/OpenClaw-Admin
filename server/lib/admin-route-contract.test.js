@@ -34,3 +34,8 @@ test('public branding read is explicit and protected business routers stay behin
   assert.ok(basicBoundary > brandingRouter)
   assert.ok(firstBusinessRouter > basicBoundary)
 })
+
+test('/api/events remains Bearer-authenticated before opening the browser SSE stream', () => {
+  assert.match(source, /app\.get\('\/api\/events',\s*authMiddleware,\s*\(req, res\) =>/u)
+  assert.doesNotMatch(source, /app\.get\('\/api\/events',\s*\(req, res\) =>/u)
+})

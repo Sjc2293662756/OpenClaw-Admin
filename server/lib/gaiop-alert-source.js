@@ -1,6 +1,6 @@
 import { ALERT_CATEGORY_LABELS } from './syslog-alerts.js'
 
-function readReceiverUrl(env) {
+export function readGAIOPAlertReceiverUrl(env) {
   const explicitUrl = String(env.GAIOP_ALERT_RECEIVER_URL || '').trim()
   const raw = explicitUrl || (env.NODE_ENV === 'production' ? '' : 'http://127.0.0.1:3004')
   if (!raw) throw new Error('GAIOP alert receiver is not configured')
@@ -47,7 +47,7 @@ export function mapGAIOPAlertEvent(event) {
 }
 
 export async function readGAIOPAlerts(env = process.env, filters = {}, fetchImpl = fetch) {
-  const baseUrl = readReceiverUrl(env)
+  const baseUrl = readGAIOPAlertReceiverUrl(env)
   const url = new URL('/alerts', baseUrl)
   url.searchParams.set('page', '1')
   url.searchParams.set('pageSize', '3000')
