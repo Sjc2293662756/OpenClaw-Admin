@@ -276,6 +276,7 @@ test('records an unresolved expired gap, broadcasts safe bounds and rebaselines 
     type: 'alertStreamState',
     state: 'gap',
     code: 'ALERT_CURSOR_EXPIRED',
+    gapState: 'unresolved',
     oldestAvailableSequence: 10,
     latestSequence: 20,
     historyRefreshRequired: true,
@@ -287,7 +288,15 @@ test('records an unresolved expired gap, broadcasts safe bounds and rebaselines 
 
   await context.client.runOnce()
   assert.equal(context.calls[1].options.headers['Last-Event-ID'], '20')
-  assert.equal(context.client.getBrowserStateEvent().gapState, 'unresolved')
+  assert.deepEqual(context.states.at(-1), {
+    type: 'alertStreamState',
+    state: 'connected',
+    gapState: 'unresolved',
+    oldestAvailableSequence: 10,
+    latestSequence: 20,
+    historyRefreshRequired: true,
+  })
+  assert.deepEqual(context.client.getBrowserStateEvent(), context.states.at(-1))
 })
 
 test('records an ahead cursor as Receiver reset and safely rebuilds its baseline', async () => {
@@ -296,18 +305,89 @@ test('records an ahead cursor as Receiver reset and safely rebuilds its baseline
   await initial.client.runOnce()
   const context = createClient({
     db,
-    responses: [jsonResponse(409, {
-      ok: false,
-      code: 'ALERT_CURSOR_AHEAD',
-      oldestAvailableSequence: 1,
-      latestSequence: 3,
-    })],
+    responses: [
+      jsonResponse(409, {
+        ok: false,
+        code: 'ALERT_CURSOR_AHEAD',
+        oldestAvailableSequence: 1,
+        latestSequence: 3,
+      }),
+      streamResponse([': connected cursor=3\n\n']),
+    ],
   })
   assert.equal((await context.client.runOnce()).reason, 'cursor_ahead')
   const state = readAlertStreamState(db)
   assert.equal(state.resumeCursor, 3)
   assert.equal(state.gapState, 'receiver_reset')
-  assert.equal(context.states.at(-1).state, 'receiverReset')
+  assert.deepEqual(context.states.at(-1), {
+    type: 'alertStreamState',
+    state: 'receiverReset',
+    code: 'ALERT_CURSOR_AHEAD',
+    gapState: 'receiver_reset',
+    oldestAvailableSequence: 1,
+    latestSequence: 3,
+    historyRefreshRequired: true,
+  })
+
+  await context.client.runOnce()
+  assert.equal(context.calls[1].options.headers['Last-Event-ID'], '3')
+  assert.deepEqual(context.states.at(-1), {
+    type: 'alertStreamState',
+    state: 'connected',
+    gapState: 'receiver_reset',
+    oldestAvailableSequence: 1,
+    latestSequence: 3,
+    historyRefreshRequired: true,
+  })
+  assert.deepEqual(context.client.getBrowserStateEvent(), context.states.at(-1))
+})
+
+test('retains unresolved gap details while connection errors change the live stream state', async () => {
+  const context = createClient({ responses: [
+    jsonResponse(409, {
+      ok: false,
+      code: 'ALERT_CURSOR_EXPIRED',
+      oldestAvailableSequence: 10,
+      latestSequence: 20,
+    }),
+    jsonResponse(401, { ok: false, code: 'ALERT_RECEIVER_UNAUTHORIZED' }),
+    new Error('network down'),
+    streamResponse([], { contentType: 'application/json' }),
+  ] })
+
+  assert.equal((await context.client.runOnce()).reason, 'cursor_expired')
+  assert.equal((await context.client.runOnce()).reason, 'unauthorized')
+  assert.deepEqual(context.states.at(-1), {
+    type: 'alertStreamState',
+    state: 'authenticationError',
+    code: 'ALERT_RECEIVER_UNAUTHORIZED',
+    gapState: 'unresolved',
+    oldestAvailableSequence: 10,
+    latestSequence: 20,
+    historyRefreshRequired: true,
+  })
+
+  assert.equal((await context.client.runOnce()).reason, 'network_error')
+  assert.deepEqual(context.states.at(-1), {
+    type: 'alertStreamState',
+    state: 'unavailable',
+    code: 'ALERT_RECEIVER_UNAVAILABLE',
+    gapState: 'unresolved',
+    oldestAvailableSequence: 10,
+    latestSequence: 20,
+    historyRefreshRequired: true,
+  })
+
+  assert.equal((await context.client.runOnce()).reason, 'protocol_error')
+  assert.deepEqual(context.states.at(-1), {
+    type: 'alertStreamState',
+    state: 'protocolError',
+    code: 'ALERT_STREAM_CONTENT_TYPE_INVALID',
+    gapState: 'unresolved',
+    oldestAvailableSequence: 10,
+    latestSequence: 20,
+    historyRefreshRequired: true,
+  })
 })
 
 test('handles authentication and network failures without throwing or changing its resume cursor', async () => {
@@ -329,13 +409,24 @@ test('handles authentication and network failures without throwing or changing i
   assert.equal(readAlertStreamState(db).connectionState, 'unavailable')
 })
 
-test('suppresses a duplicate business alert id with a newer cursor', async () => {
-  const context = createClient({ responses: [streamResponse([
+test('idempotently consumes a duplicate business alert id and restarts from its newer cursor', async () => {
+  const db = createDb()
+  const context = createClient({ db, responses: [streamResponse([
     ': connected cursor=0\n\n',
     eventFrame(1, '重大', { alert: { id: 'same-alert' } }),
     eventFrame(2, '紧急', { alert: { id: 'same-alert' } }),
   ])] })
   await context.client.runOnce()
   assert.deepEqual(context.alerts.map((event) => event.cursor), [1])
-  assert.equal(readAlertStreamState(context.db).resumeCursor, 1)
+  assert.equal(readAlertStreamState(db).resumeCursor, 2)
+  assert.equal(readAlertStreamState(db).lastProcessedCursor, 2)
+
+  const restarted = createClient({ db, responses: [streamResponse([
+    ': connected cursor=2\n\n',
+    eventFrame(3, '紧急', { alert: { id: 'same-alert' } }),
+  ])] })
+  await restarted.client.runOnce()
+  assert.equal(restarted.calls[0].options.headers['Last-Event-ID'], '2')
+  assert.deepEqual(restarted.alerts.map((event) => event.cursor), [3])
+  assert.equal(readAlertStreamState(db).resumeCursor, 3)
 })

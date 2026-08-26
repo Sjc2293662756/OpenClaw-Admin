@@ -158,12 +158,14 @@ export class AlertReceiverStreamClient {
       receiver_reset: 'receiverReset',
       protocol_error: 'protocolError',
     }[state.connectionState] || state.connectionState
-    return controlEvent(publicState, {
-      gapState: state.gapState || undefined,
-      oldestAvailableSequence: state.gapState ? state.oldestAvailableSequence : undefined,
-      latestSequence: state.gapState ? state.latestSequence : undefined,
-      historyRefreshRequired: Boolean(state.gapState),
-    })
+    const diagnostic = state.lastErrorCode ? { code: state.lastErrorCode } : {}
+    const gap = state.gapState ? {
+      gapState: state.gapState,
+      oldestAvailableSequence: state.oldestAvailableSequence,
+      latestSequence: state.latestSequence,
+      historyRefreshRequired: true,
+    } : {}
+    return controlEvent(publicState, { ...diagnostic, ...gap })
   }
 
   async runOnce() {
@@ -174,7 +176,7 @@ export class AlertReceiverStreamClient {
       if (baseUrl.username || baseUrl.password) throw new Error('credentials_in_url')
       endpoint = new URL('/events', baseUrl)
     } catch {
-      this._setStatus('authentication_error', 'ALERT_RECEIVER_NOT_CONFIGURED', controlEvent('authenticationError'))
+      this._setStatus('authentication_error', 'ALERT_RECEIVER_NOT_CONFIGURED')
       return { reason: 'configuration_error', retryDelay: this.authRetryDelay }
     }
 
@@ -203,25 +205,25 @@ export class AlertReceiverStreamClient {
       clearTimeout(timeout)
       if (this.activeController === controller) this.activeController = null
       if (controller.signal.aborted && !this.started && this.loopPromise) return { reason: 'stopped', retryDelay: 0 }
-      this._setStatus('unavailable', 'ALERT_RECEIVER_UNAVAILABLE', controlEvent('unavailable'))
+      this._setStatus('unavailable', 'ALERT_RECEIVER_UNAVAILABLE')
       return { reason: 'network_error', retryDelay: this._retryDelay() }
     }
 
     try {
       if (response.status === 401) {
         await readErrorPayload(response)
-        this._setStatus('authentication_error', 'ALERT_RECEIVER_UNAUTHORIZED', controlEvent('authenticationError'))
+        this._setStatus('authentication_error', 'ALERT_RECEIVER_UNAUTHORIZED')
         return { reason: 'unauthorized', retryDelay: this.authRetryDelay }
       }
       if (response.status === 409) return await this._handleConflict(response)
       if (!response.ok || !response.body) {
-        this._setStatus('unavailable', 'ALERT_RECEIVER_UNAVAILABLE', controlEvent('unavailable'))
+        this._setStatus('unavailable', 'ALERT_RECEIVER_UNAVAILABLE')
         return { reason: 'receiver_error', retryDelay: this._retryDelay() }
       }
 
       const contentType = String(response.headers.get('content-type') || '').toLowerCase()
       if (!contentType.startsWith('text/event-stream')) {
-        this._setStatus('protocol_error', 'ALERT_STREAM_CONTENT_TYPE_INVALID', controlEvent('protocolError'))
+        this._setStatus('protocol_error', 'ALERT_STREAM_CONTENT_TYPE_INVALID')
         return { reason: 'protocol_error', retryDelay: this._retryDelay() }
       }
 
@@ -236,20 +238,20 @@ export class AlertReceiverStreamClient {
           const baseline = parseCursor(match[1], { allowZero: true })
           if (baseline === null || (requestedCursor !== null && baseline !== requestedCursor)) {
             processingFailed = true
-            this._setStatus('protocol_error', 'ALERT_STREAM_BASELINE_INVALID', controlEvent('protocolError'))
+            this._setStatus('protocol_error', 'ALERT_STREAM_BASELINE_INVALID')
             return
           }
           if (requestedCursor === null) persistAlertStreamBaseline(this.db, baseline)
           else persistAlertStreamStatus(this.db, { state: 'connected', errorCode: null })
           baselineConfirmed = true
           this.retryAttempt = 0
-          this._emitControl(controlEvent('connected'))
+          this._emitPersistedControl()
         },
         onEvent: (frame) => {
           if (processingFailed) return
           if (!baselineConfirmed) {
             processingFailed = true
-            this._setStatus('protocol_error', 'ALERT_STREAM_BASELINE_MISSING', controlEvent('protocolError'))
+            this._setStatus('protocol_error', 'ALERT_STREAM_BASELINE_MISSING')
             return
           }
           const outcome = this._processEvent(frame)
@@ -271,7 +273,7 @@ export class AlertReceiverStreamClient {
       return { reason: 'eof', retryDelay: this._retryDelay() }
     } catch {
       if (controller.signal.aborted && !this.started && this.loopPromise) return { reason: 'stopped', retryDelay: 0 }
-      this._setStatus('unavailable', 'ALERT_STREAM_READ_FAILED', controlEvent('unavailable'))
+      this._setStatus('unavailable', 'ALERT_STREAM_READ_FAILED')
       return { reason: 'read_error', retryDelay: this._retryDelay() }
     } finally {
       clearTimeout(timeout)
@@ -285,7 +287,7 @@ export class AlertReceiverStreamClient {
       try {
         outcome = await this.runOnce()
       } catch {
-        this._setStatus('unavailable', 'ALERT_STREAM_INTERNAL_ERROR', controlEvent('unavailable'))
+        this._setStatus('unavailable', 'ALERT_STREAM_INTERNAL_ERROR')
         outcome = { retryDelay: this._retryDelay() }
       }
       if (!this.started) break
@@ -332,12 +334,25 @@ export class AlertReceiverStreamClient {
       return 'ignored'
     }
     const alertId = String(envelope.alert.id || '').trim()
-    if (!alertId || this.seenAlertIds.has(alertId)) {
-      this._diagnostic(alertId ? 'event_alert_duplicate' : 'event_alert_id_invalid')
+    if (!alertId) {
+      this._diagnostic('event_alert_id_invalid')
       return 'ignored'
     }
 
     const payload = mapGAIOPAlertEvent(envelope.alert)
+    if (this.seenAlertIds.has(alertId)) {
+      try {
+        if (!persistProcessedAlertCursor(this.db, cursor)) {
+          this._diagnostic('event_cursor_persist_failed')
+          return 'failed'
+        }
+      } catch {
+        this._diagnostic('event_cursor_persist_failed')
+        return 'failed'
+      }
+      this._diagnostic('event_alert_duplicate_consumed')
+      return 'processed'
+    }
     const event = {
       type: 'alert',
       action: payload.restored ? 'recovered' : 'triggered',
@@ -374,7 +389,7 @@ export class AlertReceiverStreamClient {
       ? null
       : parseCursor(payload?.oldestAvailableSequence)
     if (!['ALERT_CURSOR_EXPIRED', 'ALERT_CURSOR_AHEAD'].includes(code) || latestSequence === null) {
-      this._setStatus('protocol_error', 'ALERT_CURSOR_CONFLICT_INVALID', controlEvent('protocolError'))
+      this._setStatus('protocol_error', 'ALERT_CURSOR_CONFLICT_INVALID')
       return { reason: 'conflict_invalid', retryDelay: this._retryDelay() }
     }
     if (code === 'ALERT_CURSOR_EXPIRED') {
@@ -384,12 +399,7 @@ export class AlertReceiverStreamClient {
         oldestAvailableSequence,
         errorCode: code,
       })
-      this._emitControl(controlEvent('gap', {
-        code,
-        oldestAvailableSequence,
-        latestSequence,
-        historyRefreshRequired: true,
-      }))
+      this._emitPersistedControl()
       this.retryAttempt = 0
       return { reason: 'cursor_expired', retryDelay: 0 }
     }
@@ -399,18 +409,18 @@ export class AlertReceiverStreamClient {
       oldestAvailableSequence,
       errorCode: code,
     })
-    this._emitControl(controlEvent('receiverReset', {
-      code,
-      latestSequence,
-      historyRefreshRequired: true,
-    }))
+    this._emitPersistedControl()
     this.retryAttempt = 0
     return { reason: 'cursor_ahead', retryDelay: 0 }
   }
 
-  _setStatus(state, errorCode, event) {
+  _setStatus(state, errorCode) {
     persistAlertStreamStatus(this.db, { state, errorCode })
-    this._emitControl(event)
+    this._emitPersistedControl()
+  }
+
+  _emitPersistedControl() {
+    this._emitControl(this.getBrowserStateEvent())
   }
 
   _emitControl(event) {
