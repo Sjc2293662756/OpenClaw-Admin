@@ -170,4 +170,6 @@ Gateway `type:event` 继续执行既有 `sessionKey` 归属隔离；`gatewayStat
 
 浏览器仍只建立一条带 Bearer 头的 `GET /api/events`。应用根节点在“Token + 当前用户”就绪时创建连接、激活按用户 ID（回退用户名）隔离的轻量游标；路由切换不会重建连接。SSE `connected` 后再执行一次补偿，实时与补偿事件以 `cursor` 和 `payload.id` 共同去重。退出、401 和应用卸载会立刻断开并清空内存告警正文；该账号的仅游标 localStorage 留存以便下次安全续传。
 
+普通实时事件只能严格推进该账号的 cursor 高水位，已淘汰的内存去重键不会让陈旧 cursor 再次进入通知队列。补偿批次单独保留其 `afterSequence`：若 SSE 在补偿期间先到达更大 cursor，补偿仍可接收介于批次下界和该高水位之间、尚未收到的事件；同 cursor 或同业务 ID 则不重复通知。补偿 fetch 使用 AbortController、账号快照和运行代次，退出、账号切换或应用卸载时立即失效，任何晚到响应均不得写入新会话。浏览器默认无限退避重连（上限 30 秒）；显式断开和 401 仍会停止重试。
+
 `alertStreamState` 额外可带 `latestCursor` 与 `lastProcessedCursor`，均为非敏感序号。`gapState` 或 `historyRefreshRequired` 一旦出现，后续 `connected` 不得自动清除；阶段五可从全局 `alertRealtime` Store 读取 `recentEvents`（150 条）、`unreadCount`、`lastCursor`、`streamState`、`gapState`、`historyRefreshRequired` 与 `lastErrorCode`，再调用 `markRead`、`remove` 或 `clear` 实现弹窗/消息面板。

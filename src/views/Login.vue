@@ -8,6 +8,7 @@ import { useWebSocketStore } from '@/stores/websocket'
 import { resolveConfigManagementRedirect } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
 import { platformBranding, usesDefaultPlatformBranding } from '@/branding/platform'
+import { shouldLoginCreateUnauthenticatedConnection } from '@/realtime/global-sse-lifecycle'
 
 const router = useRouter()
 const route = useRoute()
@@ -45,7 +46,7 @@ function redirectToPlatform() {
 onMounted(async () => {
   const authEnabled = await authStore.checkAuthConfig()
 
-  if (!authEnabled) {
+  if (shouldLoginCreateUnauthenticatedConnection(authEnabled)) {
     websocketStore.connect()
 
     const checkConnection = () => {

@@ -16,7 +16,7 @@ const DEFAULT_CONFIG: Required<Omit<WebSocketConfig, 'auth' | 'getToken'>> & { a
   url: '',
   reconnect: true,
   reconnectInterval: 3000,
-  maxReconnectAttempts: 20,
+  maxReconnectAttempts: Number.POSITIVE_INFINITY,
   auth: undefined,
   getToken: undefined,
 }

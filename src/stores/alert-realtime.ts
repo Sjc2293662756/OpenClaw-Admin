@@ -51,6 +51,9 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   const seenIds = new Set<string>()
   let subscriptions: Array<() => void> = []
   let compensating: Promise<void> | null = null
+  let compensationController: AbortController | null = null
+  let compensationGeneration = 0
+  let compensationRace: { generation: number; cursors: Set<number>; ids: Set<string> } | null = null
 
   const hasActiveGap = computed(() => historyRefreshRequired.value || Boolean(gapState.value))
 
@@ -79,6 +82,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   function activate(user: AuthUser | null) {
     const next = user ? accountKey(user) : null
     if (next === activeAccount.value) return
+    cancelCompensation()
     resetMemory({ preserveCursor: false })
     activeAccount.value = next
     if (next) {
@@ -87,15 +91,26 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     }
   }
 
-  function boundedRemember<T>(set: Set<T>, value: T) {
+  function boundedRemember<T>(set: Set<T>, value: T, limit = SEEN_LIMIT) {
     set.add(value)
-    if (set.size > SEEN_LIMIT) set.delete(set.values().next().value as T)
+    if (set.size > limit) set.delete(set.values().next().value as T)
   }
 
-  function addEvent(event: AlertRealtimeEvent): boolean {
+  function addEvent(event: AlertRealtimeEvent, { compensationAfter }: { compensationAfter?: number } = {}): boolean {
     const cursor = validCursor(event.cursor)
     const id = String(event.payload?.id || '').trim()
     if (cursor === null || !id) return false
+    const isCompensation = compensationAfter !== undefined
+    if (isCompensation && cursor <= compensationAfter!) return false
+    // The normal SSE path is strictly forward-only for this account. A bounded
+    // seen set is only a race optimisation and must never re-admit old cursors.
+    if (!isCompensation && lastCursor.value !== null && cursor <= lastCursor.value) return false
+    if (!isCompensation && compensationRace) {
+      boundedRemember(compensationRace.cursors, cursor, COMPENSATION_MAX_EVENTS)
+      boundedRemember(compensationRace.ids, id, COMPENSATION_MAX_EVENTS)
+    }
+    if (isCompensation && compensationRace
+      && (compensationRace.cursors.has(cursor) || compensationRace.ids.has(id))) return false
     const cursorSeen = seenCursors.has(cursor)
     const idSeen = seenIds.has(id)
     boundedRemember(seenCursors, cursor)
@@ -122,37 +137,68 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     }
   }
 
-  async function fetchChanges(afterSequence: number | null) {
+  async function fetchChanges(afterSequence: number | null, signal: AbortSignal) {
     const query = new URLSearchParams({ limit: String(COMPENSATION_PAGE_LIMIT) })
     if (afterSequence !== null) query.set('afterSequence', String(afterSequence))
     const token = useAuthStore().getToken()
-    const response = await fetch(`/api/alerts/changes?${query.toString()}`, {
-      headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    })
+    let response: Response
+    try {
+      response = await fetch(`/api/alerts/changes?${query.toString()}`, {
+        headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        signal,
+      })
+    } catch {
+      return { changes: null, errorCode: signal.aborted ? null : 'ALERT_COMPENSATION_UNAVAILABLE' }
+    }
     const body = await response.json().catch(() => null)
     if (!response.ok || !body?.ok) {
-      lastErrorCode.value = String(body?.code || `HTTP_${response.status}`)
-      return null
+      return { changes: null, errorCode: String(body?.code || `HTTP_${response.status}`) }
     }
-    return body as {
+    return { changes: body as {
       events: AlertRealtimeEvent[]
       latestSequence: number
       hasMore: boolean
       historyRefreshRequired: boolean
       oldestAvailableSequence?: number | null
-    }
+    }, errorCode: null }
+  }
+
+  function isCurrentCompensation(account: string, generation: number) {
+    return activeAccount.value === account && compensationGeneration === generation
+  }
+
+  function cancelCompensation() {
+    compensationGeneration += 1
+    compensationController?.abort()
+    compensationController = null
+    compensating = null
+    compensationRace = null
   }
 
   async function compensate() {
     if (!activeAccount.value) return
     if (compensating) return compensating
-    compensating = (async () => {
+    const account = activeAccount.value
+    const generation = compensationGeneration
+    const controller = new AbortController()
+    compensationController = controller
+    compensationRace = { generation, cursors: new Set(), ids: new Set() }
+    const run = (async () => {
       let pages = 0
       let processed = 0
+      // Keep the batch cursor separate from lastCursor: SSE can jump ahead
+      // while this request is in flight, but its missing middle must still be
+      // consumed from the server's ordered response.
+      let batchAfter = lastCursor.value
       while (pages < 6 && processed < COMPENSATION_MAX_EVENTS) {
-        const before = lastCursor.value
-        const changes = await fetchChanges(before)
-        if (!changes) return
+        const before = batchAfter
+        const result = await fetchChanges(before, controller.signal)
+        if (!isCurrentCompensation(account, generation)) return
+        if (!result.changes) {
+          if (result.errorCode) lastErrorCode.value = result.errorCode
+          return
+        }
+        const changes = result.changes
         if (changes.historyRefreshRequired) {
           historyRefreshRequired.value = true
           gapState.value ||= 'unresolved'
@@ -170,19 +216,34 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
           return
         }
         for (const event of changes.events || []) {
-          addEvent(event)
+          addEvent(event, { compensationAfter: before })
           processed += 1
+        }
+        const lastBatchEvent = changes.events?.[changes.events.length - 1]
+        const nextAfter = validCursor(lastBatchEvent?.cursor)
+        if (changes.hasMore && (nextAfter === null || nextAfter <= before)) {
+          historyRefreshRequired.value = true
+          gapState.value ||= 'compensation_invalid'
+          lastErrorCode.value = 'ALERT_COMPENSATION_CURSOR_INVALID'
+          return
         }
         if (!changes.hasMore) {
           return
         }
+        batchAfter = nextAfter
         pages += 1
       }
       historyRefreshRequired.value = true
       gapState.value ||= 'compensation_limit'
       lastErrorCode.value = 'ALERT_COMPENSATION_LIMIT'
-    })().finally(() => { compensating = null })
-    return compensating
+    })()
+    compensating = run
+    void run.finally(() => {
+      if (compensating === run) compensating = null
+      if (compensationController === controller) compensationController = null
+      if (compensationRace?.generation === generation) compensationRace = null
+    }).catch(() => {})
+    return run
   }
 
   function start() {
@@ -201,7 +262,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   function stop() {
     subscriptions.forEach((unsubscribe) => unsubscribe())
     subscriptions = []
-    compensating = null
+    cancelCompensation()
   }
 
   function markRead(cursor?: number) {
@@ -221,6 +282,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   }
 
   function clearForLogout() {
+    cancelCompensation()
     resetMemory({ preserveCursor: true })
     activeAccount.value = null
   }

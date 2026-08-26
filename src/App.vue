@@ -17,6 +17,7 @@ import { useLocaleStore } from "@/stores/locale";
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useAlertRealtimeStore } from '@/stores/alert-realtime'
+import { createGlobalSseLifecycle } from '@/realtime/global-sse-lifecycle'
 
 const { theme, mode } = useTheme();
 const route = useRoute();
@@ -25,6 +26,7 @@ const { t } = useI18n();
 const authStore = useAuthStore()
 const websocketStore = useWebSocketStore()
 const alertRealtimeStore = useAlertRealtimeStore()
+const globalSseLifecycle = createGlobalSseLifecycle(websocketStore, alertRealtimeStore)
 const appTitle = computed(() => t('app.title'));
 const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
 const activeTheme = computed(() => (lightOnlyRoute.value ? null : theme.value));
@@ -55,19 +57,8 @@ watch(
 // Route layouts and workspaces only observe the shared connection.
 watch(
   () => [authStore.token, authStore.currentUser] as const,
-  ([token, user], previous) => {
-    const [previousToken, previousUser] = previous || [null, null]
-    if (token && user) {
-      const accountChanged = previousUser !== null
-        && String(previousUser.id || previousUser.username) !== String(user.id || user.username)
-      if ((previousToken && previousToken !== token) || accountChanged) websocketStore.disconnect()
-      alertRealtimeStore.activate(user)
-      alertRealtimeStore.start()
-      websocketStore.connect()
-      return
-    }
-    websocketStore.disconnect()
-    alertRealtimeStore.clearForLogout()
+  ([token, user]) => {
+    globalSseLifecycle.sync(token, user)
   },
   { immediate: true },
 )
@@ -78,8 +69,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', websocketStore.disconnect)
-  alertRealtimeStore.stop()
-  websocketStore.disconnect()
+  globalSseLifecycle.dispose()
 })
 
 watch(

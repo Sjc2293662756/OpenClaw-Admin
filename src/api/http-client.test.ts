@@ -92,6 +92,25 @@ describe('ApiClient authenticated fetch SSE', () => {
     client.disconnect()
   })
 
+  it('keeps retrying past the historic twenty-attempt cap by default, while finite caps remain configurable', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const fetchMock = vi.fn().mockRejectedValue(new Error('offline'))
+    vi.stubGlobal('fetch', fetchMock)
+    const infinite = new ApiClient({ getToken: () => 'token', reconnectInterval: 1 })
+    infinite.connect()
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(20)
+    infinite.disconnect()
+
+    const finite = new ApiClient({ getToken: () => 'token', reconnectInterval: 1, maxReconnectAttempts: 0 })
+    finite.connect()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(finite.state).toBe('failed')
+    finite.disconnect()
+    vi.useRealTimers()
+  })
+
   it('dispatches BFF alert events and stream state while safely ignoring unknown types', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamingResponse([
       'data: {"type":"alert","action":"triggered","cursor":9,"payload":{"id":"a-9"}}\n\n',

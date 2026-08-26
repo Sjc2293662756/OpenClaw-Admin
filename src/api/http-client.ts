@@ -12,7 +12,9 @@ export interface ApiClientConfig {
 const DEFAULT_CONFIG: Required<ApiClientConfig> = {
   baseUrl: '',
   reconnectInterval: 3000,
-  maxReconnectAttempts: 20,
+  // The authenticated Admin console is a long-running monitor. Consumers may
+  // opt into a finite cap for tests or specialised embeddings.
+  maxReconnectAttempts: Number.POSITIVE_INFINITY,
   getToken: () => null,
 }
 
@@ -191,7 +193,8 @@ export class ApiClient {
 
   private scheduleReconnect(generation: number): void {
     if (generation !== this.connectionGeneration || this.reconnectTimer) return
-    if (this.reconnectAttempts >= this.config.maxReconnectAttempts) {
+    if (Number.isFinite(this.config.maxReconnectAttempts)
+      && this.reconnectAttempts >= this.config.maxReconnectAttempts) {
       console.error('[ApiClient] Max reconnect attempts reached:', this.reconnectAttempts)
       this._state = ConnectionState.FAILED
       this.emit('stateChange', ConnectionState.FAILED)
