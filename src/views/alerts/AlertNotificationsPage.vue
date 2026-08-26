@@ -56,8 +56,8 @@ const pageSizeOptions = computed(() => [10, 20, 50, 100].map((value) => ({ label
 const resultLimitOptions = computed(() => [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: locale.value === 'zh-CN' ? '自定义 TOP' : 'Custom TOP', value: 'custom' }]))
 
 function authHeaders() { return { Authorization: `Bearer ${authStore.getToken() || ''}` } }
-function severityType(severity: string) { return ({ '紧急': 'error', '重大': 'warning', '一般': 'info', '轻微': 'default' } as Record<string, 'error' | 'warning' | 'info' | 'default'>)[severity] || 'default' }
-function severityLabel(severity: string) { return ({ '紧急': text('紧急', 'Critical'), '重大': text('重大', 'Major'), '一般': text('一般', 'Warning'), '轻微': text('轻微', 'Minor') } as Record<string, string>)[severity] || severity }
+function severityType(severity: string) { return ({ '紧急': 'error', '重大': 'warning', '轻微': 'default' } as Record<string, 'error' | 'warning' | 'default'>)[severity] || 'default' }
+function severityLabel(severity: string) { return ({ '紧急': text('紧急', 'Critical'), '重大': text('重大', 'Major'), '轻微': text('轻微', 'Minor') } as Record<string, string>)[severity] || severity }
 function formatTime(value: string | null) { return value ? new Date(value).toLocaleString(locale.value) : t('pages.gaiop.alerts.notRecorded') }
 function pad(value: number) { return String(value).padStart(2, '0') }
 function formatRangeTime(value: number) { const date = new Date(value); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}` }
@@ -76,7 +76,6 @@ const severityOptions = computed(() => [
   { label: t('pages.gaiop.alerts.allSeverity'), value: ALL_FILTER_VALUE },
   { label: locale.value === 'zh-CN' ? '紧急' : 'Critical', value: '紧急' },
   { label: locale.value === 'zh-CN' ? '重大' : 'Major', value: '重大' },
-  { label: locale.value === 'zh-CN' ? '一般' : 'Warning', value: '一般' },
   { label: locale.value === 'zh-CN' ? '轻微' : 'Minor', value: '轻微' },
 ])
 const allCategoryOptions = computed(() => [{ label: t('pages.gaiop.alerts.allCategory'), value: ALL_FILTER_VALUE }, ...categoryOptions.value])

@@ -7,14 +7,14 @@ const LABELS = {
   'zh-CN': {
     headers: ['告警时间', '严重级别', '告警名称', '告警类型', '来源 IP', '状态'],
     sheetName: '告警通知',
-    severity: { critical: '紧急', urgent: '紧急', major: '重大', warning: '一般', minor: '轻微' },
+    severity: { critical: '紧急', urgent: '紧急', major: '重大', minor: '轻微' },
     category: { appAlerts: '应用性能告警', infrastructure: '基础设施告警', network: '网络告警', security: '安全告警' },
     status: { active: '触发中', triggered: '触发中', restored: '已恢复', resolved: '已恢复' },
   },
   'en-US': {
     headers: ['Alert time', 'Severity', 'Alert name', 'Category', 'Source IP', 'Status'],
     sheetName: 'Alerts',
-    severity: { critical: 'Critical', urgent: 'Critical', major: 'Major', warning: 'Warning', minor: 'Minor', '紧急': 'Critical', '重大': 'Major', '一般': 'Warning', '轻微': 'Minor' },
+    severity: { critical: 'Critical', urgent: 'Critical', major: 'Major', minor: 'Minor', '紧急': 'Critical', '重大': 'Major', '轻微': 'Minor' },
     category: { appAlerts: 'Application performance', infrastructure: 'Infrastructure', network: 'Network', security: 'Security', '应用性能告警': 'Application performance' },
     status: { active: 'Triggered', triggered: 'Triggered', restored: 'Restored', resolved: 'Restored', '触发中': 'Triggered', '已恢复': 'Restored' },
   },
