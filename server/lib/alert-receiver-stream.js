@@ -165,7 +165,12 @@ export class AlertReceiverStreamClient {
       latestSequence: state.latestSequence,
       historyRefreshRequired: true,
     } : {}
-    return controlEvent(publicState, { ...diagnostic, ...gap })
+    return controlEvent(publicState, {
+      ...diagnostic,
+      latestCursor: state.resumeCursor,
+      lastProcessedCursor: state.lastProcessedCursor,
+      ...gap,
+    })
   }
 
   async runOnce() {

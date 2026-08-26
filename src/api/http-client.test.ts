@@ -91,4 +91,23 @@ describe('ApiClient authenticated fetch SSE', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     client.disconnect()
   })
+
+  it('dispatches BFF alert events and stream state while safely ignoring unknown types', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamingResponse([
+      'data: {"type":"alert","action":"triggered","cursor":9,"payload":{"id":"a-9"}}\n\n',
+      'data: {"type":"alertStreamState","state":"connected","latestCursor":9}\n\n',
+      'data: {"type":"futureEvent","secret":"ignored"}\n\n',
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient({ getToken: () => 'login-token', reconnectInterval: 60_000 })
+    const alert = vi.fn()
+    const state = vi.fn()
+    client.on('alert', alert)
+    client.on('alertStreamState', state)
+    client.connect()
+    await vi.waitFor(() => expect(alert).toHaveBeenCalledOnce())
+    expect(alert).toHaveBeenCalledWith(expect.objectContaining({ cursor: 9, action: 'triggered' }))
+    expect(state).toHaveBeenCalledWith(expect.objectContaining({ state: 'connected' }))
+    client.disconnect()
+  })
 })

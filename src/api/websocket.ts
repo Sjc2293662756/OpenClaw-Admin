@@ -82,6 +82,9 @@ export class OpenClawWebSocket {
     this.apiClient.on('backupProgress', (data: unknown) => {
       this.emit('backupProgress', data)
     })
+
+    this.apiClient.on('alert', (data: unknown) => this.emit('alert', data))
+    this.apiClient.on('alertStreamState', (data: unknown) => this.emit('alertStreamState', data))
   }
 
   connect(url?: string, auth?: string): void {

@@ -105,15 +105,11 @@ export const useWebSocketStore = defineStore('websocket', () => {
   }
 
   function connect(url?: string) {
+    if (ws.value.state === ConnectionState.CONNECTED
+      || ws.value.state === ConnectionState.CONNECTING
+      || ws.value.state === ConnectionState.RECONNECTING) return
     lastError.value = null
-
-    ws.value.disconnect()
-    ws.value = createWebSocket()
-    rpc.value = new RPCClient(ws.value)
-    listenersBound = false
-    
     bindListeners()
-    rebindPersistentListeners()
     ws.value.connect(url)
   }
 

@@ -33,7 +33,6 @@ const breadcrumbs = computed(() => {
 const languageToggleTarget = computed(() => (localeStore.locale === 'zh-CN' ? t('common.languageEn') : t('common.languageZh')))
 
 async function handleLogout() {
-  wsStore.disconnect()
   await authStore.logout()
   router.push({ name: 'Welcome', query: { redirect: '/' } })
 }

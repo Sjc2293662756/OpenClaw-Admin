@@ -2,7 +2,9 @@ import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { createAlertExportWorkbook, normalizeAlertExportRows, normalizeExportLocale } from '../lib/alert-export.js'
 import { ALERT_CATEGORY_LABELS, filterAlerts } from '../lib/syslog-alerts.js'
-import { readGAIOPAlerts } from '../lib/gaiop-alert-source.js'
+import { readGAIOPAlertChanges, readGAIOPAlerts } from '../lib/gaiop-alert-source.js'
+
+const ALERT_VIEWER_ROLES = new Set(['standard', 'auditor', 'admin'])
 
 function readFilter(value, maxLength = 120) {
   return String(value || '').trim().slice(0, maxLength)
@@ -18,7 +20,7 @@ function readTimestamp(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSource = readGAIOPAlerts }) {
+export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSource = readGAIOPAlerts, readAlertChanges = readGAIOPAlertChanges }) {
   const router = Router()
   router.post('/export', authMiddleware, (req, res) => {
     const locale = normalizeExportLocale(req.body?.locale)
@@ -34,6 +36,24 @@ export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSourc
   })
   router.get('/time', authMiddleware, (_req, res) => {
     sendOk(res, { now: Date.now() })
+  })
+  router.get('/changes', authMiddleware, async (req, res) => {
+    if (!ALERT_VIEWER_ROLES.has(req.user?.role)) {
+      return sendError(res, { status: 403, code: 'ALERT_ACCESS_DENIED', message: '当前账号无权读取告警实时补偿' })
+    }
+    const rawAfter = req.query.afterSequence
+    const afterText = rawAfter === undefined ? '' : String(rawAfter).trim()
+    const afterSequence = afterText === '' ? null : Number(afterText)
+    if (afterSequence !== null && (!Number.isSafeInteger(afterSequence) || afterSequence < 0)) {
+      return sendError(res, { status: 400, code: 'ALERT_CURSOR_INVALID', message: '告警游标无效' })
+    }
+    const limit = readBoundedInteger(req.query.limit, 200, 1, 300)
+    try {
+      const changes = await readAlertChanges(process.env, { afterSequence, limit })
+      return sendOk(res, changes)
+    } catch {
+      return sendError(res, { status: 503, code: 'ALERT_SOURCE_UNAVAILABLE', message: 'GAIOP 告警接收器暂不可用，请联系管理员检查接收器服务状态' })
+    }
   })
   router.get('/', authMiddleware, async (req, res) => {
     try {

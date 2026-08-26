@@ -163,7 +163,6 @@ async function deleteSession(key: string) {
 }
 
 async function logout() {
-  wsStore.disconnect()
   await authStore.logout()
   router.push({ name: 'Welcome', query: { redirect: '/workspace' } })
 }
@@ -195,7 +194,6 @@ onMounted(() => {
     delete query.alertAnalysis
     void router.replace({ query })
   }
-  if (wsStore.state !== ConnectionState.CONNECTED) wsStore.connect()
   unsubscribeState = wsStore.subscribe('stateChange', (state: unknown) => {
     ready.value = state === ConnectionState.CONNECTED
   })
@@ -203,7 +201,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   unsubscribeState?.()
-  wsStore.disconnect()
 })
 </script>
 

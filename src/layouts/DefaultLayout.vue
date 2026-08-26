@@ -1,25 +1,16 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref } from 'vue'
 import { NLayout, NLayoutSider, NLayoutHeader, NLayoutContent } from 'naive-ui'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
-import { useWebSocketStore } from '@/stores/websocket'
 
 const collapsed = ref(false)
-const wsStore = useWebSocketStore()
 const route = useRoute()
 const pageContainerClass = computed(() => ({
   'page-container--wide': route.meta.wideContent === true,
 }))
 
-onMounted(() => {
-  wsStore.connect()
-})
-
-onUnmounted(() => {
-  wsStore.disconnect()
-})
 </script>
 
 <template>

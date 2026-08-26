@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watch } from "vue";
+import { computed, onMounted, onUnmounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import {
   NConfigProvider,
@@ -14,11 +14,17 @@ import {
 import { useI18n } from "vue-i18n";
 import { useTheme } from "@/composables/useTheme";
 import { useLocaleStore } from "@/stores/locale";
+import { useAuthStore } from '@/stores/auth'
+import { useWebSocketStore } from '@/stores/websocket'
+import { useAlertRealtimeStore } from '@/stores/alert-realtime'
 
 const { theme, mode } = useTheme();
 const route = useRoute();
 const localeStore = useLocaleStore();
 const { t } = useI18n();
+const authStore = useAuthStore()
+const websocketStore = useWebSocketStore()
+const alertRealtimeStore = useAlertRealtimeStore()
 const appTitle = computed(() => t('app.title'));
 const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
 const activeTheme = computed(() => (lightOnlyRoute.value ? null : theme.value));
@@ -44,6 +50,37 @@ watch(
   },
   { immediate: true },
 );
+
+// The application shell owns the single authenticated browser SSE lifecycle.
+// Route layouts and workspaces only observe the shared connection.
+watch(
+  () => [authStore.token, authStore.currentUser] as const,
+  ([token, user], previous) => {
+    const [previousToken, previousUser] = previous || [null, null]
+    if (token && user) {
+      const accountChanged = previousUser !== null
+        && String(previousUser.id || previousUser.username) !== String(user.id || user.username)
+      if ((previousToken && previousToken !== token) || accountChanged) websocketStore.disconnect()
+      alertRealtimeStore.activate(user)
+      alertRealtimeStore.start()
+      websocketStore.connect()
+      return
+    }
+    websocketStore.disconnect()
+    alertRealtimeStore.clearForLogout()
+  },
+  { immediate: true },
+)
+
+onMounted(() => {
+  window.addEventListener('beforeunload', websocketStore.disconnect)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('beforeunload', websocketStore.disconnect)
+  alertRealtimeStore.stop()
+  websocketStore.disconnect()
+})
 
 watch(
   [lightOnlyRoute, mode],

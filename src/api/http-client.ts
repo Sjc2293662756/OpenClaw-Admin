@@ -156,6 +156,20 @@ export class ApiClient {
             this.emit('backupProgress', message)
           })
           break
+
+        case 'alert':
+          if ((message.action === 'triggered' || message.action === 'recovered')
+            && Number.isSafeInteger(message.cursor) && message.cursor >= 0
+            && message.payload && typeof message.payload === 'object') {
+            queueMicrotask(() => this.emit('alert', message))
+          }
+          break
+
+        case 'alertStreamState':
+          if (typeof message.state === 'string') {
+            queueMicrotask(() => this.emit('alertStreamState', message))
+          }
+          break
       }
     } catch (e) {
       console.error('[ApiClient] Failed to parse message:', e)

@@ -76,3 +76,66 @@ export async function readGAIOPAlerts(env = process.env, filters = {}, fetchImpl
     hasMore: Boolean(payload.hasMore),
   }
 }
+
+function sequenceOf(alert) {
+  const value = Number(alert?.streamSequence)
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+// The receiver's /alerts resource is newest-first and bounded to 3000 entries.
+// Only its contiguous suffix is safe to present as a browser replay window.
+export async function readGAIOPAlertChanges(env = process.env, {
+  afterSequence = null,
+  limit = 200,
+} = {}, fetchImpl = fetch) {
+  const baseUrl = readGAIOPAlertReceiverUrl(env)
+  const url = new URL('/alerts', baseUrl)
+  url.searchParams.set('page', '1')
+  url.searchParams.set('pageSize', '3000')
+  const token = String(env.GAIOP_ALERT_RECEIVER_TOKEN || '')
+  let response
+  try {
+    response = await fetchImpl(url, {
+      headers: token ? { 'x-gaiop-alert-token': token } : {},
+      signal: AbortSignal.timeout(5000),
+    })
+  } catch {
+    throw new Error('GAIOP alert receiver is unavailable')
+  }
+  const payload = await response.json().catch(() => null)
+  if (!response.ok || !payload?.ok || !Array.isArray(payload.alerts)) {
+    throw new Error('GAIOP alert receiver is unavailable')
+  }
+
+  const ordered = payload.alerts
+    .map((alert) => ({ alert, sequence: sequenceOf(alert) }))
+    .filter((item) => item.sequence !== null)
+    .sort((left, right) => left.sequence - right.sequence)
+  const latestSequence = ordered.at(-1)?.sequence || 0
+  let oldestAvailableSequence = latestSequence || null
+  for (let index = ordered.length - 1; index >= 0; index -= 1) {
+    const expected = latestSequence - (ordered.length - 1 - index)
+    if (ordered[index].sequence !== expected) break
+    oldestAvailableSequence = ordered[index].sequence
+  }
+  const contiguous = ordered.filter((item) => item.sequence >= (oldestAvailableSequence || Infinity))
+  const normalizedAfter = afterSequence === null ? null : Number(afterSequence)
+  if (normalizedAfter === null) {
+    return { events: [], latestSequence, hasMore: false, historyRefreshRequired: false }
+  }
+  if (normalizedAfter > latestSequence || normalizedAfter < (oldestAvailableSequence || 1) - 1) {
+    return { events: [], latestSequence, hasMore: false, historyRefreshRequired: true, oldestAvailableSequence }
+  }
+  const pending = contiguous.filter((item) => item.sequence > normalizedAfter)
+  const safeLimit = Math.min(Math.max(Number(limit) || 200, 1), 300)
+  return {
+    events: pending.slice(0, safeLimit).map(({ alert, sequence }) => {
+      const payload = mapGAIOPAlertEvent(alert)
+      return { type: 'alert', action: payload.restored ? 'recovered' : 'triggered', cursor: sequence, payload }
+    }),
+    latestSequence,
+    oldestAvailableSequence,
+    hasMore: pending.length > safeLimit,
+    historyRefreshRequired: false,
+  }
+}

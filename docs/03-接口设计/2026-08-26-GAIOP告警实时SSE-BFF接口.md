@@ -3,7 +3,7 @@
 | 属性 | 内容 |
 |---|---|
 | 日期 | 2026-08-26 |
-| 状态 | 阶段三 BFF 已实现，尚未部署；阶段四前端待接入 |
+ | 状态 | 阶段四浏览器全局消费与断线补偿已实现，尚未部署 |
 | 上游契约 | Receiver `gaiop.alert-event.v1` / `GET /events` |
 | 浏览器入口 | 既有 Bearer 认证 `GET /api/events` |
 | 代码 | `server/lib/alert-receiver-stream.js`、`server/lib/alert-stream-state.js`、`server/lib/sse-access.js` |
@@ -158,3 +158,16 @@ Gateway `type:event` 继续执行既有 `sessionKey` 归属隔离；`gatewayStat
 - `gap_state=unresolved` 没有自动清除机制；后续若要人工确认或对账，必须另行定义可审计流程。
 - 已处理业务 ID 集合是每进程有界内存状态，不引入持久业务 ID 账本。重启后由持久化 `resume_cursor` 保证已经幂等消费的 cursor 不会再次请求；若 Receiver 在重启后以全新 cursor 再次发送相同业务 ID，BFF 会重新广播，阶段四仍须按 `cursor` 和 `payload.id` 幂等。
 - 本阶段未部署 237，未修改 Receiver、GAIOP 后端、Gateway 或前端源码。
+
+## 10. 阶段四浏览器补偿接口与连接底座
+
+`GET /api/alerts/changes?afterSequence=<cursor>&limit=<n>` 使用与 `GET /api/alerts` 相同的登录边界，其中标准、审计、管理员可读，基础账号返回 `403 ALERT_ACCESS_DENIED`。`afterSequence` 必须为非负安全整数，`limit` 为 1–300；非法游标返回 `400 ALERT_CURSOR_INVALID`。接口通过 Receiver 保留窗口的 `GET /alerts?pageSize=3000` 构造连续序列后缀，并复用 `mapGAIOPAlertEvent()`，不会另建告警映射。
+
+- 无 `afterSequence`：仅返回 `{ events: [], latestSequence }` 作为首次浏览器基线，绝不回放历史告警。
+- 有游标且连续：`events` 以 `cursor` 升序返回，单页最多 `limit` 条；`hasMore=true` 时浏览器有限分批追平。
+- 游标早于可证明连续的保留窗口、晚于最新序列，或补偿超出 1000 条/6 页：返回或前端标记 `historyRefreshRequired=true`，不把不完整窗口伪装成补齐结果。
+- Receiver 不可用统一返回 `503 ALERT_SOURCE_UNAVAILABLE`，不暴露地址、Token、原始错误或日志。
+
+浏览器仍只建立一条带 Bearer 头的 `GET /api/events`。应用根节点在“Token + 当前用户”就绪时创建连接、激活按用户 ID（回退用户名）隔离的轻量游标；路由切换不会重建连接。SSE `connected` 后再执行一次补偿，实时与补偿事件以 `cursor` 和 `payload.id` 共同去重。退出、401 和应用卸载会立刻断开并清空内存告警正文；该账号的仅游标 localStorage 留存以便下次安全续传。
+
+`alertStreamState` 额外可带 `latestCursor` 与 `lastProcessedCursor`，均为非敏感序号。`gapState` 或 `historyRefreshRequired` 一旦出现，后续 `connected` 不得自动清除；阶段五可从全局 `alertRealtime` Store 读取 `recentEvents`（150 条）、`unreadCount`、`lastCursor`、`streamState`、`gapState`、`historyRefreshRequired` 与 `lastErrorCode`，再调用 `markRead`、`remove` 或 `clear` 实现弹窗/消息面板。
