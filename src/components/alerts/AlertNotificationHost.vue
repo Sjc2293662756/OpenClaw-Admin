@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { h, watch } from 'vue'
-import { NAlert, NButton, NButtonGroup, NDrawer, NDrawerContent, NEmpty, NIcon, NList, NListItem, NTag, NText, NSpace, useNotification } from 'naive-ui'
+import { computed, h, onUnmounted, ref, watch } from 'vue'
+import { NAlert, NButton, NButtonGroup, NDrawer, NDrawerContent, NEmpty, NIcon, NList, NListItem, NSelect, NTag, NText, NSpace, useNotification } from 'naive-ui'
 import { ChevronDownOutline, ChevronUpOutline, EyeOutline, TrashOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -12,11 +12,27 @@ const router = useRouter()
 const { t, locale } = useI18n()
 const alerts = useAlertRealtimeStore()
 const notification = useNotification()
-let detailCursor: number | null = null
+const detailCursor = ref<number | null>(null)
+const severityFilter = ref('__all__')
+const freshCursor = ref<number | null>(null)
+const activeNotifications = new Map<number, { destroy: () => void }>()
+let freshTimer: ReturnType<typeof setTimeout> | null = null
+
+const severityOptions = computed(() => [
+  { label: t('pages.gaiop.alerts.allSeverity'), value: '__all__' },
+  ...['紧急', '重大', '轻微'].map((severity) => ({ label: alertSeverityLabel(severity, locale.value), value: severity })),
+])
+const filteredEvents = computed(() => alerts.recentEvents.filter((item) => severityFilter.value === '__all__'
+  || String(item.payload.severity || '') === severityFilter.value))
 
 function notRecorded() { return t('pages.gaiop.alerts.notRecorded') }
 function showDetails(item: AlertRealtimeItem) {
   alerts.markRead(item.cursor)
+  alerts.closeMessageCenter()
+  const current = router.currentRoute.value
+  if (current.name === 'AlertNotifications' && String(current.query.focusAlert || '') === String(item.payload.id || '')) {
+    alerts.requestDetailFocus()
+  }
   void router.push({ name: 'AlertNotifications', query: { focusAlert: item.payload.id } })
 }
 
@@ -26,22 +42,36 @@ function notificationDescription(item: AlertRealtimeItem) {
 }
 
 function notifyNext() {
+  if (alerts.messageCenterOpen) return
   const item = alerts.dequeueNotification()
   if (!item) return
   const payload = item.payload as Record<string, unknown>
-  notification.create({
+  const notice = notification.create({
     title: `${alertSeverityLabel(String(payload.severity || ''), locale.value)} · ${t('pages.gaiop.alertCenter.triggered')}`,
     content: notificationDescription(item),
     type: alertNotificationType(String(payload.severity || '')),
     duration: alertNotificationDuration(String(payload.severity || '')),
     action: () => h(NButton, { size: 'small', onClick: () => showDetails(item) }, { default: () => t('pages.gaiop.alertCenter.viewDetails') }),
   })
+  activeNotifications.set(item.cursor, notice)
 }
 
 watch(() => alerts.notificationQueue.length, () => notifyNext(), { immediate: true })
+watch(() => alerts.messageCenterOpen, (open) => {
+  if (!open) return
+  activeNotifications.forEach((notice) => notice.destroy())
+  activeNotifications.clear()
+})
+watch(() => alerts.recentEvents[0]?.cursor, (cursor) => {
+  if (!alerts.messageCenterOpen || cursor === undefined) return
+  freshCursor.value = cursor
+  if (freshTimer) clearTimeout(freshTimer)
+  freshTimer = setTimeout(() => { freshCursor.value = null }, 4_000)
+})
+onUnmounted(() => { if (freshTimer) clearTimeout(freshTimer) })
 
-function toggleExpanded(cursor: number) { detailCursor = detailCursor === cursor ? null : cursor }
-function isExpanded(cursor: number) { return detailCursor === cursor }
+function toggleExpanded(cursor: number) { detailCursor.value = detailCursor.value === cursor ? null : cursor }
+function isExpanded(cursor: number) { return detailCursor.value === cursor }
 function streamText() {
   if (alerts.hasActiveGap) return t('pages.gaiop.alertCenter.historyRefreshRequired')
   if (alerts.streamState !== 'connected' && alerts.streamState !== 'idle') return t('pages.gaiop.alertCenter.streamState', { state: alerts.streamState })
@@ -56,9 +86,10 @@ function streamText() {
         <NButton :disabled="!alerts.unreadCount" @click="alerts.markRead()">{{ t('pages.gaiop.alertCenter.markAllRead') }}</NButton>
         <NButton :disabled="!alerts.recentEvents.length" @click="alerts.clear()">{{ t('pages.gaiop.alertCenter.clear') }}</NButton>
       </NButtonGroup>
+      <NSelect v-model:value="severityFilter" :options="severityOptions" :aria-label="t('pages.gaiop.alertCenter.severityFilter')" class="alert-center-filter" />
       <NAlert v-if="streamText()" type="warning" :bordered="false" class="alert-center-status">{{ streamText() }}</NAlert>
-      <NList v-if="alerts.recentEvents.length" hoverable clickable>
-        <NListItem v-for="item in alerts.recentEvents" :key="item.cursor" :class="{ 'alert-center-read': item.read }">
+      <NList v-if="filteredEvents.length" hoverable clickable>
+        <NListItem v-for="item in filteredEvents" :key="item.cursor" :class="{ 'alert-center-read': item.read, 'alert-center-fresh': freshCursor === item.cursor }">
           <template #prefix><NTag :type="alertSeverityType(String(item.payload.severity || ''))" :bordered="false">{{ alertSeverityLabel(String(item.payload.severity || ''), locale) }}</NTag></template>
           <template #suffix>
             <NButton quaternary circle size="small" :aria-label="t('pages.gaiop.alertCenter.remove')" @click.stop="alerts.remove(item.cursor)"><template #icon><NIcon :component="TrashOutline" /></template></NButton>
@@ -86,9 +117,11 @@ function streamText() {
 <style scoped>
 .alert-center-status { margin-bottom: 12px; }
 .alert-center-toolbar { margin-bottom: 12px; }
+.alert-center-filter { width: 100%; margin-bottom: 12px; }
 .alert-center-item { display: grid; gap: 5px; cursor: pointer; }
 .alert-center-meta { font-size: 12px; line-height: 1.5; }
 .alert-center-actions { margin-top: 2px; }
 .alert-center-brief { display: grid; gap: 3px; margin-top: 5px; font-size: 12px; }
 .alert-center-read { opacity: .68; }
+.alert-center-fresh { background: color-mix(in srgb, var(--primary-color) 10%, transparent); transition: background .35s ease; }
 </style>

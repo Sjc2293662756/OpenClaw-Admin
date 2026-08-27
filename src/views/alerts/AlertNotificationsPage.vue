@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NDrawer, NDrawerContent, NEmpty, NInput, NInputNumber, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
-import { CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
+import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NEmpty, NInput, NInputNumber, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
+import { CloseOutline, CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
 import { usePermissions } from '@/composables/usePermissions'
@@ -12,6 +12,7 @@ import { useI18n } from 'vue-i18n'
 import { platformBranding } from '@/branding/platform'
 import { findAlertById, focusAlertId } from '@/alerts/focus'
 import { alertSeverityLabel, alertSeverityType, formatAlertTime } from '@/alerts/presentation'
+import { useAlertRealtimeStore, type AlertRealtimeItem } from '@/stores/alert-realtime'
 
 type Metric = { name: string; value: string; unit: string }
 type Alert = {
@@ -29,6 +30,7 @@ type AlertReturnState = {
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const alertRealtimeStore = useAlertRealtimeStore()
 const { canUseFunctions, readOnlyHint } = usePermissions()
 const message = useMessage()
 const { t, locale } = useI18n()
@@ -38,6 +40,8 @@ const exportLoading = ref(false)
 const error = ref('')
 const alerts = ref<Alert[]>([])
 const selectedAlert = ref<Alert | null>(null)
+const focusState = ref<'idle' | 'outside-results' | 'not-found' | 'unavailable'>('idle')
+const focusTargetId = ref<string | null>(null)
 const ALL_FILTER_VALUE = '__all__'
 const filters = ref({ severity: ALL_FILTER_VALUE, category: ALL_FILTER_VALUE, keyword: '' })
 const serverNow = ref(Date.now())
@@ -50,7 +54,6 @@ const page = ref(1)
 const ALERT_RETURN_STATE_KEY = 'gaiop.alert-notifications-return-state'
 const pagination = ref<Pagination>({ page: 1, pageSize: 10, maxResults: 200, availableCount: 0, hasMore: false, limitReached: false })
 const categoryOptions = ref<Array<{ label: string; value: string }>>([])
-const detailVisible = computed({ get: () => !!selectedAlert.value, set: (visible: boolean) => { if (!visible) selectedAlert.value = null } })
 const isCustomLimit = computed(() => resultLimitChoice.value === 'custom')
 const activeResultLimit = computed(() => isCustomLimit.value ? Math.min(Math.max(Number(customResultLimit.value) || 200, pageSize.value), 3000) : Number(resultLimitChoice.value))
 
@@ -89,7 +92,7 @@ const columns = computed<DataTableColumns<Alert>>(() => [
   { title: t('pages.gaiop.alerts.category'), key: 'categoryLabel', width: 150, render: (row) => row.categoryLabel || row.category },
   { title: t('pages.gaiop.alerts.source'), key: 'sourceHost', width: 130 },
   { title: t('pages.gaiop.alerts.status'), key: 'restored', width: 90, render: (row) => h(NTag, { type: row.restored ? 'success' : 'warning', bordered: false }, { default: () => row.restored ? t('pages.gaiop.alerts.restored') : t('pages.gaiop.alerts.triggered') }) },
-  { title: t('pages.gaiop.alerts.actions'), key: 'actions', width: 80, fixed: 'right', render: (row) => h(NButton, { size: 'small', onClick: () => { selectedAlert.value = row } }, { default: () => t('pages.gaiop.alerts.details') }) },
+  { title: t('pages.gaiop.alerts.actions'), key: 'actions', width: 80, fixed: 'right', render: (row) => h(NButton, { size: 'small', onClick: (event: MouseEvent) => { event.stopPropagation(); selectAlert(row) } }, { default: () => t('pages.gaiop.alerts.details') }) },
 ])
 const exportHeaders = computed(() => [t('pages.gaiop.alerts.time'), t('pages.gaiop.alerts.severity'), t('pages.gaiop.alerts.name'), t('pages.gaiop.alerts.category'), locale.value === 'zh-CN' ? '来源 IP' : 'Source IP', t('pages.gaiop.alerts.status')])
 
@@ -243,11 +246,35 @@ async function loadAlerts() {
   } finally { loading.value = false }
 }
 
+function selectAlert(alert: Alert) {
+  selectedAlert.value = alert
+  focusState.value = 'idle'
+}
+
+function rowProps(row: Alert) {
+  return {
+    class: selectedAlert.value?.id === row.id ? 'alert-row--selected' : '',
+    onClick: () => selectAlert(row),
+  }
+}
+
 async function focusAlertFromRoute() {
   const id = focusAlertId(route.query.focusAlert)
-  if (!id) return
+  if (!id) {
+    focusTargetId.value = null
+    focusState.value = 'idle'
+    return
+  }
+  focusTargetId.value = id
+  focusState.value = 'idle'
   const existing = findAlertById(alerts.value, id)
   if (existing) { selectedAlert.value = existing; return }
+  const realtime = alertRealtimeStore.recentEvents.find((event) => String(event.payload.id || '') === id)
+  if (realtime) {
+    selectedAlert.value = alertFromRealtime(realtime)
+    focusState.value = 'outside-results'
+    return
+  }
   // Use the already protected alert query with its keyword capability. This is
   // a one-shot location attempt, never a polling path and never a new API.
   try {
@@ -258,11 +285,47 @@ async function focusAlertFromRoute() {
     const located = findAlertById<Alert>(Array.isArray(data.alerts) ? data.alerts as Alert[] : [], id)
     if (located) {
       selectedAlert.value = located
+      focusState.value = 'outside-results'
       return
     }
-    message.info(t('pages.gaiop.alerts.focusNotFound'))
+    selectedAlert.value = null
+    focusState.value = 'not-found'
   } catch {
-    message.warning(t('pages.gaiop.alerts.focusUnavailable'))
+    selectedAlert.value = null
+    focusState.value = 'unavailable'
+  }
+}
+
+async function resetFiltersAndLocate() {
+  const id = focusTargetId.value
+  if (!id) return
+  filters.value = { severity: ALL_FILTER_VALUE, category: ALL_FILTER_VALUE, keyword: id }
+  page.value = 1
+  const targetTime = Date.parse(selectedAlert.value?.occurredAt || '')
+  if (Number.isFinite(targetTime)) {
+    appliedRange.value = [targetTime - 60 * 60 * 1000, targetTime + 60 * 60 * 1000]
+    timePreset.value = 'custom'
+  } else {
+    await refreshServerTime()
+    appliedRange.value = rangeForPreset('lastHour', serverNow.value)
+    timePreset.value = 'lastHour'
+  }
+  await loadAlerts()
+  await focusAlertFromRoute()
+}
+
+function alertFromRealtime(item: AlertRealtimeItem): Alert {
+  const payload = item.payload as Record<string, unknown>
+  const metrics = Array.isArray(payload.metrics) ? payload.metrics.map((metric) => ({
+    name: String((metric as Metric)?.name || ''), value: String((metric as Metric)?.value || ''), unit: String((metric as Metric)?.unit || ''),
+  })) : []
+  return {
+    id: String(payload.id || ''), occurredAt: String(payload.occurredAt || ''), sourceHost: String(payload.sourceHost || ''),
+    category: String(payload.category || ''), categoryLabel: String(payload.categoryLabel || ''), severity: String(payload.severity || ''), name: String(payload.name || ''),
+    ruleId: Number(payload.ruleId) || 0, metrics, description: typeof payload.description === 'string' ? payload.description : null,
+    triggerCondition: typeof payload.triggerCondition === 'string' ? payload.triggerCondition : null, groupPath: typeof payload.groupPath === 'string' ? payload.groupPath : null,
+    startTime: payload.startTime ? String(payload.startTime) : null, endTime: payload.endTime ? String(payload.endTime) : null,
+    eventId: payload.eventId ? String(payload.eventId) : null, restored: item.action === 'recovered',
   }
 }
 
@@ -290,7 +353,18 @@ onMounted(async () => {
   await focusAlertFromRoute()
 })
 
-watch(() => route.query.focusAlert, () => { void focusAlertFromRoute() })
+watch(() => route.query.focusAlert, async () => {
+  // A notification action can arrive while this page remains mounted. Refresh
+  // the user's current list first, then select from it or its realtime item.
+  await loadAlerts()
+  await focusAlertFromRoute()
+})
+
+watch(() => alertRealtimeStore.detailFocusRequest, async () => {
+  if (route.name !== 'AlertNotifications' || !focusAlertId(route.query.focusAlert)) return
+  await loadAlerts()
+  await focusAlertFromRoute()
+})
 </script>
 
 <template>
@@ -311,6 +385,8 @@ watch(() => route.query.focusAlert, () => { void focusAlertFromRoute() })
       </template>
       <NAlert v-if="pagination.limitReached" type="warning" :bordered="false" style="margin-top: 12px;">{{ text(`当前筛选结果超过 TOP ${pagination.maxResults}；可提高 TOP 值继续查看。`, `Current filters exceed TOP ${pagination.maxResults}; increase TOP to continue viewing.`) }}</NAlert>
       <NAlert v-if="error" type="error" :bordered="false" style="margin-top: 12px;">{{ error }}</NAlert>
+      <NAlert v-if="focusState === 'not-found'" type="warning" :bordered="false" style="margin-top: 12px;">{{ t('pages.gaiop.alerts.focusNotFound') }}</NAlert>
+      <NAlert v-else-if="focusState === 'unavailable'" type="warning" :bordered="false" style="margin-top: 12px;">{{ t('pages.gaiop.alerts.focusUnavailable') }}</NAlert>
 
       <div class="filters">
         <div class="filter-main">
@@ -332,22 +408,29 @@ watch(() => route.query.focusAlert, () => { void focusAlertFromRoute() })
         </NSpace>
       </div>
 
-      <NDataTable :columns="columns" :data="alerts" :loading="loading" :bordered="false" :single-line="false" :scroll-x="980" :pagination="false">
-        <template #empty><NEmpty :description="text('当前时间范围内暂无可展示的 Syslog 告警', 'No Syslog alerts are available in the current time range')" /></template>
-      </NDataTable>
-      <NSpace justify="space-between" align="center" style="margin-top: 16px;">
-        <NText depth="3">{{ text(`已在当前读取窗口中匹配 ${pagination.availableCount} 条，TOP ${pagination.maxResults}。`, `${pagination.availableCount} records match the current retrieval window, TOP ${pagination.maxResults}.`) }}</NText>
-        <NSpace align="center">
-          <NButton :disabled="page <= 1 || loading" @click="changePage(page - 1)">{{ text('上一页', 'Previous') }}</NButton>
-          <NText>{{ text(`第 ${page} 页`, `Page ${page}`) }}</NText>
-          <NButton :disabled="!pagination.hasMore || loading" @click="changePage(page + 1)">{{ text('下一页', 'Next') }}</NButton>
-        </NSpace>
-      </NSpace>
-    </NCard>
-
-    <NDrawer v-model:show="detailVisible" :width="560" placement="right">
-      <NDrawerContent :title="text('告警详情', 'Alert details')" closable>
-        <template v-if="selectedAlert">
+      <div class="alerts-detail-layout" :class="{ 'alerts-detail-layout--open': selectedAlert }">
+        <div class="alerts-list-column">
+          <NDataTable :columns="columns" :data="alerts" :loading="loading" :bordered="false" :single-line="false" :scroll-x="980" :pagination="false" :row-props="rowProps">
+            <template #empty><NEmpty :description="text('当前时间范围内暂无可展示的 Syslog 告警', 'No Syslog alerts are available in the current time range')" /></template>
+          </NDataTable>
+          <NSpace justify="space-between" align="center" style="margin-top: 16px;">
+            <NText depth="3">{{ text(`已在当前读取窗口中匹配 ${pagination.availableCount} 条，TOP ${pagination.maxResults}。`, `${pagination.availableCount} records match the current retrieval window, TOP ${pagination.maxResults}.`) }}</NText>
+            <NSpace align="center">
+              <NButton :disabled="page <= 1 || loading" @click="changePage(page - 1)">{{ text('上一页', 'Previous') }}</NButton>
+              <NText>{{ text(`第 ${page} 页`, `Page ${page}`) }}</NText>
+              <NButton :disabled="!pagination.hasMore || loading" @click="changePage(page + 1)">{{ text('下一页', 'Next') }}</NButton>
+            </NSpace>
+          </NSpace>
+        </div>
+        <aside v-if="selectedAlert" class="alert-detail-panel">
+          <div class="alert-detail-panel__header">
+            <NText strong>{{ text('告警详情', 'Alert details') }}</NText>
+            <NButton quaternary circle size="small" :aria-label="t('common.close')" @click="selectedAlert = null"><template #icon><CloseOutline /></template></NButton>
+          </div>
+          <NAlert v-if="focusState === 'outside-results'" type="info" :bordered="false" class="alert-focus-hint">
+            {{ t('pages.gaiop.alerts.focusOutsideResults') }}
+          </NAlert>
+          <NButton v-if="focusState === 'outside-results'" size="small" class="alert-focus-action" @click="resetFiltersAndLocate">{{ t('pages.gaiop.alerts.resetFiltersAndLocate') }}</NButton>
           <NDescriptions label-placement="left" :column="1" bordered>
             <NDescriptionsItem :label="text('告警名称', 'Alert name')">{{ selectedAlert.name }}</NDescriptionsItem>
             <NDescriptionsItem :label="text('严重级别', 'Severity')"><NTag :type="severityType(selectedAlert.severity)" :bordered="false">{{ severityLabel(selectedAlert.severity) }}</NTag></NDescriptionsItem>
@@ -382,9 +465,9 @@ watch(() => route.query.focusAlert, () => { void focusAlertFromRoute() })
               {{ text('告警数据包详细分析', 'Detailed alert-packet analysis') }}
             </NButton>
           </div>
-        </template>
-      </NDrawerContent>
-    </NDrawer>
+        </aside>
+      </div>
+    </NCard>
   </section>
 </template>
 
@@ -397,9 +480,19 @@ watch(() => route.query.focusAlert, () => { void focusAlertFromRoute() })
 .filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; padding: 14px; border: 1px solid var(--border-color, #e8edf0); border-radius: 10px; background: var(--bg-card, #fff); }
 .filter-main { min-width: 0; }
 .display-controls { justify-content: flex-end; }
+.alerts-detail-layout { display: block; }
+.alerts-detail-layout--open { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 430px); align-items: start; gap: 18px; }
+.alerts-list-column { min-width: 0; }
+.alert-detail-panel { min-width: 0; max-height: calc(100vh - 260px); overflow: auto; padding: 0 0 4px 18px; border-left: 1px solid var(--border-color, #e8edf0); }
+.alert-detail-panel__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color, #e8edf0); }
+.alert-focus-hint { margin: 0 0 12px; }
+.alert-focus-action { margin: -4px 0 14px; }
+:deep(.alert-row--selected > td) { background: color-mix(in srgb, var(--primary-color) 9%, transparent); }
 @media (max-width: 1120px) {
   .filters { align-items: flex-start; flex-direction: column; }
   .display-controls { justify-content: flex-start; }
+  .alerts-detail-layout--open { grid-template-columns: 1fr; }
+  .alert-detail-panel { max-height: none; padding: 18px 0 0; border-top: 1px solid var(--border-color, #e8edf0); border-left: 0; }
 }
 @media (max-width: 720px) {
   .time-toolbar { max-width: 100%; }

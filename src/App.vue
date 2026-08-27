@@ -101,3 +101,10 @@ watch(
     </NNotificationProvider>
   </NConfigProvider>
 </template>
+
+<style>
+/* Keep alerts below each workspace header rule instead of covering its actions. */
+.n-notification-container {
+  top: calc(var(--header-height, 64px) + 12px) !important;
+}
+</style>

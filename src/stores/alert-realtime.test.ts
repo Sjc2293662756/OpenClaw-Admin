@@ -76,6 +76,26 @@ describe('alert realtime store', () => {
     expect(store.recentEvents.every((item) => item.read)).toBe(true)
   })
 
+  it('keeps fresh messages unread in an open center while suppressing floating notices', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.openMessageCenter()
+    store.addEvent(event(1))
+    expect(store.unreadCount).toBe(1)
+    expect(store.notificationQueue).toEqual([])
+    expect(store.recentEvents[0]?.read).toBe(false)
+  })
+
+  it('signals a same-link detail request without putting request state in persistent storage', () => {
+    const store = useAlertRealtimeStore()
+    expect(store.detailFocusRequest).toBe(0)
+    store.requestDetailFocus()
+    store.requestDetailFocus()
+    expect(store.detailFocusRequest).toBe(2)
+    store.clearForLogout()
+    expect(store.detailFocusRequest).toBe(0)
+  })
+
   it('bounds recent and seen structures without re-admitting cursors below the high-water mark', () => {
     const store = useAlertRealtimeStore()
     store.activate({ id: 'one', username: 'one', role: 'admin' })
