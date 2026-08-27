@@ -7,6 +7,7 @@ import { useRouter } from 'vue-router'
 import { useAlertRealtimeStore, type AlertRealtimeItem } from '@/stores/alert-realtime'
 import { alertActionLabel, alertSeverityLabel, alertSeverityType, alertSource, alertSummary, formatAlertTime } from '@/alerts/presentation'
 import { alertNotificationDuration, alertNotificationType } from '@/alerts/notification-policy'
+import { destroyActiveNotification, destroyAllActiveNotifications, forgetActiveNotification } from '@/alerts/notification-lifecycle'
 
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -28,6 +29,7 @@ const filteredEvents = computed(() => alerts.recentEvents.filter((item) => sever
 function notRecorded() { return t('pages.gaiop.alerts.notRecorded') }
 function showDetails(item: AlertRealtimeItem) {
   alerts.markRead(item.cursor)
+  destroyActiveNotification(activeNotifications, item.cursor)
   alerts.closeMessageCenter()
   const current = router.currentRoute.value
   if (current.name === 'AlertNotifications' && String(current.query.focusAlert || '') === String(item.payload.id || '')) {
@@ -51,6 +53,7 @@ function notifyNext() {
     content: notificationDescription(item),
     type: alertNotificationType(String(payload.severity || '')),
     duration: alertNotificationDuration(String(payload.severity || '')),
+    onAfterLeave: () => forgetActiveNotification(activeNotifications, item.cursor),
     action: () => h(NButton, { size: 'small', onClick: () => showDetails(item) }, { default: () => t('pages.gaiop.alertCenter.viewDetails') }),
   })
   activeNotifications.set(item.cursor, notice)
@@ -59,16 +62,19 @@ function notifyNext() {
 watch(() => alerts.notificationQueue.length, () => notifyNext(), { immediate: true })
 watch(() => alerts.messageCenterOpen, (open) => {
   if (!open) return
-  activeNotifications.forEach((notice) => notice.destroy())
-  activeNotifications.clear()
+  destroyAllActiveNotifications(activeNotifications)
 })
+watch(() => alerts.activeAccount, () => destroyAllActiveNotifications(activeNotifications))
 watch(() => alerts.recentEvents[0]?.cursor, (cursor) => {
   if (!alerts.messageCenterOpen || cursor === undefined) return
   freshCursor.value = cursor
   if (freshTimer) clearTimeout(freshTimer)
   freshTimer = setTimeout(() => { freshCursor.value = null }, 4_000)
 })
-onUnmounted(() => { if (freshTimer) clearTimeout(freshTimer) })
+onUnmounted(() => {
+  if (freshTimer) clearTimeout(freshTimer)
+  destroyAllActiveNotifications(activeNotifications)
+})
 
 function toggleExpanded(cursor: number) { detailCursor.value = detailCursor.value === cursor ? null : cursor }
 function isExpanded(cursor: number) { return detailCursor.value === cursor }

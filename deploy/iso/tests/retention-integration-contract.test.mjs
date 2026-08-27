@@ -5,7 +5,7 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
-const read = (relativePath) => readFileSync(path.join(repositoryRoot, relativePath), 'utf8')
+const read = (relativePath) => readFileSync(path.join(repositoryRoot, relativePath), 'utf8').replace(/\r\n/g, '\n')
 
 function parseEnvironmentExample(source) {
   const values = new Map()

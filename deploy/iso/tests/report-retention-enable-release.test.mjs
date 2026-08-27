@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 
 const root = process.cwd()
-const read = (name) => readFileSync(join(root, name), 'utf8')
+const read = (name) => readFileSync(join(root, name), 'utf8').replace(/\r\n/g, '\n')
 const powershell = read('scripts/Invoke-237RetentionClosedRelease.ps1')
 const runner = read('scripts/gateway237-retention-closed-release.cjs')
 const release = read('scripts/gateway237-report-retention-enable.sh')
