@@ -6,6 +6,7 @@
 const { Client } = require('ssh2')
 const { createHash } = require('node:crypto')
 const { createReadStream } = require('node:fs')
+const shellDollar = '$'
 
 const archivePath = String(process.env.GAIOP_RECEIVER_SSE_ARCHIVE || '')
 const releaseId = String(process.env.GAIOP_RECEIVER_SSE_RELEASE_ID || '')
@@ -93,8 +94,8 @@ load_receiver_env() {
     while IFS= read -r assignment; do export "$assignment"; done <<< "$receiver_env"
   fi
 }
-receiver_url() { printf 'http://127.0.0.1:%s' "\${GAIOP_ALERT_RECEIVER_PORT:-19090}"; }
-receiver_header() { printf 'x-gaiop-alert-token: %s' "\${GAIOP_ALERT_RECEIVER_TOKEN:-}"; }
+receiver_url() { printf 'http://127.0.0.1:%s' "${shellDollar}{GAIOP_ALERT_RECEIVER_PORT:-19090}"; }
+receiver_header() { printf 'x-gaiop-alert-token: %s' "${shellDollar}{GAIOP_ALERT_RECEIVER_TOKEN:-}"; }
 health_check() {
   curl -fsS --max-time 5 -H "$(receiver_header)" "$(receiver_url)/health" | node -e "let body='';process.stdin.on('data',c=>body+=c);process.stdin.on('end',()=>{const value=JSON.parse(body);process.exit(value&&value.ok?0:1)})"
 }
@@ -139,14 +140,14 @@ mark PRECHECK
 test "$(userctl is-active "$service")" = active
 unit_exec=$(userctl show "$service" -p ExecStart --value)
 unit_workdir=$(userctl show "$service" -p WorkingDirectory --value)
-script_path=$(printf '%s\n' "$unit_exec" | grep -oE '/[^" ;]*/run_syslog_receiver\.js' | head -n 1)
-test -n "$script_path"
-target_root=\${script_path%/scripts/run_syslog_receiver.js}
+printf '%s\n' "$unit_exec" | grep -q 'openclaw-napm-syslog-receiver/scripts/run_syslog_receiver\.js'
+case "$unit_workdir" in /*) ;; *) exit 41 ;; esac
+target_root="$unit_workdir/skills/openclaw-napm-syslog-receiver"
 case "$target_root" in /*) ;; *) exit 41 ;; esac
 test -f "$target_root/scripts/run_syslog_receiver.js"
 test "$(stat -c '%U' "$target_root")" = "$service_user"
 load_receiver_env
-data_dir=\${GAIOP_ALERTS_DATA_DIR:-"$target_root/data"}
+data_dir=${shellDollar}{GAIOP_ALERTS_DATA_DIR:-"$target_root/data"}
 alerts_file="$data_dir/alerts.jsonl"
 test -f "$alerts_file"
 before_lines=$(wc -l < "$alerts_file" | tr -d '[:space:]')
@@ -161,9 +162,9 @@ printf 'BACKUP_CREATED\n'
 mark STAGE
 actual_sha=$(sha256sum -- "$archive" | awk '{print $1}')
 test "$actual_sha" = "$expected_sha"
-stage_root="\${target_root}.stage-$release_id"
-incoming_root="\${target_root}.incoming-$release_id"
-previous_root="\${target_root}.previous-$release_id"
+stage_root="${shellDollar}{target_root}.stage-$release_id"
+incoming_root="${shellDollar}{target_root}.incoming-$release_id"
+previous_root="${shellDollar}{target_root}.previous-$release_id"
 test ! -e "$stage_root" && test ! -e "$incoming_root" && test ! -e "$previous_root"
 runuser -u "$service_user" -- mkdir -p "$stage_root" "$incoming_root"
 runuser -u "$service_user" -- cp -a -- "$target_root/." "$stage_root/"

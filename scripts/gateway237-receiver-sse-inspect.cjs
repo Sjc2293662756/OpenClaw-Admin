@@ -1,6 +1,7 @@
 'use strict'
 
 const { Client } = require('ssh2')
+const shellDollar = '$'
 
 const connection = {
   host: String(process.env.GAIOP_RECEIVER_INSPECT_SSH_HOST || '').trim(),
@@ -19,11 +20,19 @@ exec_start=$(userctl show "$service" -p ExecStart --value)
 workdir=$(userctl show "$service" -p WorkingDirectory --value)
 state=$(userctl is-active "$service" || true)
 service_pid=$(userctl show "$service" -p MainPID --value)
-script_path=$(printf '%s\n' "$exec_start" | grep -oE '/[^" ;]*/run_syslog_receiver\.js' | head -n 1 || true)
-exec_is_receiver=$(test -n "$script_path" && printf yes || printf no)
-target_root=\${script_path%/scripts/run_syslog_receiver.js}
+exec_is_receiver=$(printf '%s\n' "$exec_start" | grep -q 'openclaw-napm-syslog-receiver/scripts/run_syslog_receiver\.js' && printf yes || printf no)
+target_root="$workdir/skills/openclaw-napm-syslog-receiver"
+script_path="$target_root/scripts/run_syslog_receiver.js"
+script_layout=$(case "$script_path" in
+  */skills/openclaw-napm-syslog-receiver/scripts/run_syslog_receiver.js) printf skill-layout ;;
+  */scripts/run_syslog_receiver.js) printf scripts-layout ;;
+  */run_syslog_receiver.js) printf root-layout ;;
+  *) printf unknown ;;
+esac)
 source_layout=$(test -f "$target_root/scripts/run_syslog_receiver.js" && test -f "$target_root/services/SyslogReceiverService.js" && printf yes || printf no)
 http_server_present=$(test -f "$target_root/services/ReceiverHttpServer.js" && printf yes || printf no)
+script_present=$(test -f "$target_root/scripts/run_syslog_receiver.js" && printf yes || printf no)
+owner_matches=$(test -n "$target_root" && test "$(stat -c '%U' "$target_root" 2>/dev/null || true)" = "$service_user" && printf yes || printf no)
 phase=ENVIRONMENT; printf 'PHASE_%s\n' "$phase"
 env_file=$(userctl show "$service" -p EnvironmentFiles --value 2>/dev/null | grep -oE '/[^ "[:space:]]+' | head -n 1 | tr -d '"' || true)
 env_source=file
@@ -37,8 +46,10 @@ else
   while IFS= read -r assignment; do export "$assignment"; done <<< "$receiver_env"
 fi
 listener_port=$(ss -ltnp 2>/dev/null | awk -v pid="$service_pid" '$0 ~ ("pid=" pid ",") { address=$4; sub(/^.*:/, "", address); if (address ~ /^[0-9]+$/) { print address; exit } }' || true)
-port=\${GAIOP_ALERT_RECEIVER_PORT:-\${listener_port:-19090}}
-header="x-gaiop-alert-token: \${GAIOP_ALERT_RECEIVER_TOKEN:-}"
+port=${shellDollar}{GAIOP_ALERT_RECEIVER_PORT:-${shellDollar}{listener_port:-19090}}
+header="x-gaiop-alert-token: ${shellDollar}{GAIOP_ALERT_RECEIVER_TOKEN:-}"
+data_dir=${shellDollar}{GAIOP_ALERTS_DATA_DIR:-"$target_root/data"}
+history_present=$(test -f "$data_dir/alerts.jsonl" && printf yes || printf no)
 phase=HEALTH; printf 'PHASE_%s\n' "$phase"
 health_ok=0; alerts_ok=0
 curl -fsS --max-time 5 -H "$header" "http://127.0.0.1:$port/health" | node -e "let b='';process.stdin.on('data',c=>b+=c);process.stdin.on('end',()=>process.exit(JSON.parse(b).ok?0:1))" && health_ok=1 || true
@@ -51,12 +62,18 @@ printf 'ACTIVE=%s\n' "$state"
 printf 'EXEC_RECEIVER=%s\n' "$exec_is_receiver"
 printf 'WORKDIR_MATCH=%s\n' "$(test "$workdir" = "$target_root" && printf yes || printf no)"
 printf 'SOURCE_LAYOUT=%s\n' "$source_layout"
+printf 'SCRIPT_LAYOUT=%s\n' "$script_layout"
 printf 'HTTP_SERVER_PRESENT=%s\n' "$http_server_present"
+printf 'SCRIPT_PRESENT=%s\n' "$script_present"
+printf 'OWNER_MATCH=%s\n' "$owner_matches"
 printf 'RUN_USER=%s\n' "$service_user"
+printf 'SCRIPT_PATH=%s\n' "$script_path"
+printf 'WORKDIR=%s\n' "$workdir"
 printf 'LISTENER=%s\n' "$listener"
 printf 'HEALTH=%s\n' "$health_ok"
 printf 'ALERTS=%s\n' "$alerts_ok"
 printf 'ENV_SOURCE=%s\n' "$env_source"
+printf 'HISTORY_PRESENT=%s\n' "$history_present"
 printf 'RELEASE_ARTIFACTS=%s\n' "$release_artifacts"
 printf 'MANAGED_BACKUP=%s\n' "$managed_backup"
 `
@@ -86,12 +103,18 @@ client.on('ready', async () => {
       execStartIsReceiver: value(output, 'EXEC_RECEIVER') === 'yes',
       workingDirectoryMatches: value(output, 'WORKDIR_MATCH') === 'yes',
       sourceLayoutPresent: value(output, 'SOURCE_LAYOUT') === 'yes',
+      scriptLayout: value(output, 'SCRIPT_LAYOUT'),
       httpServerPresent: value(output, 'HTTP_SERVER_PRESENT') === 'yes',
+      scriptPresent: value(output, 'SCRIPT_PRESENT') === 'yes',
+      targetOwnerMatches: value(output, 'OWNER_MATCH') === 'yes',
       runningUser: value(output, 'RUN_USER'),
+      scriptPath: value(output, 'SCRIPT_PATH'),
+      workingDirectory: value(output, 'WORKDIR'),
       listener: value(output, 'LISTENER'),
       health: value(output, 'HEALTH') === '1',
       alerts: value(output, 'ALERTS') === '1',
       environmentSource: value(output, 'ENV_SOURCE'),
+      historyPresent: value(output, 'HISTORY_PRESENT') === 'yes',
       releaseArtifacts: value(output, 'RELEASE_ARTIFACTS'),
       managedBackupMarker: value(output, 'MANAGED_BACKUP'),
     }
