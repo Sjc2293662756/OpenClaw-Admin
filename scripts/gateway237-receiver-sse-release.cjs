@@ -79,8 +79,10 @@ userctl() {
   runuser -u "$service_user" -- env XDG_RUNTIME_DIR="/run/user/$uid" systemctl --user "$@"
 }
 load_receiver_env() {
+  release_env_source=process
   env_file=$(userctl show "$service" -p EnvironmentFiles --value 2>/dev/null | grep -oE '/[^ "[:space:]]+' | head -n 1 | tr -d '"' || true)
   if test -n "$env_file" && test -f "$env_file"; then
+    release_env_source=file
     set -a
     # The environment is imported only into this protected shell to make
     # loopback health requests.  It is never printed or stored in the release.
@@ -195,6 +197,10 @@ test "$(userctl is-active "$service")" = active
 mark VERIFY
 printf 'VERIFY_HEALTH_BEGIN\n'
 load_receiver_env
+printf 'VERIFY_ENV_SOURCE=%s\n' "$release_env_source"
+printf 'VERIFY_SERVICE_ACTIVE=%s\n' "$(userctl is-active "$service" || true)"
+verify_health_http=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -H "$(receiver_header)" "$(receiver_url)/health" || true)
+printf 'VERIFY_HEALTH_HTTP=%s\n' "$verify_health_http"
 health_check
 printf 'VERIFY_HEALTH_OK\n'
 alerts_check
@@ -226,6 +232,8 @@ function summarize(result) {
     rollbackCompleted: /ROLLBACK_COMPLETE|ROLLBACK_RESTARTED_ORIGINAL/.test(output),
     failurePhase: result.ok ? null : (phases.at(-1) || 'UNKNOWN'),
     verificationStep: result.ok ? null : verificationStep,
+    verificationHealthHttp: result.ok ? null : (output.match(/^VERIFY_HEALTH_HTTP=([^\r\n]*)/m)?.[1] || null),
+    verificationServiceActive: result.ok ? null : (output.match(/^VERIFY_SERVICE_ACTIVE=([^\r\n]*)/m)?.[1] || null),
     status: result.ok ? 'receiver-sse-released-and-verified' : 'receiver-sse-release-failed-rolled-back',
   }
 }
