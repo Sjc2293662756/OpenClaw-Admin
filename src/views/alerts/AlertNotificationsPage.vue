@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, onMounted, ref } from 'vue'
+import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NDrawer, NDrawerContent, NEmpty, NInput, NInputNumber, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
 import { CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
@@ -10,6 +10,8 @@ import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/ti
 import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
 import { platformBranding } from '@/branding/platform'
+import { findAlertById, focusAlertId } from '@/alerts/focus'
+import { alertSeverityLabel, alertSeverityType, formatAlertTime } from '@/alerts/presentation'
 
 type Metric = { name: string; value: string; unit: string }
 type Alert = {
@@ -56,9 +58,9 @@ const pageSizeOptions = computed(() => [10, 20, 50, 100].map((value) => ({ label
 const resultLimitOptions = computed(() => [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: locale.value === 'zh-CN' ? '自定义 TOP' : 'Custom TOP', value: 'custom' }]))
 
 function authHeaders() { return { Authorization: `Bearer ${authStore.getToken() || ''}` } }
-function severityType(severity: string) { return ({ '紧急': 'error', '重大': 'warning', '轻微': 'default' } as Record<string, 'error' | 'warning' | 'default'>)[severity] || 'default' }
-function severityLabel(severity: string) { return ({ '紧急': text('紧急', 'Critical'), '重大': text('重大', 'Major'), '轻微': text('轻微', 'Minor') } as Record<string, string>)[severity] || severity }
-function formatTime(value: string | null) { return value ? new Date(value).toLocaleString(locale.value) : t('pages.gaiop.alerts.notRecorded') }
+function severityType(severity: string) { return alertSeverityType(severity) }
+function severityLabel(severity: string) { return alertSeverityLabel(severity, locale.value) }
+function formatTime(value: string | null) { return formatAlertTime(value, locale.value, t('pages.gaiop.alerts.notRecorded')) }
 function pad(value: number) { return String(value).padStart(2, '0') }
 function formatRangeTime(value: number) { const date = new Date(value); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}` }
 
@@ -241,6 +243,29 @@ async function loadAlerts() {
   } finally { loading.value = false }
 }
 
+async function focusAlertFromRoute() {
+  const id = focusAlertId(route.query.focusAlert)
+  if (!id) return
+  const existing = findAlertById(alerts.value, id)
+  if (existing) { selectedAlert.value = existing; return }
+  // Use the already protected alert query with its keyword capability. This is
+  // a one-shot location attempt, never a polling path and never a new API.
+  try {
+    const params = new URLSearchParams({ page: '1', pageSize: '100', maxResults: '100', keyword: id })
+    const response = await fetch(`/api/alerts?${params}`, { headers: authHeaders() })
+    const data = await response.json().catch(() => null)
+    if (!response.ok || !data?.ok) throw new Error('focus-unavailable')
+    const located = findAlertById<Alert>(Array.isArray(data.alerts) ? data.alerts as Alert[] : [], id)
+    if (located) {
+      selectedAlert.value = located
+      return
+    }
+    message.info(t('pages.gaiop.alerts.focusNotFound'))
+  } catch {
+    message.warning(t('pages.gaiop.alerts.focusUnavailable'))
+  }
+}
+
 function applyFilters() { page.value = 1; loadAlerts() }
 function applyTimeRange(range: TimeRange, preset: TimeRangePreset) {
   timePreset.value = preset
@@ -261,8 +286,11 @@ onMounted(async () => {
   const restored = restoreAlertListState()
   if (!restored) appliedRange.value = rangeForPreset('lastHour', serverNow.value)
   if (route.query.restoreAlertState === '1') void router.replace({ name: 'AlertNotifications', query: {} })
-  loadAlerts()
+  await loadAlerts()
+  await focusAlertFromRoute()
 })
+
+watch(() => route.query.focusAlert, () => { void focusAlertFromRoute() })
 </script>
 
 <template>

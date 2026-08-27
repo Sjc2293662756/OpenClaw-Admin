@@ -18,6 +18,12 @@ export type AlertRealtimeEvent = {
   payload: { id: string; [key: string]: unknown }
 }
 
+export type AlertDeliverySource = 'live' | 'compensation'
+export type AlertRealtimeItem = AlertRealtimeEvent & {
+  deliverySource: AlertDeliverySource
+  read: boolean
+}
+
 type AlertStreamState = {
   state: string
   code?: string
@@ -41,8 +47,10 @@ function validCursor(value: unknown): number | null {
 export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   const activeAccount = ref<string | null>(null)
   const lastCursor = ref<number | null>(null)
-  const recentEvents = ref<AlertRealtimeEvent[]>([])
+  const recentEvents = ref<AlertRealtimeItem[]>([])
   const unreadCount = ref(0)
+  const notificationQueue = ref<AlertRealtimeItem[]>([])
+  const messageCenterOpen = ref(false)
   const streamState = ref('idle')
   const gapState = ref<string | null>(null)
   const historyRefreshRequired = ref(false)
@@ -70,6 +78,8 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   function resetMemory({ preserveCursor = true } = {}) {
     recentEvents.value = []
     unreadCount.value = 0
+    notificationQueue.value = []
+    messageCenterOpen.value = false
     seenCursors.clear()
     seenIds.clear()
     streamState.value = 'idle'
@@ -120,8 +130,21 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
       saveCursor()
     }
     if (cursorSeen || idSeen) return false
-    recentEvents.value = [event, ...recentEvents.value].slice(0, RECENT_LIMIT)
+    const item: AlertRealtimeItem = {
+      ...event,
+      deliverySource: isCompensation ? 'compensation' : 'live',
+      read: false,
+    }
+    const nextEvents = [item, ...recentEvents.value].slice(0, RECENT_LIMIT)
+    const evictedUnread = recentEvents.value.slice(RECENT_LIMIT - 1).filter((entry) => !entry.read).length
+    recentEvents.value = nextEvents
     unreadCount.value += 1
+    if (evictedUnread) unreadCount.value = Math.max(0, unreadCount.value - evictedUnread)
+    // History recovery is intentionally visible only in the center. A recovery
+    // event also updates the center without competing with new-alert notices.
+    if (!isCompensation && event.action === 'triggered') {
+      notificationQueue.value = [...notificationQueue.value, item].slice(-RECENT_LIMIT)
+    }
     return true
   }
 
@@ -267,19 +290,37 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
 
   function markRead(cursor?: number) {
     if (cursor === undefined) unreadCount.value = 0
-    else if (recentEvents.value.some((event) => event.cursor === cursor)) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    else {
+      const item = recentEvents.value.find((event) => event.cursor === cursor)
+      if (item && !item.read) {
+        item.read = true
+        unreadCount.value = Math.max(0, unreadCount.value - 1)
+      }
+    }
+    if (cursor === undefined) recentEvents.value.forEach((event) => { event.read = true })
   }
 
   function remove(cursor: number) {
-    const existed = recentEvents.value.some((event) => event.cursor === cursor)
+    const removed = recentEvents.value.find((event) => event.cursor === cursor)
     recentEvents.value = recentEvents.value.filter((event) => event.cursor !== cursor)
-    if (existed) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    if (removed && !removed.read) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    notificationQueue.value = notificationQueue.value.filter((event) => event.cursor !== cursor)
   }
 
   function clear() {
     recentEvents.value = []
     unreadCount.value = 0
+    notificationQueue.value = []
   }
+
+  function dequeueNotification() {
+    const next = notificationQueue.value[0] || null
+    if (next) notificationQueue.value = notificationQueue.value.slice(1)
+    return next
+  }
+
+  function openMessageCenter() { messageCenterOpen.value = true }
+  function closeMessageCenter() { messageCenterOpen.value = false }
 
   function clearForLogout() {
     cancelCompensation()
@@ -288,9 +329,9 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   }
 
   return {
-    activeAccount, lastCursor, recentEvents, unreadCount, streamState, gapState,
+    activeAccount, lastCursor, recentEvents, unreadCount, notificationQueue, messageCenterOpen, streamState, gapState,
     historyRefreshRequired, lastErrorCode, hasActiveGap,
     activate, start, stop, addEvent, handleStreamState, compensate,
-    markRead, remove, clear, clearForLogout,
+    markRead, remove, clear, dequeueNotification, openMessageCenter, closeMessageCenter, clearForLogout,
   }
 })

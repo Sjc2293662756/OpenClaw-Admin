@@ -18,6 +18,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useAlertRealtimeStore } from '@/stores/alert-realtime'
 import { createGlobalSseLifecycle } from '@/realtime/global-sse-lifecycle'
+import AlertNotificationHost from '@/components/alerts/AlertNotificationHost.vue'
 
 const { theme, mode } = useTheme();
 const route = useRoute();
@@ -90,9 +91,10 @@ watch(
     :locale="naiveLocale"
     :date-locale="naiveDateLocale"
   >
-    <NNotificationProvider>
+    <NNotificationProvider :max="3">
       <NMessageProvider>
         <NDialogProvider>
+          <AlertNotificationHost />
           <RouterView />
         </NDialogProvider>
       </NMessageProvider>

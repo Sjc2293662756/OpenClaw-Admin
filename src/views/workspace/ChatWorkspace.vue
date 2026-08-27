@@ -29,6 +29,7 @@ import type { Session } from '@/api/types'
 import { canAccessPage, MANAGEMENT_ACCESS_DENIED_NOTICE } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
 import { platformBranding, usesDefaultPlatformBranding } from '@/branding/platform'
+import AlertNotificationEntry from '@/components/alerts/AlertNotificationEntry.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -303,6 +304,7 @@ onUnmounted(() => {
           <span v-if="!ready" class="workspace-status">{{ t('pages.gaiop.workspace.connecting') }}</span>
         </div>
         <div class="workspace-header-actions">
+          <AlertNotificationEntry />
           <NButton v-if="alertReturnAvailable" secondary @click="returnToAlertNotifications">
             <template #icon><NIcon :component="ArrowBackOutline" /></template>
             {{ t('pages.gaiop.workspace.backToAlerts') }}

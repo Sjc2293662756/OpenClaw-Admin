@@ -10,6 +10,7 @@ import { useLocaleStore } from '@/stores/locale'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useWideModeStore } from '@/stores/wideMode'
 import ConnectionStatus from '@/components/common/ConnectionStatus.vue'
+import AlertNotificationEntry from '@/components/alerts/AlertNotificationEntry.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -56,6 +57,7 @@ async function handleLogout() {
         {{ t('routes.chat') }}
       </NButton>
       <ConnectionStatus />
+      <AlertNotificationEntry />
 
       <NTooltip>
         <template #trigger>

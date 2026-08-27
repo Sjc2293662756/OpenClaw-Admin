@@ -50,6 +50,32 @@ describe('alert realtime store', () => {
     expect(store.unreadCount).toBe(3)
   })
 
+  it('only queues one live triggered notification and keeps recovery and compensation in the center', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.addEvent(event(1, 'live-triggered'))
+    store.addEvent(event(1, 'duplicate'))
+    store.addEvent(event(2, 'live-recovered'))
+    store.addEvent(event(3, 'compensated'), { compensationAfter: 2 })
+    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([1])
+    expect(store.recentEvents.map((item) => item.deliverySource)).toEqual(['compensation', 'live', 'live'])
+    expect(store.dequeueNotification()?.cursor).toBe(1)
+    expect(store.dequeueNotification()).toBeNull()
+  })
+
+  it('marks an individual event read idempotently and maintains a bounded unread total', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.addEvent(event(1))
+    store.addEvent(event(2))
+    store.markRead(1)
+    store.markRead(1)
+    expect(store.unreadCount).toBe(1)
+    store.markRead()
+    expect(store.unreadCount).toBe(0)
+    expect(store.recentEvents.every((item) => item.read)).toBe(true)
+  })
+
   it('bounds recent and seen structures without re-admitting cursors below the high-water mark', () => {
     const store = useAlertRealtimeStore()
     store.activate({ id: 'one', username: 'one', role: 'admin' })

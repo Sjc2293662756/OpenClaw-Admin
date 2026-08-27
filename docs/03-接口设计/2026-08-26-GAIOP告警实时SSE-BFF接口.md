@@ -3,7 +3,7 @@
 | 属性 | 内容 |
 |---|---|
 | 日期 | 2026-08-26 |
- | 状态 | 阶段四浏览器全局消费与断线补偿已实现，尚未部署 |
+ | 状态 | 阶段五告警提示、消息中心与详情定位已实现，尚未部署 |
 | 上游契约 | Receiver `gaiop.alert-event.v1` / `GET /events` |
 | 浏览器入口 | 既有 Bearer 认证 `GET /api/events` |
 | 代码 | `server/lib/alert-receiver-stream.js`、`server/lib/alert-stream-state.js`、`server/lib/sse-access.js` |
@@ -173,3 +173,12 @@ Gateway `type:event` 继续执行既有 `sessionKey` 归属隔离；`gatewayStat
 普通实时事件只能严格推进该账号的 cursor 高水位，已淘汰的内存去重键不会让陈旧 cursor 再次进入通知队列。补偿批次单独保留其 `afterSequence`：若 SSE 在补偿期间先到达更大 cursor，补偿仍可接收介于批次下界和该高水位之间、尚未收到的事件；同 cursor 或同业务 ID 则不重复通知。补偿 fetch 使用 AbortController、账号快照和运行代次，退出、账号切换或应用卸载时立即失效，任何晚到响应均不得写入新会话。浏览器默认无限退避重连（上限 30 秒）；显式断开和 401 仍会停止重试。
 
 `alertStreamState` 额外可带 `latestCursor` 与 `lastProcessedCursor`，均为非敏感序号。`gapState` 或 `historyRefreshRequired` 一旦出现，后续 `connected` 不得自动清除；阶段五可从全局 `alertRealtime` Store 读取 `recentEvents`（150 条）、`unreadCount`、`lastCursor`、`streamState`、`gapState`、`historyRefreshRequired` 与 `lastErrorCode`，再调用 `markRead`、`remove` 或 `clear` 实现弹窗/消息面板。
+
+## 11. 阶段五 UI 消费规则
+
+阶段五在应用根节点的现有 `NNotificationProvider` 内持久挂载告警控制器，所有路由和两个工作台入口共享同一 `alertRealtime` Store。它不会建立额外 SSE、WebSocket 或轮询。
+
+- Store 为每个内存事件标记 `deliverySource=live|compensation` 和单条 `read` 状态；完整事件、阅读状态和提示队列都不会写入 localStorage。
+- 只有本会话的 live `triggered` 事件可进入有界提示队列；首次基线、compensation 及 `recovered` 只进入消息中心。每个 cursor 因 Store 去重和一次性出队最多显示一次。
+- 提示并发上限为 3；轻微 5 秒、重大 12 秒、紧急手动关闭。详情动作固定跳转 `/alerts?focusAlert=<id>`，只携带业务 ID。
+- `alertStreamState`、gap 和 `historyRefreshRequired` 在消息中心显示轻量状态条，不以弹窗替代，也不把 `connected` 解释成断档已补齐。
