@@ -201,7 +201,13 @@ printf 'VERIFY_ENV_SOURCE=%s\n' "$release_env_source"
 printf 'VERIFY_SERVICE_ACTIVE=%s\n' "$(userctl is-active "$service" || true)"
 verify_health_http=$(curl -sS --max-time 5 -o /dev/null -w '%{http_code}' -H "$(receiver_header)" "$(receiver_url)/health" || true)
 printf 'VERIFY_HEALTH_HTTP=%s\n' "$verify_health_http"
-health_check
+verify_health_ready=0
+for _ in $(seq 1 30); do
+  if health_check; then verify_health_ready=1; break; fi
+  sleep 1
+done
+printf 'VERIFY_HEALTH_READY=%s\n' "$verify_health_ready"
+test "$verify_health_ready" = 1
 printf 'VERIFY_HEALTH_OK\n'
 alerts_check
 printf 'VERIFY_ALERTS_OK\n'
