@@ -193,14 +193,19 @@ for _ in $(seq 1 45); do test "$(userctl is-active "$service" || true)" = active
 test "$(userctl is-active "$service")" = active
 
 mark VERIFY
+printf 'VERIFY_HEALTH_BEGIN\n'
 load_receiver_env
 health_check
+printf 'VERIFY_HEALTH_OK\n'
 alerts_check
+printf 'VERIFY_ALERTS_OK\n'
 events_check
+printf 'VERIFY_EVENTS_OK\n'
 after_lines=$(wc -l < "$alerts_file" | tr -d '[:space:]')
 after_sequence=$(stream_max "$alerts_file")
 test "$after_lines" -ge "$before_lines"
 test "$after_sequence" -ge "$before_sequence"
+printf 'VERIFY_HISTORY_OK\n'
 rm -rf -- "$previous_root"
 printf 'RELEASE_COMPLETE\n'
 printf 'RELEASE_ID=%s\n' "$release_id"
@@ -212,6 +217,7 @@ printf 'HISTORY_PRESERVED\n'
 function summarize(result) {
   const output = String(result.output || '')
   const phases = Array.from(output.matchAll(/PHASE_([A-Z_]+)/g), (match) => match[1])
+  const verificationStep = Array.from(output.matchAll(/VERIFY_([A-Z_]+)_(?:BEGIN|OK)/g), (match) => match[1]).at(-1) || null
   return {
     completed: result.ok && /RELEASE_COMPLETE/.test(output),
     releaseId,
@@ -219,6 +225,7 @@ function summarize(result) {
     historyPreserved: /HISTORY_PRESERVED/.test(output),
     rollbackCompleted: /ROLLBACK_COMPLETE|ROLLBACK_RESTARTED_ORIGINAL/.test(output),
     failurePhase: result.ok ? null : (phases.at(-1) || 'UNKNOWN'),
+    verificationStep: result.ok ? null : verificationStep,
     status: result.ok ? 'receiver-sse-released-and-verified' : 'receiver-sse-release-failed-rolled-back',
   }
 }
