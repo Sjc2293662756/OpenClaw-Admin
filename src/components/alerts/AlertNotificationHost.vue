@@ -76,7 +76,6 @@ function notifyNext() {
   const item = alerts.dequeueNotification()
   if (!item) return
   const payload = item.payload as Record<string, unknown>
-  playAlertNotificationSound()
   const notice = notification.create({
     title: `${alertSeverityLabel(String(payload.severity || ''), locale.value)} · ${t('pages.gaiop.alertCenter.triggered')}`,
     content: notificationDescription(item),
@@ -98,10 +97,16 @@ watch(() => alerts.alertDetailOpen, (open) => {
 })
 watch(() => alerts.activeAccount, () => destroyAllActiveNotifications(activeNotifications))
 watch(() => alerts.recentEvents[0]?.cursor, (cursor) => {
-  if (!alerts.messageCenterOpen || cursor === undefined) return
-  freshCursor.value = cursor
-  if (freshTimer) clearTimeout(freshTimer)
-  freshTimer = setTimeout(() => { freshCursor.value = null }, 4_000)
+  const newest = alerts.recentEvents[0]
+  if (!newest || cursor === undefined) return
+  // Audio is the one intentionally global acknowledgement: an authenticated
+  // user hears every online triggered alert even when visual notices are quiet.
+  if (alerts.activeAccount && newest.deliverySource === 'live' && newest.action === 'triggered') playAlertNotificationSound()
+  if (alerts.messageCenterOpen) {
+    freshCursor.value = cursor
+    if (freshTimer) clearTimeout(freshTimer)
+    freshTimer = setTimeout(() => { freshCursor.value = null }, 4_000)
+  }
 })
 onUnmounted(() => {
   if (freshTimer) clearTimeout(freshTimer)

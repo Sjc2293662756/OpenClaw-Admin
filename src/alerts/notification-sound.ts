@@ -18,8 +18,8 @@ function getAudioContext() {
   return audioContext
 }
 
-// A single, short sine chime is intentionally shared by every severity: it is
-// recognisable without being distracting or creating a second alert taxonomy.
+// A single, clear chime is intentionally shared by every severity: it remains
+// recognisable as an alert without creating a second severity taxonomy in sound.
 export function playAlertNotificationSound() {
   const context = getAudioContext()
   if (!context || context.state !== 'running') return false
@@ -27,11 +27,11 @@ export function playAlertNotificationSound() {
     const oscillator = context.createOscillator()
     const gain = context.createGain()
     const startedAt = context.currentTime
-    const endedAt = startedAt + .16
+    const endedAt = startedAt + .28
     oscillator.type = 'sine'
     oscillator.frequency.setValueAtTime(880, startedAt)
     gain.gain.setValueAtTime(.0001, startedAt)
-    gain.gain.exponentialRampToValueAtTime(.1, startedAt + .018)
+    gain.gain.exponentialRampToValueAtTime(.22, startedAt + .022)
     gain.gain.exponentialRampToValueAtTime(.0001, endedAt)
     oscillator.connect(gain)
     gain.connect(context.destination)
