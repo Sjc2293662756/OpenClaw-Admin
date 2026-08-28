@@ -18,25 +18,31 @@ function getAudioContext() {
   return audioContext
 }
 
-// A single, clear chime is intentionally shared by every severity: it remains
-// recognisable as an alert without creating a second severity taxonomy in sound.
+// A standard two-pulse warning is shared by every severity. It is deliberately
+// non-melodic, so it reads as an alert rather than an ordinary chat message.
 export function playAlertNotificationSound() {
   const context = getAudioContext()
   if (!context || context.state !== 'running') return false
   try {
-    const oscillator = context.createOscillator()
-    const gain = context.createGain()
     const startedAt = context.currentTime
-    const endedAt = startedAt + .28
-    oscillator.type = 'sine'
-    oscillator.frequency.setValueAtTime(880, startedAt)
-    gain.gain.setValueAtTime(.0001, startedAt)
-    gain.gain.exponentialRampToValueAtTime(.22, startedAt + .022)
-    gain.gain.exponentialRampToValueAtTime(.0001, endedAt)
-    oscillator.connect(gain)
-    gain.connect(context.destination)
-    oscillator.start(startedAt)
-    oscillator.stop(endedAt + .02)
+    ;[
+      { offset: 0 },
+      { offset: .16 },
+    ].forEach((note) => {
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      const noteStart = startedAt + note.offset
+      const noteEnd = noteStart + .1
+      oscillator.type = 'square'
+      oscillator.frequency.setValueAtTime(880, noteStart)
+      gain.gain.setValueAtTime(.0001, noteStart)
+      gain.gain.exponentialRampToValueAtTime(.12, noteStart + .012)
+      gain.gain.exponentialRampToValueAtTime(.0001, noteEnd)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(noteStart)
+      oscillator.stop(noteEnd + .02)
+    })
     return true
   } catch {
     return false
