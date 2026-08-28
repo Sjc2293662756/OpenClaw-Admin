@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NEmpty, NInput, NInputNumber, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
+import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NDrawer, NDrawerContent, NEmpty, NInput, NInputNumber, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
 import { CloseOutline, CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -67,6 +67,7 @@ function authHeaders() { return { Authorization: `Bearer ${authStore.getToken() 
 function severityType(severity: string) { return alertSeverityType(severity) }
 function severityLabel(severity: string) { return alertSeverityLabel(severity, locale.value) }
 function formatTime(value: string | null) { return formatAlertTime(value, locale.value, t('pages.gaiop.alerts.notRecorded')) }
+function updateDetailDrawer(show: boolean) { if (!show) selectedAlert.value = null }
 function pad(value: number) { return String(value).padStart(2, '0') }
 function formatRangeTime(value: number) { const date = new Date(value); return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}` }
 
@@ -378,7 +379,7 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
 </script>
 
 <template>
-  <section class="alerts-page" :class="{ 'alerts-page--with-detail': selectedAlert }">
+  <section class="alerts-page">
     <NCard :title="t('pages.gaiop.alerts.title')" class="app-card alerts-notification-card">
       <template #header-extra>
         <NSpace class="time-toolbar" align="center" wrap :size="8">
@@ -432,13 +433,25 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
         </NSpace>
       </div>
     </NCard>
-    <NCard v-if="selectedAlert" :title="text('告警详情', 'Alert details')" class="app-card alert-detail-card">
-      <template #header-extra>
-        <NSpace :size="4" align="center">
-          <NButton v-if="focusState === 'outside-results'" size="small" @click="resetFiltersAndLocate">{{ t('pages.gaiop.alerts.resetFiltersAndLocate') }}</NButton>
-          <NButton quaternary circle size="small" :aria-label="t('common.close')" @click="selectedAlert = null"><template #icon><CloseOutline /></template></NButton>
-        </NSpace>
-      </template>
+    <NDrawer
+      :show="Boolean(selectedAlert)"
+      width="min(480px, 94vw)"
+      placement="right"
+      :show-mask="false"
+      :block-scroll="false"
+      :trap-focus="false"
+      @update:show="updateDetailDrawer"
+    >
+      <NDrawerContent v-if="selectedAlert" class="alert-detail-drawer" :native-scrollbar="false">
+        <template #header>
+          <div class="alert-detail-drawer__header">
+            <NText strong>{{ text('告警详情', 'Alert details') }}</NText>
+            <NSpace :size="4" align="center">
+              <NButton v-if="focusState === 'outside-results'" size="small" @click="resetFiltersAndLocate">{{ t('pages.gaiop.alerts.resetFiltersAndLocate') }}</NButton>
+              <NButton quaternary circle size="small" :aria-label="t('common.close')" @click="selectedAlert = null"><template #icon><CloseOutline /></template></NButton>
+            </NSpace>
+          </div>
+        </template>
           <NDescriptions label-placement="left" :column="1" bordered>
             <NDescriptionsItem :label="text('告警名称', 'Alert name')">{{ selectedAlert.name }}</NDescriptionsItem>
             <NDescriptionsItem :label="text('严重级别', 'Severity')"><NTag :type="severityType(selectedAlert.severity)" :bordered="false">{{ severityLabel(selectedAlert.severity) }}</NTag></NDescriptionsItem>
@@ -474,13 +487,13 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
               {{ text('分析告警', 'Analyze alert') }}
             </NButton>
           </div>
-    </NCard>
+      </NDrawerContent>
+    </NDrawer>
   </section>
 </template>
 
 <style scoped>
 .alerts-page { display: grid; gap: 16px; }
-.alerts-page--with-detail { grid-template-columns: minmax(0, 1fr) minmax(360px, 430px); align-items: start; }
 .alerts-notification-card { min-width: 0; }
 .time-toolbar { justify-content: flex-end; }
 .trigger-condition { display: block; line-height: 1.7; white-space: pre-wrap; }
@@ -490,7 +503,7 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
 .filter-main { min-width: 0; }
 .display-controls { justify-content: flex-end; }
 .alerts-list-column { min-width: 0; }
-.alert-detail-card { min-width: 0; max-height: calc(100vh - 160px); overflow: auto; }
+.alert-detail-drawer__header { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; }
   :deep(.alert-row--selected > td) { background: color-mix(in srgb, var(--primary-color) 9%, var(--card-color, #fff)); }
   :deep(.alert-row--focused > td) { background: color-mix(in srgb, #f4c430 24%, var(--card-color, #fff)) !important; transition: background .55s ease; }
   :deep(.alerts-data-table .alert-status-column) { padding-inline: 12px !important; white-space: nowrap; }
@@ -499,8 +512,6 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
 @media (max-width: 1320px) {
   .filters { align-items: flex-start; flex-direction: column; }
   .display-controls { justify-content: flex-start; }
-  .alerts-page--with-detail { grid-template-columns: 1fr; }
-  .alert-detail-card { max-height: none; }
 }
 @media (max-width: 720px) {
   .time-toolbar { max-width: 100%; }
