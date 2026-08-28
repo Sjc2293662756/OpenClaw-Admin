@@ -44,7 +44,7 @@ export const MANAGEMENT_ACCESS_DENIED_NOTICE = 'management-access-denied'
 
 export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   dashboard: { moduleName: '仪表盘', roles: NON_BASIC_ROLES },
-  alerts: { moduleName: '告警通知', roles: NON_BASIC_ROLES },
+  alerts: { moduleName: '告警记录', roles: NON_BASIC_ROLES },
   chat: { moduleName: '对话工作台', roles: ALL_ROLES },
   sessions: { moduleName: '会话管理', roles: NON_BASIC_ROLES },
   reports: { moduleName: '报告文件管理', roles: NON_BASIC_ROLES },

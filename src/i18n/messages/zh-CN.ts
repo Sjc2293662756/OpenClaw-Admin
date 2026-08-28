@@ -27,7 +27,7 @@ export default {
     remoteDesktop: '远程桌面',
     backup: '数据备份',
     userManagement: '账户管理',
-    alerts: '告警通知',
+    alerts: '告警记录',
     reports: '报告文件管理',
     auditLogs: '审计信息',
     accessDenied: '无访问权限',
@@ -3511,7 +3511,7 @@ export default {
         credentialsRequired: '请输入账户名和密码。', connectionTimeout: '服务连接超时，请稍后重试。', failed: '登录失败，请稍后重试。',
       },
       workspace: {
-        brand: platformBranding.productShortZh, newChat: '开始新对话', history: '历史会话', refreshHistory: '刷新历史会话', noHistory: '暂无历史会话', delete: '删除', cancel: '取消', deleteSession: '删除会话', deleteConfirm: '删除后无法恢复该会话，是否继续？', sessionDeleted: '会话已删除', deleteFailed: '删除会话失败，请稍后重试', userFallback: `${platformBranding.productCode} 用户`, changePassword: '修改密码', adminConsole: '管理控制台', logout: '退出登录', caption: platformBranding.productFullZh, connecting: '正在连接服务…', backToAlerts: '返回告警通知', adminConsoleHint: '查看平台配置、运行概览和管理功能', managementAccessDenied: '当前账户没有管理权限，已为你保留在对话工作台。', managementAccessDeniedConfirm: '我知道了', serviceUnavailable: `${platformBranding.productCode} 智能运维服务暂不可用`, reconnecting: `正在重新连接 ${platformBranding.productCode} 智能运维服务`, connectingService: `正在连接 ${platformBranding.productCode} 智能运维服务`, reconnect: '重新连接',
+        brand: platformBranding.productShortZh, newChat: '开始新对话', history: '历史会话', refreshHistory: '刷新历史会话', noHistory: '暂无历史会话', delete: '删除', cancel: '取消', deleteSession: '删除会话', deleteConfirm: '删除后无法恢复该会话，是否继续？', sessionDeleted: '会话已删除', deleteFailed: '删除会话失败，请稍后重试', userFallback: `${platformBranding.productCode} 用户`, changePassword: '修改密码', adminConsole: '管理控制台', logout: '退出登录', caption: platformBranding.productFullZh, connecting: '正在连接服务…', backToAlerts: '返回告警记录', adminConsoleHint: '查看平台配置、运行概览和管理功能', managementAccessDenied: '当前账户没有管理权限，已为你保留在对话工作台。', managementAccessDeniedConfirm: '我知道了', serviceUnavailable: `${platformBranding.productCode} 智能运维服务暂不可用`, reconnecting: `正在重新连接 ${platformBranding.productCode} 智能运维服务`, connectingService: `正在连接 ${platformBranding.productCode} 智能运维服务`, reconnect: '重新连接',
       },
       users: {
         title: '账户管理', list: '用户列表', create: '添加用户', edit: '编辑用户', password: '修改我的密码', refresh: '刷新', search: '搜索用户名或描述', allRoles: '全部角色', allStatuses: '全部状态', empty: '暂无用户',
@@ -3528,7 +3528,7 @@ export default {
         back: '返回高级配置', serviceConfig: `${platformBranding.productCode} 服务配置`, connection: `${platformBranding.productCode} 服务连接`, connectionDescription: '维护服务接入地址、访问令牌和当前连接状态。', connectionConfig: '服务接入配置', endpoint: '服务接入地址', token: '服务访问令牌', tokenConfigured: '已配置；留空保持不变', tokenRequired: '请输入服务访问令牌', saveReconnect: '保存并重新连接', currentStatus: '当前连接状态', refreshStatus: '刷新状态', connected: '已连接', disconnected: '未连接', configured: '已配置', notConfigured: '未配置', loadFailed: `读取 ${platformBranding.productCode} 服务配置失败`, saveFailed: `保存 ${platformBranding.productCode} 服务配置失败`, saveSuccess: '已保存，并已发起服务重新连接',
       },
       alerts: {
-        title: '告警通知', refresh: '刷新', export: '导出 Excel', details: '详情', empty: '当前条件暂无告警记录',
+        title: '告警记录', refresh: '刷新', export: '导出 Excel', details: '详情', empty: '当前条件暂无告警记录',
         time: '告警时间', severity: '严重级别', name: '告警名称', category: '告警类型', source: '来源', status: '状态', actions: '操作',
         allSeverity: '告警级别：全部', allCategory: '全部告警类型', triggered: '触发中', restored: '已恢复', notRecorded: '未记录',
         exportEmpty: '当前页没有可导出的告警记录', exportSuccess: '已导出当前页 {count} 条记录', exportFailed: '导出 Excel 失败', focusNotFound: '未找到该告警；它可能已过期或当前不可查询。', focusUnavailable: '暂时无法定位该告警详情；当前页面仍可正常使用。', resetFiltersAndLocate: '重置筛选并定位', analysisNumberUnavailable: '未记录权威告警编号，暂时无法生成分析指令。',

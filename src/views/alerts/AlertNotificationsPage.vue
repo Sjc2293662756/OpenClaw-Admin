@@ -91,9 +91,9 @@ const metricColumns = computed<DataTableColumns<Metric>>(() => [{ title: locale.
 const columns = computed<DataTableColumns<Alert>>(() => [
   { title: t('pages.gaiop.alerts.time'), key: 'occurredAt', width: 176, render: (row) => formatTime(row.occurredAt) },
   { title: t('pages.gaiop.alerts.severity'), key: 'severity', width: 100, render: (row) => h(NTag, { type: severityType(row.severity), bordered: false }, { default: () => severityLabel(row.severity) }) },
-  { title: t('pages.gaiop.alerts.name'), key: 'name', width: 280, ellipsis: { tooltip: true } },
-  { title: t('pages.gaiop.alerts.category'), key: 'categoryLabel', width: 160, ellipsis: { tooltip: true }, render: (row) => row.categoryLabel || row.category },
-  { title: t('pages.gaiop.alerts.source'), key: 'sourceHost', width: 138, ellipsis: { tooltip: true } },
+  { title: t('pages.gaiop.alerts.name'), key: 'name', minWidth: 280, ellipsis: { tooltip: true } },
+  { title: t('pages.gaiop.alerts.category'), key: 'categoryLabel', minWidth: 160, ellipsis: { tooltip: true }, render: (row) => row.categoryLabel || row.category },
+  { title: t('pages.gaiop.alerts.source'), key: 'sourceHost', minWidth: 138, ellipsis: { tooltip: true } },
   { title: t('pages.gaiop.alerts.status'), key: 'restored', width: 108, className: 'alert-status-column', render: (row) => h(NTag, { type: row.restored ? 'success' : 'warning', bordered: false }, { default: () => row.restored ? t('pages.gaiop.alerts.restored') : t('pages.gaiop.alerts.triggered') }) },
   { title: t('pages.gaiop.alerts.actions'), key: 'actions', width: 104, className: 'alert-actions-column', render: (row) => h(NButton, { size: 'small', class: 'alert-details-button', onClick: (event: MouseEvent) => { event.stopPropagation(); selectAlert(row) } }, { default: () => t('pages.gaiop.alerts.details') }) },
 ])
