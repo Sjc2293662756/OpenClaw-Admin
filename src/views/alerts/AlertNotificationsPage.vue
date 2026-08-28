@@ -249,7 +249,7 @@ function selectAlert(alert: Alert) {
 function rowProps(row: Alert) {
   return {
     class: [selectedAlert.value?.id === row.id ? 'alert-row--selected' : '', focusedRowId.value === row.id ? 'alert-row--focused' : ''].filter(Boolean).join(' '),
-    onClick: () => selectAlert(row),
+    onDblclick: () => selectAlert(row),
   }
 }
 
