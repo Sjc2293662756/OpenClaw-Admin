@@ -18,27 +18,25 @@ function getAudioContext() {
   return audioContext
 }
 
-// A high-low alternating warning is shared by every severity. It is deliberately
-// non-melodic, so it reads as an alert rather than an ordinary chat message.
+// A clear high-low "ding-dong" is shared by every severity. It is short enough
+// for frequent use while remaining distinct from ordinary chat activity.
 export function playAlertNotificationSound() {
   const context = getAudioContext()
   if (!context || context.state !== 'running') return false
   try {
     const startedAt = context.currentTime
     ;[
-      { frequency: 880, offset: 0 },
-      { frequency: 660, offset: .12 },
-      { frequency: 880, offset: .24 },
-      { frequency: 660, offset: .36 },
+      { frequency: 1047, offset: 0, duration: .16 },
+      { frequency: 784, offset: .17, duration: .24 },
     ].forEach((note) => {
       const oscillator = context.createOscillator()
       const gain = context.createGain()
       const noteStart = startedAt + note.offset
-      const noteEnd = noteStart + .1
-      oscillator.type = 'square'
+      const noteEnd = noteStart + note.duration
+      oscillator.type = 'triangle'
       oscillator.frequency.setValueAtTime(note.frequency, noteStart)
       gain.gain.setValueAtTime(.0001, noteStart)
-      gain.gain.exponentialRampToValueAtTime(.12, noteStart + .012)
+      gain.gain.exponentialRampToValueAtTime(.15, noteStart + .018)
       gain.gain.exponentialRampToValueAtTime(.0001, noteEnd)
       oscillator.connect(gain)
       gain.connect(context.destination)
