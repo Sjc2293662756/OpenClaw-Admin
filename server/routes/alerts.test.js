@@ -140,3 +140,28 @@ test('alert list reports an unavailable formal receiver instead of falling back 
     context.server.close()
   }
 })
+
+test('exact locate uses an internal business ID without changing keyword semantics and returns its chronological page', async () => {
+  let receivedFilters = null
+  const context = await startTestServer(async (_env, filters) => {
+    receivedFilters = filters
+    return {
+      alerts: Array.from({ length: 12 }, (_item, index) => ({
+        id: index === 1 ? 'target-internal-id' : `alert-${index}`,
+        occurredAt: `2026-08-27T${String(index).padStart(2, '0')}:00:00.000Z`,
+        severity: '重大', category: 'appAlerts', name: `alert-${index}`, metrics: [],
+      })),
+      availableCount: 12,
+      hasMore: false,
+    }
+  })
+  try {
+    const response = await fetch(`${context.baseUrl}?locateId=target-internal-id&pageSize=2&maxResults=2`)
+    const payload = await response.json()
+    assert.equal(response.status, 200)
+    assert.deepEqual(receivedFilters, {})
+    assert.equal(payload.pagination.page, 2)
+    assert.equal(payload.pagination.maxResults, 12)
+    assert.equal(payload.alerts[0].id, 'target-internal-id')
+  } finally { context.server.close() }
+})

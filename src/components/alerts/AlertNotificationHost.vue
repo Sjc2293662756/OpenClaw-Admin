@@ -25,6 +25,10 @@ const severityOptions = computed(() => [
 ])
 const filteredEvents = computed(() => alerts.recentEvents.filter((item) => severityFilter.value === '__all__'
   || String(item.payload.severity || '') === severityFilter.value))
+const selectedSeverity = computed(() => severityFilter.value === '__all__' ? null : severityFilter.value)
+const filteredUnreadCount = computed(() => filteredEvents.value.filter((item) => !item.read).length)
+const markAllLabel = computed(() => selectedSeverity.value === null ? t('pages.gaiop.alertCenter.markAllRead') : t('pages.gaiop.alertCenter.markFilteredRead'))
+const clearLabel = computed(() => selectedSeverity.value === null ? t('pages.gaiop.alertCenter.clear') : t('pages.gaiop.alertCenter.clearFiltered'))
 
 function notRecorded() { return t('pages.gaiop.alerts.notRecorded') }
 function showDetails(item: AlertRealtimeItem) {
@@ -42,6 +46,29 @@ function notificationDescription(item: AlertRealtimeItem) {
   const payload = item.payload as Record<string, unknown>
   return `${alertSummary(payload, notRecorded())} · ${alertSource(payload, notRecorded())} · ${formatAlertTime(payload.occurredAt, locale.value, notRecorded())}`
 }
+
+function briefFields(item: AlertRealtimeItem) {
+  const payload = item.payload as Record<string, unknown>
+  const fields: Array<{ label: string; value: string }> = []
+  const add = (label: string, value: unknown) => {
+    const text = typeof value === 'string' ? value.trim() : String(value || '').trim()
+    if (text) fields.push({ label, value: text })
+  }
+  add(t('pages.gaiop.alertCenter.alertType'), payload.categoryLabel || payload.category)
+  add(t('pages.gaiop.alertCenter.alertNumber'), payload.alertNumber)
+  const metrics = Array.isArray(payload.metrics) ? payload.metrics
+    .map((metric) => {
+      const entry = metric as Record<string, unknown>
+      return [entry.name, entry.value, entry.unit].map((value) => String(value || '').trim()).filter(Boolean).join(' ')
+    }).filter(Boolean).join('；') : ''
+  add(t('pages.gaiop.alertCenter.triggeredMetrics'), metrics)
+  add(t('pages.gaiop.alertCenter.triggerCondition'), payload.triggerCondition)
+  add(t('pages.gaiop.alertCenter.description'), payload.description)
+  return fields
+}
+
+function markFilteredRead() { alerts.markReadBySeverity(selectedSeverity.value) }
+function clearFiltered() { alerts.clearBySeverity(selectedSeverity.value) }
 
 function notifyNext() {
   if (alerts.messageCenterOpen) return
@@ -76,7 +103,10 @@ onUnmounted(() => {
   destroyAllActiveNotifications(activeNotifications)
 })
 
-function toggleExpanded(cursor: number) { detailCursor.value = detailCursor.value === cursor ? null : cursor }
+function toggleExpanded(item: AlertRealtimeItem) {
+  alerts.markRead(item.cursor)
+  detailCursor.value = detailCursor.value === item.cursor ? null : item.cursor
+}
 function isExpanded(cursor: number) { return detailCursor.value === cursor }
 function streamText() {
   if (alerts.hasActiveGap) return t('pages.gaiop.alertCenter.historyRefreshRequired')
@@ -89,8 +119,8 @@ function streamText() {
   <NDrawer v-model:show="alerts.messageCenterOpen" placement="right" :width="420">
     <NDrawerContent :title="t('pages.gaiop.alertCenter.title')" closable>
       <NButtonGroup size="small" class="alert-center-toolbar">
-        <NButton :disabled="!alerts.unreadCount" @click="alerts.markRead()">{{ t('pages.gaiop.alertCenter.markAllRead') }}</NButton>
-        <NButton :disabled="!alerts.recentEvents.length" @click="alerts.clear()">{{ t('pages.gaiop.alertCenter.clear') }}</NButton>
+        <NButton :disabled="!filteredUnreadCount" @click="markFilteredRead">{{ markAllLabel }}</NButton>
+        <NButton :disabled="!filteredEvents.length" @click="clearFiltered">{{ clearLabel }}</NButton>
       </NButtonGroup>
       <NSelect v-model:value="severityFilter" :options="severityOptions" :aria-label="t('pages.gaiop.alertCenter.severityFilter')" class="alert-center-filter" />
       <NAlert v-if="streamText()" type="warning" :bordered="false" class="alert-center-status">{{ streamText() }}</NAlert>
@@ -102,15 +132,17 @@ function streamText() {
           </template>
           <div class="alert-center-item" @click="alerts.markRead(item.cursor)">
             <NText strong>{{ alertSummary(item.payload, notRecorded()) }}</NText>
-            <NText depth="3" class="alert-center-meta">{{ alertActionLabel(item.action, locale) }} · {{ alertSource(item.payload, notRecorded()) }} · {{ formatAlertTime(item.payload.occurredAt, locale, notRecorded()) }}</NText>
+            <div class="alert-center-meta">
+              <span>{{ alertActionLabel(item.action, locale) }}</span>
+              <span>{{ t('pages.gaiop.alertCenter.dataSource') }}: {{ alertSource(item.payload, notRecorded()) }}</span>
+            </div>
+            <NText depth="3" class="alert-center-time">{{ formatAlertTime(item.payload.occurredAt, locale, notRecorded()) }}</NText>
             <NSpace class="alert-center-actions" :size="6">
-              <NButton text size="small" @click.stop="toggleExpanded(item.cursor)"><template #icon><NIcon :component="isExpanded(item.cursor) ? ChevronUpOutline : ChevronDownOutline" /></template>{{ t('pages.gaiop.alertCenter.brief') }}</NButton>
+              <NButton text size="small" @click.stop="toggleExpanded(item)"><template #icon><NIcon :component="isExpanded(item.cursor) ? ChevronUpOutline : ChevronDownOutline" /></template>{{ t('pages.gaiop.alertCenter.brief') }}</NButton>
               <NButton text type="primary" size="small" @click.stop="showDetails(item)"><template #icon><NIcon :component="EyeOutline" /></template>{{ t('pages.gaiop.alertCenter.viewDetails') }}</NButton>
             </NSpace>
             <div v-if="isExpanded(item.cursor)" class="alert-center-brief">
-              <NText>{{ t('pages.gaiop.alertCenter.source') }}: {{ alertSource(item.payload, notRecorded()) }}</NText>
-              <NText>{{ t('pages.gaiop.alertCenter.time') }}: {{ formatAlertTime(item.payload.occurredAt, locale, notRecorded()) }}</NText>
-              <NText>{{ t('pages.gaiop.alertCenter.delivery') }}: {{ item.deliverySource === 'live' ? t('pages.gaiop.alertCenter.live') : t('pages.gaiop.alertCenter.compensation') }}</NText>
+              <NText v-for="field in briefFields(item)" :key="field.label"><strong>{{ field.label }}:</strong> {{ field.value }}</NText>
             </div>
           </div>
         </NListItem>
@@ -125,9 +157,10 @@ function streamText() {
 .alert-center-toolbar { margin-bottom: 12px; }
 .alert-center-filter { width: 100%; margin-bottom: 12px; }
 .alert-center-item { display: grid; gap: 5px; cursor: pointer; }
-.alert-center-meta { font-size: 12px; line-height: 1.5; }
+.alert-center-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--text-color-3, #8a8f98); font-size: 12px; line-height: 1.5; }
+.alert-center-time { font-size: 12px; line-height: 1.5; }
 .alert-center-actions { margin-top: 2px; }
-.alert-center-brief { display: grid; gap: 3px; margin-top: 5px; font-size: 12px; }
+.alert-center-brief { display: grid; gap: 5px; margin-top: 5px; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .alert-center-read { opacity: .68; }
 .alert-center-fresh { background: color-mix(in srgb, var(--primary-color) 10%, transparent); transition: background .35s ease; }
 </style>

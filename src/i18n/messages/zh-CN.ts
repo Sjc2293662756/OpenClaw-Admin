@@ -3531,11 +3531,11 @@ export default {
         title: '告警通知', refresh: '刷新', export: '导出 Excel', details: '详情', empty: '当前条件暂无告警记录',
         time: '告警时间', severity: '严重级别', name: '告警名称', category: '告警类型', source: '来源', status: '状态', actions: '操作',
         allSeverity: '告警级别：全部', allCategory: '全部告警类型', triggered: '触发中', restored: '已恢复', notRecorded: '未记录',
-        exportEmpty: '当前页没有可导出的告警记录', exportSuccess: '已导出当前页 {count} 条记录', exportFailed: '导出 Excel 失败', focusNotFound: '未找到该告警；它可能已过期或当前不可查询。', focusUnavailable: '暂时无法定位该告警详情；当前页面仍可正常使用。', focusOutsideResults: '该告警不在当前筛选结果中。左侧列表保持不变。', resetFiltersAndLocate: '重置筛选并定位',
+        exportEmpty: '当前页没有可导出的告警记录', exportSuccess: '已导出当前页 {count} 条记录', exportFailed: '导出 Excel 失败', focusNotFound: '未找到该告警；它可能已过期或当前不可查询。', focusUnavailable: '暂时无法定位该告警详情；当前页面仍可正常使用。', resetFiltersAndLocate: '重置筛选并定位', analysisNumberUnavailable: '未记录权威告警编号，暂时无法生成分析指令。',
       },
       alertCenter: {
-        title: '实时消息中心', open: '打开实时消息中心', empty: '暂无实时告警消息', markAllRead: '全部已读', clear: '清空', remove: '移除', severityFilter: '按告警级别筛选',
-        triggered: '新告警', viewDetails: '查看详情', brief: '简要详情', source: '来源', time: '时间', delivery: '来源方式', live: '实时', compensation: '补偿追回',
+        title: '告警通知', open: '打开告警通知', empty: '暂无告警通知', markAllRead: '全部已读', markFilteredRead: '当前筛选全部已读', clear: '清空全部', clearFiltered: '清空当前筛选', remove: '移除', severityFilter: '按告警级别筛选',
+        triggered: '新告警', viewDetails: '查看详情', brief: '简要详情', dataSource: '数据源', alertType: '告警类型', alertNumber: '告警编号', triggeredMetrics: '触发指标', triggerCondition: '触发条件', description: '告警描述',
         historyRefreshRequired: '告警流存在待刷新或未解决的历史缺口；当前实时连接正常并不表示缺失记录已补齐。', streamState: '告警实时连接状态：{state}',
       },
       audit: {

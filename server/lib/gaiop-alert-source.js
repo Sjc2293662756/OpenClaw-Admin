@@ -26,6 +26,7 @@ export function mapGAIOPAlertEvent(event) {
   })) : []
   const restored = event?.status === 'recovered' || (metrics.length > 0 && metrics.every((metric) => metric.value === 'N/D'))
   const occurredAt = toMillis(event?.occurredAt) || toMillis(event?.receivedAt) || Date.now()
+  const alertNumber = typeof event?.alertNumber === 'string' && event.alertNumber.trim() ? event.alertNumber.trim() : null
   return {
     id: String(event?.id || event?.eventId || `${occurredAt}:${event?.category || 'unknown'}:${event?.ruleId || ''}`),
     occurredAt: new Date(occurredAt).toISOString(),
@@ -39,6 +40,10 @@ export function mapGAIOPAlertEvent(event) {
     description: event?.description || null,
     triggerCondition: event?.triggerCondition || null,
     groupPath: event?.groupPath || null,
+    // This is intentionally a transparent projection only.  An alert number
+    // must come from the Receiver contract; neither an event ID nor an Admin
+    // internal ID is a substitute for it.
+    ...(alertNumber ? { alertNumber } : {}),
     startTime: event?.start ? String(event.start) : null,
     endTime: event?.end ? String(event.end) : null,
     eventId: event?.eventId || null,

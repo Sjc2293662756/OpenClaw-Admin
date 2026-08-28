@@ -3525,11 +3525,11 @@ export default {
         title: 'Alert Notifications', refresh: 'Refresh', export: 'Export Excel', details: 'Details', empty: 'No alerts match the current filters',
         time: 'Alert time', severity: 'Severity', name: 'Alert name', category: 'Category', source: 'Source', status: 'Status', actions: 'Actions',
         allSeverity: 'All severities', allCategory: 'All categories', triggered: 'Triggered', restored: 'Restored', notRecorded: 'Not recorded',
-        exportEmpty: 'There are no alerts on the current page to export', exportSuccess: 'Exported {count} alerts from the current page', exportFailed: 'Failed to export Excel', focusNotFound: 'This alert was not found. It may have expired or is not currently queryable.', focusUnavailable: 'This alert detail cannot be located right now. The current page remains available.', focusOutsideResults: 'This alert is not in the current filtered results. The list remains unchanged.', resetFiltersAndLocate: 'Reset filters and locate',
+        exportEmpty: 'There are no alerts on the current page to export', exportSuccess: 'Exported {count} alerts from the current page', exportFailed: 'Failed to export Excel', focusNotFound: 'This alert was not found. It may have expired or is not currently queryable.', focusUnavailable: 'This alert detail cannot be located right now. The current page remains available.', resetFiltersAndLocate: 'Reset filters and locate', analysisNumberUnavailable: 'No authoritative alert number is recorded, so an analysis instruction cannot be generated.',
       },
       alertCenter: {
-        title: 'Realtime Message Center', open: 'Open realtime message center', empty: 'No realtime alert messages', markAllRead: 'Mark all read', clear: 'Clear', remove: 'Remove', severityFilter: 'Filter by alert severity',
-        triggered: 'New alert', viewDetails: 'View details', brief: 'Brief details', source: 'Source', time: 'Time', delivery: 'Delivery', live: 'Live', compensation: 'Recovered by compensation',
+        title: 'Alert Notifications', open: 'Open alert notifications', empty: 'No alert notifications', markAllRead: 'Mark all read', markFilteredRead: 'Mark filtered read', clear: 'Clear all', clearFiltered: 'Clear filtered', remove: 'Remove', severityFilter: 'Filter by alert severity',
+        triggered: 'New alert', viewDetails: 'View details', brief: 'Brief details', dataSource: 'Data source', alertType: 'Alert type', alertNumber: 'Alert number', triggeredMetrics: 'Triggered metrics', triggerCondition: 'Trigger condition', description: 'Alert description',
         historyRefreshRequired: 'The alert stream has a pending refresh or unresolved historical gap. A connected stream does not mean missing records were recovered.', streamState: 'Alert realtime connection: {state}',
       },
       audit: {

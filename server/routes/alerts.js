@@ -57,6 +57,7 @@ export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSourc
   })
   router.get('/', authMiddleware, async (req, res) => {
     try {
+      const locateId = readFilter(req.query.locateId)
       const filters = {
         severity: readFilter(req.query.severity, 60),
         category: readFilter(req.query.category, 60),
@@ -73,23 +74,33 @@ export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSourc
       // 正式接收器以 newest-first 存储，BFF 统一映射后维持既有页面排序和 TOP 语义。
       // 时间和字段过滤必须先于页面 TOP 截断。接收器查询固定拉取其完整窗口，
       // 并在支持服务端过滤的新版本上直接按同一组条件查询持久化历史。
-      const source = await readAlertSource(process.env, filters)
-      const filtered = filterAlerts(source.alerts, filters)
-      const capped = filtered.slice(0, maxResults)
-      const startIndex = (page - 1) * pageSize
+      // `locateId` is an exact business-ID lookup for the notification deep
+      // link. It deliberately never shares the ordinary keyword semantics.
+      // Reading the receiver's existing bounded window keeps it within the
+      // same permission and source boundary as the regular list.
+      const source = await readAlertSource(process.env, locateId ? {} : filters)
+      const filtered = filterAlerts(source.alerts, locateId ? {} : filters)
+      const locatedIndex = locateId ? filtered.findIndex((alert) => String(alert.id) === locateId) : -1
+      if (locateId && locatedIndex < 0) {
+        return sendError(res, { status: 404, code: 'ALERT_NOT_FOUND', message: '未找到可定位的告警记录' })
+      }
+      const effectiveMaxResults = locateId ? Math.max(maxResults, Math.min(3000, filtered.length)) : maxResults
+      const effectivePage = locateId ? Math.floor(locatedIndex / pageSize) + 1 : page
+      const capped = filtered.slice(0, effectiveMaxResults)
+      const startIndex = (effectivePage - 1) * pageSize
       const alerts = capped.slice(startIndex, startIndex + pageSize)
       const hasMore = startIndex + pageSize < capped.length
       sendOk(res, {
         alerts,
         categoryOptions: Object.entries(ALERT_CATEGORY_LABELS).map(([value, label]) => ({ value, label })),
-        filters: { ...filters, page, pageSize, maxResults },
+        filters: { ...filters, page: effectivePage, pageSize, maxResults: effectiveMaxResults },
         pagination: {
-          page,
+          page: effectivePage,
           pageSize,
-          maxResults,
+          maxResults: effectiveMaxResults,
           availableCount: capped.length,
           hasMore,
-          limitReached: Number(source.availableCount) > maxResults || filtered.length > capped.length,
+          limitReached: Number(source.availableCount) > effectiveMaxResults || filtered.length > capped.length,
         },
       })
     } catch {

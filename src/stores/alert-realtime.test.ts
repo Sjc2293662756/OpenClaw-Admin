@@ -76,6 +76,26 @@ describe('alert realtime store', () => {
     expect(store.recentEvents.every((item) => item.read)).toBe(true)
   })
 
+  it('limits batch read and clear operations to the selected severity and keeps the queue in sync', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.addEvent({ ...event(1), payload: { id: 'minor', severity: '轻微' } })
+    store.addEvent({ ...event(2), payload: { id: 'major', severity: '重大' } })
+    store.addEvent({ ...event(3), payload: { id: 'critical', severity: '紧急' } })
+    store.markReadBySeverity('重大')
+    store.markReadBySeverity('重大')
+    expect(store.recentEvents.find((item) => item.cursor === 2)?.read).toBe(true)
+    expect(store.unreadCount).toBe(2)
+    store.clearBySeverity('轻微')
+    expect(store.recentEvents.map((item) => item.cursor).sort()).toEqual([2, 3])
+    expect(store.notificationQueue.map((item) => item.cursor).sort()).toEqual([3])
+    expect(store.unreadCount).toBe(1)
+    store.clearBySeverity(null)
+    expect(store.recentEvents).toEqual([])
+    expect(store.notificationQueue).toEqual([])
+    expect(store.unreadCount).toBe(0)
+  })
+
   it('keeps fresh messages unread in an open center while suppressing floating notices', () => {
     const store = useAlertRealtimeStore()
     store.activate({ id: 'one', username: 'one', role: 'admin' })

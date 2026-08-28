@@ -305,6 +305,18 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     if (cursor === undefined) recentEvents.value.forEach((event) => { event.read = true })
   }
 
+  function markReadBySeverity(severity: string | null) {
+    const matches = (item: AlertRealtimeItem) => severity === null || String(item.payload.severity || '') === severity
+    let changed = 0
+    recentEvents.value.forEach((item) => {
+      if (matches(item) && !item.read) {
+        item.read = true
+        changed += 1
+      }
+    })
+    if (changed) unreadCount.value = Math.max(0, unreadCount.value - changed)
+  }
+
   function remove(cursor: number) {
     const removed = recentEvents.value.find((event) => event.cursor === cursor)
     recentEvents.value = recentEvents.value.filter((event) => event.cursor !== cursor)
@@ -316,6 +328,14 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     recentEvents.value = []
     unreadCount.value = 0
     notificationQueue.value = []
+  }
+
+  function clearBySeverity(severity: string | null) {
+    const matches = (item: AlertRealtimeItem) => severity === null || String(item.payload.severity || '') === severity
+    const removedUnread = recentEvents.value.filter((item) => matches(item) && !item.read).length
+    recentEvents.value = recentEvents.value.filter((item) => !matches(item))
+    notificationQueue.value = notificationQueue.value.filter((item) => !matches(item))
+    if (removedUnread) unreadCount.value = Math.max(0, unreadCount.value - removedUnread)
   }
 
   function dequeueNotification() {
@@ -343,6 +363,6 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     activeAccount, lastCursor, recentEvents, unreadCount, notificationQueue, messageCenterOpen, detailFocusRequest, streamState, gapState,
     historyRefreshRequired, lastErrorCode, hasActiveGap,
     activate, start, stop, addEvent, handleStreamState, compensate,
-    markRead, remove, clear, dequeueNotification, openMessageCenter, closeMessageCenter, requestDetailFocus, clearForLogout,
+    markRead, markReadBySeverity, remove, clear, clearBySeverity, dequeueNotification, openMessageCenter, closeMessageCenter, requestDetailFocus, clearForLogout,
   }
 })

@@ -23,6 +23,11 @@ test('maps the formal receiver event to the established Admin alert read model',
   assert.equal('raw' in alert, false)
 })
 
+test('transparently projects an authoritative alert number without deriving one', () => {
+  assert.equal(mapGAIOPAlertEvent({ id: 'internal-id', alertNumber: 'GJ-4HBZZS7A' }).alertNumber, 'GJ-4HBZZS7A')
+  assert.equal(mapGAIOPAlertEvent({ id: 'internal-id', eventId: '12345' }).alertNumber, undefined)
+})
+
 test('forwards time filters, reads the full receiver window and restores chronological input order', async () => {
   const fetchCalls = []
   const result = await readGAIOPAlerts({
