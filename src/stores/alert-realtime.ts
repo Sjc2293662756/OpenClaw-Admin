@@ -13,7 +13,7 @@ const CURSOR_PREFIX = 'gaiop.alert.realtime.cursor.'
 
 export type AlertRealtimeEvent = {
   type: 'alert'
-  action: 'triggered' | 'recovered'
+  action: 'triggered' | 'recovered' | 'compensation'
   cursor: number
   payload: { id: string; [key: string]: unknown }
 }
@@ -32,6 +32,45 @@ type AlertStreamState = {
   latestCursor?: number | null
   latestSequence?: number | null
   lastProcessedCursor?: number | null
+}
+
+export type AlertNotificationPreferences = {
+  realtimeEnabled: boolean
+  soundEnabled: boolean
+  minorPopupEnabled: boolean
+  minorNotificationEnabled: boolean
+  majorPopupEnabled: boolean
+  majorNotificationEnabled: boolean
+  criticalPopupEnabled: boolean
+  criticalNotificationEnabled: boolean
+  updatedAt?: number | null
+}
+
+export const DEFAULT_ALERT_NOTIFICATION_PREFERENCES: AlertNotificationPreferences = Object.freeze({
+  realtimeEnabled: true,
+  soundEnabled: true,
+  minorPopupEnabled: true,
+  minorNotificationEnabled: true,
+  majorPopupEnabled: true,
+  majorNotificationEnabled: true,
+  criticalPopupEnabled: true,
+  criticalNotificationEnabled: true,
+})
+
+const PREFERENCE_FIELDS = Object.keys(DEFAULT_ALERT_NOTIFICATION_PREFERENCES) as Array<keyof AlertNotificationPreferences>
+
+function readPreferences(value: unknown): AlertNotificationPreferences | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const source = value as Record<string, unknown>
+  if (PREFERENCE_FIELDS.some((field) => typeof source[field] !== 'boolean')) return null
+  return Object.fromEntries(PREFERENCE_FIELDS.map((field) => [field, source[field]])) as AlertNotificationPreferences
+}
+
+function levelPreferencePrefix(severity: unknown) {
+  if (severity === '轻微') return 'minor'
+  if (severity === '重大') return 'major'
+  if (severity === '紧急') return 'critical'
+  return null
 }
 
 function accountKey(user: AuthUser) {
@@ -60,6 +99,12 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   const gapState = ref<string | null>(null)
   const historyRefreshRequired = ref(false)
   const lastErrorCode = ref<string | null>(null)
+  const preferences = ref<AlertNotificationPreferences>({ ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES })
+  const preferencesReady = ref(false)
+  const preferencesLoading = ref(false)
+  const preferencesLoadError = ref<string | null>(null)
+  const preferencesSaving = ref(false)
+  const preferencesSaveError = ref<string | null>(null)
   const seenCursors = new Set<number>()
   const seenIds = new Set<string>()
   let subscriptions: Array<() => void> = []
@@ -67,6 +112,9 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   let compensationController: AbortController | null = null
   let compensationGeneration = 0
   let compensationRace: { generation: number; cursors: Set<number>; ids: Set<string> } | null = null
+  let preferenceController: AbortController | null = null
+  let preferenceGeneration = 0
+  let preferenceLoadPromise: Promise<boolean> | null = null
 
   const hasActiveGap = computed(() => historyRefreshRequired.value || Boolean(gapState.value))
 
@@ -96,15 +144,111 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     if (!preserveCursor) lastCursor.value = null
   }
 
+  function resetPreferences() {
+    preferenceController?.abort()
+    preferenceController = null
+    preferenceGeneration += 1
+    preferenceLoadPromise = null
+    preferences.value = { ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES }
+    preferencesReady.value = false
+    preferencesLoading.value = false
+    preferencesLoadError.value = null
+    preferencesSaving.value = false
+    preferencesSaveError.value = null
+  }
+
   function activate(user: AuthUser | null) {
     const next = user ? accountKey(user) : null
     if (next === activeAccount.value) return
     cancelCompensation()
+    resetPreferences()
     resetMemory({ preserveCursor: false })
     activeAccount.value = next
     if (next) {
       const stored = validCursor(localStorage.getItem(cursorStorageKey(next)))
       lastCursor.value = stored
+    }
+  }
+
+  function isCurrentPreferenceRequest(account: string, generation: number) {
+    return activeAccount.value === account && preferenceGeneration === generation
+  }
+
+  async function loadPreferences(): Promise<boolean> {
+    if (!activeAccount.value) return false
+    if (preferencesReady.value) return true
+    if (preferenceLoadPromise) return preferenceLoadPromise
+    const account = activeAccount.value
+    const generation = preferenceGeneration
+    const controller = new AbortController()
+    preferenceController = controller
+    preferencesLoading.value = true
+    preferencesLoadError.value = null
+    const run = (async () => {
+      const token = useAuthStore().getToken()
+      try {
+        const response = await fetch('/api/alerts/preferences', {
+          headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+          signal: controller.signal,
+        })
+        const body = await response.json().catch(() => null)
+        const loaded = response.ok && body?.ok ? readPreferences(body.preferences) : null
+        if (!loaded) throw new Error(String(body?.error || body?.code || 'ALERT_NOTIFICATION_PREFERENCES_UNAVAILABLE'))
+        if (!isCurrentPreferenceRequest(account, generation)) return false
+        preferences.value = loaded
+        preferencesReady.value = true
+        return true
+      } catch (error) {
+        if (!isCurrentPreferenceRequest(account, generation)) return false
+        if (controller.signal.aborted) return false
+        // A configuration read failure must preserve alert visibility. The
+        // conservative operational default is the documented all-enabled
+        // policy, and the UI exposes this failure rather than silently losing
+        // the account's live alerts.
+        preferences.value = { ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES }
+        preferencesReady.value = true
+        preferencesLoadError.value = error instanceof Error ? error.message : 'ALERT_NOTIFICATION_PREFERENCES_UNAVAILABLE'
+        return true
+      } finally {
+        if (isCurrentPreferenceRequest(account, generation)) {
+          preferencesLoading.value = false
+          if (preferenceController === controller) preferenceController = null
+        }
+      }
+    })()
+    preferenceLoadPromise = run
+    void run.finally(() => {
+      if (preferenceLoadPromise === run) preferenceLoadPromise = null
+    }).catch(() => {})
+    return run
+  }
+
+  async function savePreferences(next: AlertNotificationPreferences): Promise<AlertNotificationPreferences> {
+    const validated = readPreferences(next)
+    if (!validated || !activeAccount.value) throw new Error('ALERT_NOTIFICATION_PREFERENCES_INVALID')
+    const account = activeAccount.value
+    const generation = preferenceGeneration
+    preferencesSaving.value = true
+    preferencesSaveError.value = null
+    try {
+      const token = useAuthStore().getToken()
+      const response = await fetch('/api/alerts/preferences', {
+        method: 'PUT',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify(validated),
+      })
+      const body = await response.json().catch(() => null)
+      const saved = response.ok && body?.ok ? readPreferences(body.preferences) : null
+      if (!saved) throw new Error(String(body?.error || body?.code || 'ALERT_NOTIFICATION_PREFERENCES_SAVE_FAILED'))
+      if (!isCurrentPreferenceRequest(account, generation)) throw new Error('ALERT_NOTIFICATION_PREFERENCES_ACCOUNT_CHANGED')
+      preferences.value = saved
+      preferencesReady.value = true
+      return saved
+    } catch (error) {
+      if (isCurrentPreferenceRequest(account, generation)) preferencesSaveError.value = error instanceof Error ? error.message : 'ALERT_NOTIFICATION_PREFERENCES_SAVE_FAILED'
+      throw error
+    } finally {
+      if (isCurrentPreferenceRequest(account, generation)) preferencesSaving.value = false
     }
   }
 
@@ -137,19 +281,29 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
       saveCursor()
     }
     if (cursorSeen || idSeen) return false
+    if (!preferences.value.realtimeEnabled) return false
+    const prefix = levelPreferencePrefix(event.payload?.severity)
+    if (!prefix) return false
+    const notificationEnabled = preferences.value[`${prefix}NotificationEnabled` as keyof AlertNotificationPreferences] === true
+    const popupEnabled = !isCompensation
+      && event.action === 'triggered'
+      && preferences.value[`${prefix}PopupEnabled` as keyof AlertNotificationPreferences] === true
+    if (!notificationEnabled && !popupEnabled) return false
     const item: AlertRealtimeItem = {
       ...event,
       deliverySource: isCompensation ? 'compensation' : 'live',
       read: false,
     }
-    const nextEvents = [item, ...recentEvents.value].slice(0, RECENT_LIMIT)
-    const evictedUnread = recentEvents.value.slice(RECENT_LIMIT - 1).filter((entry) => !entry.read).length
-    recentEvents.value = nextEvents
-    unreadCount.value += 1
-    if (evictedUnread) unreadCount.value = Math.max(0, unreadCount.value - evictedUnread)
+    if (notificationEnabled) {
+      const nextEvents = [item, ...recentEvents.value].slice(0, RECENT_LIMIT)
+      const evictedUnread = recentEvents.value.slice(RECENT_LIMIT - 1).filter((entry) => !entry.read).length
+      recentEvents.value = nextEvents
+      unreadCount.value += 1
+      if (evictedUnread) unreadCount.value = Math.max(0, unreadCount.value - evictedUnread)
+    }
     // History recovery is intentionally visible only in the center. A recovery
     // event also updates the center without competing with new-alert notices.
-    if (!isCompensation && event.action === 'triggered' && !messageCenterOpen.value && !alertDetailOpen.value) {
+    if (popupEnabled && !messageCenterOpen.value && !alertDetailOpen.value) {
       notificationQueue.value = [...notificationQueue.value, item].slice(-RECENT_LIMIT)
     }
     return true
@@ -363,6 +517,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
 
   function clearForLogout() {
     cancelCompensation()
+    resetPreferences()
     resetMemory({ preserveCursor: true })
     activeAccount.value = null
   }
@@ -370,7 +525,8 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   return {
     activeAccount, lastCursor, recentEvents, unreadCount, notificationQueue, messageCenterOpen, alertDetailOpen, detailFocusRequest, streamState, gapState,
     historyRefreshRequired, lastErrorCode, hasActiveGap,
-    activate, start, stop, addEvent, handleStreamState, compensate,
+    preferences, preferencesReady, preferencesLoading, preferencesLoadError, preferencesSaving, preferencesSaveError,
+    activate, loadPreferences, savePreferences, start, stop, addEvent, handleStreamState, compensate,
     markRead, markReadBySeverity, remove, clear, clearBySeverity, dequeueNotification, openMessageCenter, closeMessageCenter, setAlertDetailOpen, requestDetailFocus, clearForLogout,
   }
 })

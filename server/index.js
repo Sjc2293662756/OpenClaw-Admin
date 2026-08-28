@@ -599,7 +599,7 @@ app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({
     storeDirectory: envConfig.GAIOP_REPORT_PROVENANCE_STORE_DIR,
   },
 }))
-app.use('/api/alerts', createAlertsRouter({ authMiddleware, recordAudit }))
+app.use('/api/alerts', createAlertsRouter({ db, authMiddleware, recordAudit }))
 
 // 迁移保留：阶段 B 已由下方独立路由接管这些 API。保留旧实现仅用于短期回归比对，
 // 不再注册，确认线上稳定后会在后续清理。

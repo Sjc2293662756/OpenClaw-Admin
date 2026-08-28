@@ -13,9 +13,15 @@ export function alertSeverityLabel(severity: string, locale: string) {
   return labels[severity as AlertSeverity] || severity
 }
 
-export function alertActionLabel(action: 'triggered' | 'recovered', locale: string) {
-  if (locale === 'zh-CN') return action === 'recovered' ? '已恢复' : '已触发'
-  return action === 'recovered' ? 'Recovered' : 'Triggered'
+export function alertActionLabel(action: 'triggered' | 'recovered' | 'compensation', locale: string) {
+  if (locale === 'zh-CN') {
+    if (action === 'recovered') return '已恢复'
+    if (action === 'compensation') return '补偿通知'
+    return '已触发'
+  }
+  if (action === 'recovered') return 'Recovered'
+  if (action === 'compensation') return 'Compensation'
+  return 'Triggered'
 }
 
 export function formatAlertTime(value: unknown, locale: string, fallback: string) {

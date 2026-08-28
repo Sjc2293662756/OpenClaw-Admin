@@ -1,24 +1,37 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import test from 'node:test'
+import Database from 'better-sqlite3'
 import express from 'express'
 import { createAlertsRouter } from './alerts.js'
+import { migrateAlertNotificationPreferences } from '../lib/alert-notification-preferences.js'
 
-async function startTestServer(readAlertSource, { role = 'admin', readAlertChanges } = {}) {
+async function startTestServer(readAlertSource, { role = 'admin', userId = 'admin-1', readAlertChanges, db = null } = {}) {
   const audits = []
+  const database = db || new Database(':memory:')
+  migrateAlertNotificationPreferences(database)
   const app = express()
+  app.use(express.json())
   app.use('/alerts', createAlertsRouter({
     authMiddleware: (req, _res, next) => {
-      req.user = { id: 'admin-1', username: 'admin', role }
+      req.user = { id: userId, username: 'admin', role }
       next()
     },
     recordAudit: (_user, action, target, detail) => audits.push({ action, target, detail }),
+    db: database,
     readAlertSource,
     readAlertChanges,
   }))
   const server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  return { baseUrl: `http://127.0.0.1:${server.address().port}/alerts`, audits, server }
+  return { baseUrl: `http://127.0.0.1:${server.address().port}/alerts`, audits, db: database, server }
+}
+
+const defaultPreferences = {
+  realtimeEnabled: true, soundEnabled: true,
+  minorPopupEnabled: true, minorNotificationEnabled: true,
+  majorPopupEnabled: true, majorNotificationEnabled: true,
+  criticalPopupEnabled: true, criticalNotificationEnabled: true,
 }
 
 test('alert list uses the formal receiver read model without changing the browser response shape or adding refresh audit noise', async () => {
@@ -99,6 +112,58 @@ test('alert changes permits standard, auditor and admin roles', async () => {
       assert.equal((await fetch(`${context.baseUrl}/changes`)).status, 200)
     } finally { context.server.close() }
   }
+})
+
+test('account alert notification preferences use secure defaults, persist per account, validate strictly, and audit saves', async () => {
+  const database = new Database(':memory:')
+  const first = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { db: database, userId: 'account-one' })
+  const second = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { db: database, userId: 'account-two' })
+  try {
+    const initial = await fetch(`${first.baseUrl}/preferences`).then((response) => response.json())
+    assert.deepEqual(initial.preferences, { ...defaultPreferences, updatedAt: null })
+
+    const savedValues = { ...defaultPreferences, realtimeEnabled: false, soundEnabled: false, majorNotificationEnabled: false }
+    const saved = await fetch(`${first.baseUrl}/preferences`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...savedValues, userId: 'account-two' }),
+    })
+    assert.equal(saved.status, 400)
+
+    const accepted = await fetch(`${first.baseUrl}/preferences`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(savedValues),
+    })
+    assert.equal(accepted.status, 200)
+    assert.equal((await accepted.json()).preferences.realtimeEnabled, false)
+    assert.equal(first.audits.filter((entry) => entry.action === '保存账户告警通知设置').length, 1)
+    assert.equal(first.audits[0].detail.includes('account-two'), false)
+
+    const isolated = await fetch(`${second.baseUrl}/preferences`).then((response) => response.json())
+    assert.deepEqual(isolated.preferences, { ...defaultPreferences, updatedAt: null })
+
+    const restarted = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { db: database, userId: 'account-one' })
+    try {
+      const afterRestart = await fetch(`${restarted.baseUrl}/preferences`).then((response) => response.json())
+      assert.equal(afterRestart.preferences.majorNotificationEnabled, false)
+    } finally { restarted.server.close() }
+
+    const invalid = await fetch(`${first.baseUrl}/preferences`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...defaultPreferences, soundEnabled: 'false' }),
+    })
+    assert.equal(invalid.status, 400)
+  } finally {
+    first.server.close()
+    second.server.close()
+    database.close()
+  }
+})
+
+test('alert notification preferences reject users without the existing alert permission', async () => {
+  const context = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { role: 'basic' })
+  try {
+    assert.equal((await fetch(`${context.baseUrl}/preferences`)).status, 403)
+    assert.equal((await fetch(`${context.baseUrl}/preferences`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(defaultPreferences),
+    })).status, 403)
+  } finally { context.server.close(); context.db.close() }
 })
 
 test('filters a historical custom range before applying the browser TOP limit', async () => {

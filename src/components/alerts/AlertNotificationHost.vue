@@ -85,6 +85,9 @@ function notifyNext() {
     action: () => h(NButton, { size: 'small', onClick: () => showDetails(item) }, { default: () => t('pages.gaiop.alertCenter.viewDetails') }),
   })
   activeNotifications.set(item.cursor, notice)
+  // Sound is tied to an actually-created live popup, never merely to a
+  // received SSE event or an item that only entered the notification drawer.
+  if (alerts.preferences.realtimeEnabled && alerts.preferences.soundEnabled) playAlertNotificationSound()
 }
 
 watch(() => alerts.notificationQueue.length, () => notifyNext(), { immediate: true })
@@ -99,14 +102,23 @@ watch(() => alerts.activeAccount, () => destroyAllActiveNotifications(activeNoti
 watch(() => alerts.recentEvents[0]?.cursor, (cursor) => {
   const newest = alerts.recentEvents[0]
   if (!newest || cursor === undefined) return
-  // Audio is the one intentionally global acknowledgement: an authenticated
-  // user hears every online triggered alert even when visual notices are quiet.
-  if (alerts.activeAccount && newest.deliverySource === 'live' && newest.action === 'triggered') playAlertNotificationSound()
   if (alerts.messageCenterOpen) {
     freshCursor.value = cursor
     if (freshTimer) clearTimeout(freshTimer)
     freshTimer = setTimeout(() => { freshCursor.value = null }, 4_000)
   }
+})
+let lastPreferencesError: string | null = null
+watch(() => alerts.preferencesLoadError, (error) => {
+  if (!error || error === lastPreferencesError) return
+  lastPreferencesError = error
+  notification.warning({
+    title: locale.value === 'zh-CN' ? '告警通知设置暂不可用' : 'Alert notification settings are unavailable',
+    content: locale.value === 'zh-CN'
+      ? '已按安全默认值保持全部提醒开启；请前往系统设置检查并重试。'
+      : 'All alerts remain enabled as the safe default. Open System Settings to retry.',
+    duration: 0,
+  })
 })
 onUnmounted(() => {
   if (freshTimer) clearTimeout(freshTimer)

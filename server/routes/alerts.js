@@ -3,6 +3,11 @@ import { sendError, sendOk } from '../lib/api-response.js'
 import { createAlertExportWorkbook, normalizeAlertExportRows, normalizeExportLocale } from '../lib/alert-export.js'
 import { ALERT_CATEGORY_LABELS, filterAlerts } from '../lib/syslog-alerts.js'
 import { readGAIOPAlertChanges, readGAIOPAlerts } from '../lib/gaiop-alert-source.js'
+import {
+  readAlertNotificationPreferences,
+  saveAlertNotificationPreferences,
+  validateAlertNotificationPreferences,
+} from '../lib/alert-notification-preferences.js'
 
 const ALERT_VIEWER_ROLES = new Set(['standard', 'auditor', 'admin'])
 
@@ -20,8 +25,25 @@ function readTimestamp(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-export function createAlertsRouter({ authMiddleware, recordAudit, readAlertSource = readGAIOPAlerts, readAlertChanges = readGAIOPAlertChanges }) {
+export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertSource = readGAIOPAlerts, readAlertChanges = readGAIOPAlertChanges }) {
   const router = Router()
+  const assertAlertViewer = (req, res) => {
+    if (ALERT_VIEWER_ROLES.has(req.user?.role)) return true
+    sendError(res, { status: 403, code: 'ALERT_ACCESS_DENIED', message: '当前账号无权使用告警通知设置' })
+    return false
+  }
+  router.get('/preferences', authMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    return sendOk(res, { preferences: readAlertNotificationPreferences(db, req.user.id) })
+  })
+  router.put('/preferences', authMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    const validated = validateAlertNotificationPreferences(req.body)
+    if (!validated.ok) return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_PREFERENCES_INVALID', message: validated.error })
+    const preferences = saveAlertNotificationPreferences(db, req.user.id, validated.value)
+    recordAudit(req.user, '保存账户告警通知设置', '告警通知设置', '已更新当前账户的实时提醒、声音与三档页面弹窗/告警通知开关')
+    return sendOk(res, { preferences })
+  })
   router.post('/export', authMiddleware, (req, res) => {
     const locale = normalizeExportLocale(req.body?.locale)
     const rows = normalizeAlertExportRows(req.body?.rows, locale)

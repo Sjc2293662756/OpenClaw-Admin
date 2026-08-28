@@ -3,7 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { useAlertRealtimeStore } from './alert-realtime'
 
 function event(cursor: number, id = `alert-${cursor}`) {
-  return { type: 'alert' as const, action: cursor % 2 ? 'triggered' as const : 'recovered' as const, cursor, payload: { id } }
+  return { type: 'alert' as const, action: cursor % 2 ? 'triggered' as const : 'recovered' as const, cursor, payload: { id, severity: '轻微' } }
 }
 
 function deferred<T>() {
@@ -61,6 +61,87 @@ describe('alert realtime store', () => {
     expect(store.recentEvents.map((item) => item.deliverySource)).toEqual(['compensation', 'live', 'live'])
     expect(store.dequeueNotification()?.cursor).toBe(1)
     expect(store.dequeueNotification()).toBeNull()
+  })
+
+  it('applies the saved account preference matrix only to new events while always advancing the cursor', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.preferences = {
+      ...store.preferences,
+      soundEnabled: false,
+      minorNotificationEnabled: false,
+      majorPopupEnabled: false,
+    }
+    store.addEvent({ ...event(1, 'minor-popup-only'), payload: { id: 'minor-popup-only', severity: '轻微' } })
+    store.addEvent({ ...event(2, 'major-drawer-only'), payload: { id: 'major-drawer-only', severity: '重大' } })
+    store.addEvent({ type: 'alert', action: 'recovered', cursor: 3, payload: { id: 'minor-recovered', severity: '轻微' } })
+    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([1])
+    expect(store.recentEvents.map((item) => item.cursor).sort()).toEqual([2])
+    expect(store.lastCursor).toBe(3)
+
+    store.preferences = { ...store.preferences, realtimeEnabled: false }
+    store.addEvent({ ...event(4, 'disabled'), payload: { id: 'disabled', severity: '紧急' } })
+    expect(store.lastCursor).toBe(4)
+    expect(store.recentEvents.map((item) => item.cursor).sort()).toEqual([2])
+    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([1])
+  })
+
+  it('preserves existing drawer entries when settings change and never creates a popup for recovered or compensation actions', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.addEvent({ ...event(1), payload: { id: 'existing', severity: '紧急' } })
+    store.preferences = { ...store.preferences, criticalNotificationEnabled: false, criticalPopupEnabled: false }
+    store.addEvent({ type: 'alert', action: 'recovered', cursor: 2, payload: { id: 'recovered', severity: '紧急' } })
+    store.addEvent({ type: 'alert', action: 'compensation', cursor: 3, payload: { id: 'compensation', severity: '紧急' } })
+    expect(store.recentEvents.map((item) => item.cursor)).toEqual([1])
+    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([1])
+  })
+
+  it('loads and saves the current account preferences, and keeps safe defaults visible on a load failure', async () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, preferences: {
+        realtimeEnabled: true, soundEnabled: false,
+        minorPopupEnabled: true, minorNotificationEnabled: false,
+        majorPopupEnabled: true, majorNotificationEnabled: true,
+        criticalPopupEnabled: false, criticalNotificationEnabled: true,
+      } }), { headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, preferences: {
+        realtimeEnabled: false, soundEnabled: false,
+        minorPopupEnabled: true, minorNotificationEnabled: false,
+        majorPopupEnabled: true, majorNotificationEnabled: true,
+        criticalPopupEnabled: false, criticalNotificationEnabled: true,
+      } }), { headers: { 'content-type': 'application/json' } })))
+    await expect(store.loadPreferences()).resolves.toBe(true)
+    expect(store.preferences.soundEnabled).toBe(false)
+    await expect(store.savePreferences({ ...store.preferences, realtimeEnabled: false })).resolves.toMatchObject({ realtimeEnabled: false })
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[1][1]?.method).toBe('PUT')
+
+    store.activate({ id: 'two', username: 'two', role: 'admin' })
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network unavailable')))
+    await expect(store.loadPreferences()).resolves.toBe(true)
+    expect(store.preferences.realtimeEnabled).toBe(true)
+    expect(store.preferencesLoadError).toContain('network unavailable')
+  })
+
+  it('invalidates a late preference response after an account switch', async () => {
+    const store = useAlertRealtimeStore()
+    const response = deferred<Response>()
+    vi.stubGlobal('fetch', vi.fn(() => response.promise))
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    const loading = store.loadPreferences()
+    store.activate({ id: 'two', username: 'two', role: 'standard' })
+    response.resolve(new Response(JSON.stringify({ ok: true, preferences: {
+      realtimeEnabled: false, soundEnabled: false,
+      minorPopupEnabled: false, minorNotificationEnabled: false,
+      majorPopupEnabled: false, majorNotificationEnabled: false,
+      criticalPopupEnabled: false, criticalNotificationEnabled: false,
+    } }), { headers: { 'content-type': 'application/json' } }))
+    await expect(loading).resolves.toBe(false)
+    expect(store.activeAccount).toContain('two')
+    expect(store.preferences.realtimeEnabled).toBe(true)
+    expect(store.preferencesReady).toBe(false)
   })
 
   it('marks an individual event read idempotently and maintains a bounded unread total', () => {

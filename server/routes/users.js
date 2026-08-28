@@ -198,7 +198,14 @@ export function createUsersRouter({
         return sendError(res, { status: 400, code: 'LAST_ADMIN_DELETE_FORBIDDEN', message: '至少需要保留一个已激活的管理员账户' })
       }
     }
-    db.prepare('DELETE FROM users WHERE id = ?').run(user.id)
+    const deleteUser = db.transaction(() => {
+      // Preference rows are account-owned and contain no independent business
+      // record. Keep the existing delete lifecycle free of inaccessible rows.
+      const preferencesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alert_notification_preferences'").get()
+      if (preferencesTable) db.prepare('DELETE FROM alert_notification_preferences WHERE user_id = ?').run(user.id)
+      db.prepare('DELETE FROM users WHERE id = ?').run(user.id)
+    })
+    deleteUser()
     for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
     loginFailures?.clear(user.username)
     recordAudit(req.user, '删除用户', user.username, `角色：${user.role}；已清除登录失败锁定`)
