@@ -378,8 +378,8 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
 </script>
 
 <template>
-  <section class="alerts-page">
-    <NCard :title="t('pages.gaiop.alerts.title')" class="app-card">
+  <section class="alerts-page" :class="{ 'alerts-page--with-detail': selectedAlert }">
+    <NCard :title="t('pages.gaiop.alerts.title')" class="app-card alerts-notification-card">
       <template #header-extra>
         <NSpace class="time-toolbar" align="center" wrap :size="8">
           <TimeRangePicker
@@ -418,28 +418,27 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
         </NSpace>
       </div>
 
-      <div class="alerts-detail-layout" :class="{ 'alerts-detail-layout--open': selectedAlert }">
-        <div class="alerts-list-column">
-          <NDataTable class="alerts-data-table" :columns="columns" :data="alerts" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1120" :pagination="false" :row-props="rowProps">
-            <template #empty><NEmpty :description="text('当前时间范围内暂无可展示的 Syslog 告警', 'No Syslog alerts are available in the current time range')" /></template>
-          </NDataTable>
-          <NSpace justify="space-between" align="center" style="margin-top: 16px;">
-            <NText depth="3">{{ text(`已在当前读取窗口中匹配 ${pagination.availableCount} 条，TOP ${pagination.maxResults}。`, `${pagination.availableCount} records match the current retrieval window, TOP ${pagination.maxResults}.`) }}</NText>
-            <NSpace align="center">
-              <NButton :disabled="page <= 1 || loading" @click="changePage(page - 1)">{{ text('上一页', 'Previous') }}</NButton>
-              <NText>{{ text(`第 ${page} 页`, `Page ${page}`) }}</NText>
-              <NButton :disabled="!pagination.hasMore || loading" @click="changePage(page + 1)">{{ text('下一页', 'Next') }}</NButton>
-            </NSpace>
+      <div class="alerts-list-column">
+        <NDataTable class="alerts-data-table" :columns="columns" :data="alerts" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1120" :pagination="false" :row-props="rowProps">
+          <template #empty><NEmpty :description="text('当前时间范围内暂无可展示的 Syslog 告警', 'No Syslog alerts are available in the current time range')" /></template>
+        </NDataTable>
+        <NSpace justify="space-between" align="center" style="margin-top: 16px;">
+          <NText depth="3">{{ text(`已在当前读取窗口中匹配 ${pagination.availableCount} 条，TOP ${pagination.maxResults}。`, `${pagination.availableCount} records match the current retrieval window, TOP ${pagination.maxResults}.`) }}</NText>
+          <NSpace align="center">
+            <NButton :disabled="page <= 1 || loading" @click="changePage(page - 1)">{{ text('上一页', 'Previous') }}</NButton>
+            <NText>{{ text(`第 ${page} 页`, `Page ${page}`) }}</NText>
+            <NButton :disabled="!pagination.hasMore || loading" @click="changePage(page + 1)">{{ text('下一页', 'Next') }}</NButton>
           </NSpace>
-        </div>
-        <aside v-if="selectedAlert" class="alert-detail-panel">
-          <div class="alert-detail-panel__header">
-            <NText strong>{{ text('告警详情', 'Alert details') }}</NText>
-            <NSpace :size="4" align="center">
-              <NButton v-if="focusState === 'outside-results'" size="small" @click="resetFiltersAndLocate">{{ t('pages.gaiop.alerts.resetFiltersAndLocate') }}</NButton>
-              <NButton quaternary circle size="small" :aria-label="t('common.close')" @click="selectedAlert = null"><template #icon><CloseOutline /></template></NButton>
-            </NSpace>
-          </div>
+        </NSpace>
+      </div>
+    </NCard>
+    <NCard v-if="selectedAlert" :title="text('告警详情', 'Alert details')" class="app-card alert-detail-card">
+      <template #header-extra>
+        <NSpace :size="4" align="center">
+          <NButton v-if="focusState === 'outside-results'" size="small" @click="resetFiltersAndLocate">{{ t('pages.gaiop.alerts.resetFiltersAndLocate') }}</NButton>
+          <NButton quaternary circle size="small" :aria-label="t('common.close')" @click="selectedAlert = null"><template #icon><CloseOutline /></template></NButton>
+        </NSpace>
+      </template>
           <NDescriptions label-placement="left" :column="1" bordered>
             <NDescriptionsItem :label="text('告警名称', 'Alert name')">{{ selectedAlert.name }}</NDescriptionsItem>
             <NDescriptionsItem :label="text('严重级别', 'Severity')"><NTag :type="severityType(selectedAlert.severity)" :bordered="false">{{ severityLabel(selectedAlert.severity) }}</NTag></NDescriptionsItem>
@@ -475,14 +474,14 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
               {{ text('分析告警', 'Analyze alert') }}
             </NButton>
           </div>
-        </aside>
-      </div>
     </NCard>
   </section>
 </template>
 
 <style scoped>
 .alerts-page { display: grid; gap: 16px; }
+.alerts-page--with-detail { grid-template-columns: minmax(0, 1fr) minmax(360px, 430px); align-items: start; }
+.alerts-notification-card { min-width: 0; }
 .time-toolbar { justify-content: flex-end; }
 .trigger-condition { display: block; line-height: 1.7; white-space: pre-wrap; }
 .alert-analysis-card { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-top: 20px; padding: 14px; border: 1px solid var(--border-color, #e8edf0); border-radius: 8px; background: var(--hover-color, #f6f8f7); }
@@ -490,11 +489,8 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
 .filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 16px 0; padding: 14px; border: 1px solid var(--border-color, #e8edf0); border-radius: 10px; background: var(--bg-card, #fff); }
 .filter-main { min-width: 0; }
 .display-controls { justify-content: flex-end; }
-.alerts-detail-layout { display: block; }
-.alerts-detail-layout--open { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 430px); align-items: start; gap: 18px; }
 .alerts-list-column { min-width: 0; }
-.alert-detail-panel { min-width: 0; max-height: calc(100vh - 260px); overflow: auto; padding: 0 0 4px 18px; border-left: 1px solid var(--border-color, #e8edf0); }
-.alert-detail-panel__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color, #e8edf0); }
+.alert-detail-card { min-width: 0; max-height: calc(100vh - 160px); overflow: auto; }
   :deep(.alert-row--selected > td) { background: color-mix(in srgb, var(--primary-color) 9%, var(--card-color, #fff)); }
   :deep(.alert-row--focused > td) { background: color-mix(in srgb, #f4c430 24%, var(--card-color, #fff)) !important; transition: background .55s ease; }
   :deep(.alerts-data-table .n-data-table-th--fixed-right),
@@ -504,11 +500,11 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
   :deep(.alerts-data-table .alert-status-column) { padding-inline: 12px !important; white-space: nowrap; }
   :deep(.alerts-data-table .alert-actions-column) { padding-inline: 12px !important; white-space: nowrap; }
   :deep(.alerts-data-table .alert-details-button) { min-width: 56px; }
-@media (max-width: 1120px) {
+@media (max-width: 1320px) {
   .filters { align-items: flex-start; flex-direction: column; }
   .display-controls { justify-content: flex-start; }
-  .alerts-detail-layout--open { grid-template-columns: 1fr; }
-  .alert-detail-panel { max-height: none; padding: 18px 0 0; border-top: 1px solid var(--border-color, #e8edf0); border-left: 0; }
+  .alerts-page--with-detail { grid-template-columns: 1fr; }
+  .alert-detail-card { max-height: none; }
 }
 @media (max-width: 720px) {
   .time-toolbar { max-width: 100%; }
