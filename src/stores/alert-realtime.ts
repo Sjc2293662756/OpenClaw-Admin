@@ -51,6 +51,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   const unreadCount = ref(0)
   const notificationQueue = ref<AlertRealtimeItem[]>([])
   const messageCenterOpen = ref(false)
+  const alertDetailOpen = ref(false)
   // This is deliberately only a monotonically increasing in-memory signal.
   // It lets an already-open alert page refresh when its current focus ID is
   // requested again, without adding non-essential data to the deep link.
@@ -84,6 +85,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     unreadCount.value = 0
     notificationQueue.value = []
     messageCenterOpen.value = false
+    alertDetailOpen.value = false
     detailFocusRequest.value = 0
     seenCursors.clear()
     seenIds.clear()
@@ -147,7 +149,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     if (evictedUnread) unreadCount.value = Math.max(0, unreadCount.value - evictedUnread)
     // History recovery is intentionally visible only in the center. A recovery
     // event also updates the center without competing with new-alert notices.
-    if (!isCompensation && event.action === 'triggered' && !messageCenterOpen.value) {
+    if (!isCompensation && event.action === 'triggered' && !messageCenterOpen.value && !alertDetailOpen.value) {
       notificationQueue.value = [...notificationQueue.value, item].slice(-RECENT_LIMIT)
     }
     return true
@@ -351,6 +353,12 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     notificationQueue.value = []
   }
   function closeMessageCenter() { messageCenterOpen.value = false }
+  function setAlertDetailOpen(open: boolean) {
+    alertDetailOpen.value = open
+    // Detail reading is intentionally a quiet mode. Events remain unread in
+    // the center and badge, but must not reappear later as stale popups.
+    if (open) notificationQueue.value = []
+  }
   function requestDetailFocus() { detailFocusRequest.value += 1 }
 
   function clearForLogout() {
@@ -360,9 +368,9 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   }
 
   return {
-    activeAccount, lastCursor, recentEvents, unreadCount, notificationQueue, messageCenterOpen, detailFocusRequest, streamState, gapState,
+    activeAccount, lastCursor, recentEvents, unreadCount, notificationQueue, messageCenterOpen, alertDetailOpen, detailFocusRequest, streamState, gapState,
     historyRefreshRequired, lastErrorCode, hasActiveGap,
     activate, start, stop, addEvent, handleStreamState, compensate,
-    markRead, markReadBySeverity, remove, clear, clearBySeverity, dequeueNotification, openMessageCenter, closeMessageCenter, requestDetailFocus, clearForLogout,
+    markRead, markReadBySeverity, remove, clear, clearBySeverity, dequeueNotification, openMessageCenter, closeMessageCenter, setAlertDetailOpen, requestDetailFocus, clearForLogout,
   }
 })

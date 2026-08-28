@@ -71,7 +71,7 @@ function markFilteredRead() { alerts.markReadBySeverity(selectedSeverity.value) 
 function clearFiltered() { alerts.clearBySeverity(selectedSeverity.value) }
 
 function notifyNext() {
-  if (alerts.messageCenterOpen) return
+  if (alerts.messageCenterOpen || alerts.alertDetailOpen) return
   const item = alerts.dequeueNotification()
   if (!item) return
   const payload = item.payload as Record<string, unknown>
@@ -90,6 +90,9 @@ watch(() => alerts.notificationQueue.length, () => notifyNext(), { immediate: tr
 watch(() => alerts.messageCenterOpen, (open) => {
   if (!open) return
   destroyAllActiveNotifications(activeNotifications)
+})
+watch(() => alerts.alertDetailOpen, (open) => {
+  if (open) destroyAllActiveNotifications(activeNotifications)
 })
 watch(() => alerts.activeAccount, () => destroyAllActiveNotifications(activeNotifications))
 watch(() => alerts.recentEvents[0]?.cursor, (cursor) => {

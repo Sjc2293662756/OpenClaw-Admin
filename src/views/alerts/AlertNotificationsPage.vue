@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, NEmpty, NInput, NInputNumber, NSelect, NSpace, NTag, NText, useMessage, type DataTableColumns } from 'naive-ui'
 import { CloseOutline, CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
@@ -375,6 +375,9 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
   await loadAlerts()
   await focusAlertFromRoute()
 })
+
+watch(selectedAlert, (alert) => alertRealtimeStore.setAlertDetailOpen(Boolean(alert)), { immediate: true })
+onUnmounted(() => alertRealtimeStore.setAlertDetailOpen(false))
 </script>
 
 <template>

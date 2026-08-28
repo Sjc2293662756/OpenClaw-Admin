@@ -106,6 +106,19 @@ describe('alert realtime store', () => {
     expect(store.recentEvents[0]?.read).toBe(false)
   })
 
+  it('keeps live alerts in the center and badge while an alert detail is open', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.setAlertDetailOpen(true)
+    store.addEvent(event(1))
+    expect(store.unreadCount).toBe(1)
+    expect(store.recentEvents[0]?.read).toBe(false)
+    expect(store.notificationQueue).toEqual([])
+    store.setAlertDetailOpen(false)
+    store.addEvent(event(3))
+    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([3])
+  })
+
   it('signals a same-link detail request without putting request state in persistent storage', () => {
     const store = useAlertRealtimeStore()
     expect(store.detailFocusRequest).toBe(0)
