@@ -94,7 +94,7 @@ const columns = computed<DataTableColumns<Alert>>(() => [
   { title: t('pages.gaiop.alerts.name'), key: 'name', minWidth: 190, ellipsis: { tooltip: true } },
   { title: t('pages.gaiop.alerts.category'), key: 'categoryLabel', width: 150, render: (row) => row.categoryLabel || row.category },
   { title: t('pages.gaiop.alerts.source'), key: 'sourceHost', width: 130 },
-  { title: t('pages.gaiop.alerts.status'), key: 'restored', width: 108, render: (row) => h(NTag, { type: row.restored ? 'success' : 'warning', bordered: false }, { default: () => row.restored ? t('pages.gaiop.alerts.restored') : t('pages.gaiop.alerts.triggered') }) },
+  { title: t('pages.gaiop.alerts.status'), key: 'restored', width: 108, fixed: 'right', className: 'alert-status-column', render: (row) => h(NTag, { type: row.restored ? 'success' : 'warning', bordered: false }, { default: () => row.restored ? t('pages.gaiop.alerts.restored') : t('pages.gaiop.alerts.triggered') }) },
   { title: t('pages.gaiop.alerts.actions'), key: 'actions', width: 104, fixed: 'right', className: 'alert-actions-column', render: (row) => h(NButton, { size: 'small', class: 'alert-details-button', onClick: (event: MouseEvent) => { event.stopPropagation(); selectAlert(row) } }, { default: () => t('pages.gaiop.alerts.details') }) },
 ])
 const exportHeaders = computed(() => [t('pages.gaiop.alerts.time'), t('pages.gaiop.alerts.severity'), t('pages.gaiop.alerts.name'), t('pages.gaiop.alerts.category'), locale.value === 'zh-CN' ? '来源 IP' : 'Source IP', t('pages.gaiop.alerts.status')])
@@ -420,7 +420,7 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
 
       <div class="alerts-detail-layout" :class="{ 'alerts-detail-layout--open': selectedAlert }">
         <div class="alerts-list-column">
-          <NDataTable class="alerts-data-table" :columns="columns" :data="alerts" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1016" :pagination="false" :row-props="rowProps">
+          <NDataTable class="alerts-data-table" :columns="columns" :data="alerts" :loading="loading" :bordered="false" :single-line="false" :scroll-x="1120" :pagination="false" :row-props="rowProps">
             <template #empty><NEmpty :description="text('当前时间范围内暂无可展示的 Syslog 告警', 'No Syslog alerts are available in the current time range')" /></template>
           </NDataTable>
           <NSpace justify="space-between" align="center" style="margin-top: 16px;">
@@ -498,10 +498,11 @@ watch(() => alertRealtimeStore.detailFocusRequest, async () => {
   :deep(.alert-row--selected > td) { background: color-mix(in srgb, var(--primary-color) 9%, var(--card-color, #fff)); }
   :deep(.alert-row--focused > td) { background: color-mix(in srgb, #f4c430 24%, var(--card-color, #fff)) !important; transition: background .55s ease; }
   :deep(.alerts-data-table .n-data-table-th--fixed-right),
-  :deep(.alerts-data-table .n-data-table-td--fixed-right) { background: var(--card-color, #fff) !important; box-shadow: -1px 0 0 var(--border-color, #e8edf0); }
+  :deep(.alerts-data-table .n-data-table-td--fixed-right) { z-index: 3 !important; background: var(--card-color, #fff) !important; box-shadow: -1px 0 0 var(--border-color, #e8edf0); }
   :deep(.alerts-data-table .alert-row--selected .n-data-table-td--fixed-right) { background: color-mix(in srgb, var(--primary-color) 9%, var(--card-color, #fff)) !important; }
   :deep(.alerts-data-table .alert-row--focused .n-data-table-td--fixed-right) { background: color-mix(in srgb, #f4c430 24%, var(--card-color, #fff)) !important; }
-  :deep(.alerts-data-table .alert-actions-column) { padding-inline: 12px !important; }
+  :deep(.alerts-data-table .alert-status-column) { padding-inline: 12px !important; white-space: nowrap; }
+  :deep(.alerts-data-table .alert-actions-column) { padding-inline: 12px !important; white-space: nowrap; }
   :deep(.alerts-data-table .alert-details-button) { min-width: 56px; }
 @media (max-width: 1120px) {
   .filters { align-items: flex-start; flex-direction: column; }
