@@ -18,7 +18,7 @@ function getAudioContext() {
   return audioContext
 }
 
-// A standard two-pulse warning is shared by every severity. It is deliberately
+// A high-low alternating warning is shared by every severity. It is deliberately
 // non-melodic, so it reads as an alert rather than an ordinary chat message.
 export function playAlertNotificationSound() {
   const context = getAudioContext()
@@ -26,15 +26,17 @@ export function playAlertNotificationSound() {
   try {
     const startedAt = context.currentTime
     ;[
-      { offset: 0 },
-      { offset: .16 },
+      { frequency: 880, offset: 0 },
+      { frequency: 660, offset: .12 },
+      { frequency: 880, offset: .24 },
+      { frequency: 660, offset: .36 },
     ].forEach((note) => {
       const oscillator = context.createOscillator()
       const gain = context.createGain()
       const noteStart = startedAt + note.offset
       const noteEnd = noteStart + .1
       oscillator.type = 'square'
-      oscillator.frequency.setValueAtTime(880, noteStart)
+      oscillator.frequency.setValueAtTime(note.frequency, noteStart)
       gain.gain.setValueAtTime(.0001, noteStart)
       gain.gain.exponentialRampToValueAtTime(.12, noteStart + .012)
       gain.gain.exponentialRampToValueAtTime(.0001, noteEnd)
