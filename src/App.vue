@@ -19,6 +19,7 @@ import { useWebSocketStore } from '@/stores/websocket'
 import { useAlertRealtimeStore } from '@/stores/alert-realtime'
 import { createGlobalSseLifecycle } from '@/realtime/global-sse-lifecycle'
 import AlertNotificationHost from '@/components/alerts/AlertNotificationHost.vue'
+import { primeAlertNotificationSound } from '@/alerts/notification-sound'
 
 const { theme, mode } = useTheme();
 const route = useRoute();
@@ -66,10 +67,14 @@ watch(
 
 onMounted(() => {
   window.addEventListener('beforeunload', websocketStore.disconnect)
+  window.addEventListener('pointerdown', primeAlertNotificationSound)
+  window.addEventListener('keydown', primeAlertNotificationSound)
 })
 
 onUnmounted(() => {
   window.removeEventListener('beforeunload', websocketStore.disconnect)
+  window.removeEventListener('pointerdown', primeAlertNotificationSound)
+  window.removeEventListener('keydown', primeAlertNotificationSound)
   globalSseLifecycle.dispose()
 })
 

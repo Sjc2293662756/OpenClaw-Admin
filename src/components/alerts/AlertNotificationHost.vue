@@ -8,6 +8,7 @@ import { useAlertRealtimeStore, type AlertRealtimeItem } from '@/stores/alert-re
 import { alertActionLabel, alertSeverityLabel, alertSeverityType, alertSource, alertSummary, formatAlertTime } from '@/alerts/presentation'
 import { alertNotificationDuration, alertNotificationType } from '@/alerts/notification-policy'
 import { destroyActiveNotification, destroyAllActiveNotifications, forgetActiveNotification } from '@/alerts/notification-lifecycle'
+import { playAlertNotificationSound } from '@/alerts/notification-sound'
 
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -75,6 +76,7 @@ function notifyNext() {
   const item = alerts.dequeueNotification()
   if (!item) return
   const payload = item.payload as Record<string, unknown>
+  playAlertNotificationSound()
   const notice = notification.create({
     title: `${alertSeverityLabel(String(payload.severity || ''), locale.value)} · ${t('pages.gaiop.alertCenter.triggered')}`,
     content: notificationDescription(item),
