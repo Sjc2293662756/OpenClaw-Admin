@@ -15,6 +15,7 @@ import { sendError } from '../lib/api-response.js'
 import { createAuthRouter } from './auth.js'
 import { createUsersRouter } from './users.js'
 import { migrateAlertNotificationPreferences } from '../lib/alert-notification-preferences.js'
+import { migrateModulePermissions, resolveEffectiveModulePermissions } from '../lib/module-permissions.js'
 
 const PASSWORDS = {
   initial: 'InitialA1!',
@@ -68,6 +69,7 @@ async function createFixture({ loginRateLimiter } = {}) {
   `)
   migrateUserSecurityColumns(db)
   migrateAlertNotificationPreferences(db)
+  migrateModulePermissions(db)
   const insert = db.prepare(`
     INSERT INTO users (
       id, username, password_hash, role, description, status,
@@ -116,6 +118,19 @@ async function createFixture({ loginRateLimiter } = {}) {
     recordAudit,
     createId: randomUUID,
     getSessionSettings: () => ({ loginSessionHours: 24 }),
+    projectAuthUser: (user) => {
+      const projection = resolveEffectiveModulePermissions(db, user)
+      return {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        isInitialAdmin: Boolean(user.is_initial_admin ?? user.isInitialAdmin),
+        mustChangePassword: Boolean(user.must_change_password ?? user.mustChangePassword),
+        effectiveModules: projection.effectiveModules,
+        moduleOverrides: projection.moduleOverrides,
+        permissionVersion: projection.permissionVersion,
+      }
+    },
     loginFailures,
     loginRateLimiter,
   }))
@@ -196,6 +211,13 @@ test('login lockout is case-insensitive, explains the temporary lock, and clears
     fixture.advanceTime(5 * 60 * 1000)
     const successful = await fixture.login('basic-user', PASSWORDS.basic)
     assert.equal(successful.response.status, 200)
+    assert.equal(successful.body.user.effectiveModules['alerts.records'], true)
+    assert.equal(successful.body.user.effectiveModules.dashboard, false)
+    assert.equal(successful.body.user.permissionVersion, 0)
+    assert.equal(Object.hasOwn(successful.body.user, 'moduleOverrides'), false)
+    const checked = await fixture.request('/api/auth/check', { token: successful.token })
+    assert.deepEqual(checked.body.user.effectiveModules, successful.body.user.effectiveModules)
+    assert.equal(Object.hasOwn(checked.body.user, 'moduleOverrides'), false)
     assert.equal(fixture.loginFailures.getState('BASIC-USER').failures, 0)
     assert.equal(fixture.audits.some(entry => entry.action === '登录锁定'), true)
   } finally {

@@ -5,6 +5,7 @@ import { NAlert, NButton, NCard, NDataTable, NDescriptions, NDescriptionsItem, N
 import { CloseOutline, CopyOutline, DownloadOutline, RefreshOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { useAuthStore } from '@/stores/auth'
+import { canAccessPage } from '@/permissions/access-control'
 import { usePermissions } from '@/composables/usePermissions'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
 import { localizeApiError } from '@/utils/api-error'
@@ -31,6 +32,7 @@ type AlertReturnState = {
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+const canExportAlerts = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.export'))
 const alertRealtimeStore = useAlertRealtimeStore()
 const { canUseFunctions, readOnlyHint } = usePermissions()
 const message = useMessage()
@@ -417,7 +419,7 @@ onUnmounted(() => alertRealtimeStore.setAlertDetailOpen(false))
           <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="3000" :precision="0" :placeholder="text('最高 3000 条', 'Up to 3000')" style="width: 150px" />
           <NButton v-if="isCustomLimit" type="primary" @click="applyResultLimit">{{ text('应用条数', 'Apply limit') }}</NButton>
           <NButton :disabled="!alerts.length" @click="copyCurrentPage"><template #icon><CopyOutline /></template>{{ text('复制内容', 'Copy') }}</NButton>
-          <NButton :loading="exportLoading" :disabled="!alerts.length" @click="exportCurrentPage"><template #icon><DownloadOutline /></template>{{ t('pages.gaiop.alerts.export') }}</NButton>
+          <NButton v-if="canExportAlerts" :loading="exportLoading" :disabled="!alerts.length" @click="exportCurrentPage"><template #icon><DownloadOutline /></template>{{ t('pages.gaiop.alerts.export') }}</NButton>
         </NSpace>
       </div>
 

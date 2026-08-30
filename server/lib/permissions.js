@@ -1,3 +1,5 @@
+import { canAccessEffectiveModule, hasAnyEffectiveModule, restModuleKeyFor, rpcModuleKeysFor } from './module-permissions.js'
+
 export const USER_ROLES = new Set(['basic', 'auditor', 'standard', 'admin'])
 export const USER_STATUSES = new Set(['active', 'inactive'])
 
@@ -19,7 +21,7 @@ export function createInitialAdminMiddleware(authMiddleware) {
       if (req.user?.role !== 'admin' || req.user?.isInitialAdmin !== true) {
         return res.status(403).json({
           ok: false,
-          error: '仅初始管理员可以修改平台品牌名称',
+          error: '仅初始管理员可以执行此操作',
           code: 'INITIAL_ADMIN_REQUIRED',
         })
       }
@@ -118,7 +120,18 @@ export function getRpcPermissionDecision(user, method) {
     return { allowed: false, code: 'RPC_METHOD_NOT_SUPPORTED', message: 'RPC 方法未登记或不受 GAIOP 支持' }
   }
 
+  const moduleKeys = rpcModuleKeysFor(normalized)
+  const hasEffectiveProjection = moduleKeys.some((moduleKey) => Object.hasOwn(user?.effectiveModules || {}, moduleKey))
+  if (hasEffectiveProjection && !hasAnyEffectiveModule(user, moduleKeys)) {
+    return { allowed: false, code: 'MODULE_ACCESS_DENIED', message: '当前账户无权访问此模块' }
+  }
+
   if (user?.role === 'admin') return { allowed: true }
+
+  const explicitlyAllowedModule = moduleKeys.some((moduleKey) => user?.moduleOverrides?.[moduleKey] === 'allow')
+  if (explicitlyAllowedModule && isReadOnlyRpcMethod(normalized) && !GLOBAL_USAGE_RPC_METHODS.has(normalized)) {
+    return { allowed: true }
+  }
 
   if (user?.role === 'basic') {
     if (
@@ -228,20 +241,13 @@ export function isBasicWorkspaceApiRequest(user, method, originalUrl) {
   if (normalizedMethod === 'POST' && (
     path === '/api/rpc'
     || path === '/api/workspace/sessions'
-    || path === '/api/alerts/export'
   )) return true
   if (normalizedMethod === 'GET' && (path === '/api/events' || path === '/api/media')) return true
-  if (normalizedMethod === 'GET' && (
-    path === '/api/alerts'
-    || path === '/api/alerts/time'
-    || path === '/api/alerts/changes'
-    || path === '/api/alerts/preferences'
-  )) return true
-  if (normalizedMethod === 'PUT' && path === '/api/alerts/preferences') return true
-  if (normalizedMethod === 'GET' && path === '/api/reports') return true
-  if (normalizedMethod === 'GET' && /^\/api\/reports\/[^/]+\/download$/u.test(path)) return true
-  if (normalizedMethod === 'GET' && /^\/api\/reports\/[^/]+\/preview$/u.test(path)) return true
+  if (normalizedMethod === 'GET' && path === '/api/module-permissions/catalog') return true
   if (normalizedMethod === 'PUT' && basicPasswordChangeTarget(path) === String(user.id || '')) return true
+  if (path.startsWith('/api/reports/retention/') || (normalizedMethod === 'DELETE' && path.startsWith('/api/reports/'))) return false
+  const moduleKey = restModuleKeyFor(normalizedMethod, path)
+  if (moduleKey && canAccessEffectiveModule(user, moduleKey)) return true
   return false
 }
 

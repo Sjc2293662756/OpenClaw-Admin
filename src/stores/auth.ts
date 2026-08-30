@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 import { localizeApiError } from '@/utils/api-error'
+import type { EffectiveModules } from '@/permissions/access-control'
 
 const AUTH_TOKEN_KEY = 'auth_token'
 const AUTH_USER_KEY = 'auth_user'
@@ -11,6 +12,8 @@ export type AuthUser = {
   role: 'basic' | 'auditor' | 'standard' | 'admin'
   isInitialAdmin?: boolean
   mustChangePassword?: boolean
+  effectiveModules?: EffectiveModules
+  permissionVersion?: number
 }
 
 export const useAuthStore = defineStore('auth', () => {

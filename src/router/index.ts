@@ -47,7 +47,7 @@ router.beforeEach(async (to, from, next) => {
             const redirect = typeof to.query.redirect === 'string' ? to.query.redirect : '/workspace'
             const entry = typeof to.query.entry === 'string' ? to.query.entry : ''
             next(entry === 'config'
-              ? resolveConfigManagementRedirect(authStore.currentUser?.role, redirect)
+              ? resolveConfigManagementRedirect(authStore.currentUser?.effectiveModules, redirect)
               : redirect)
           }
           return
@@ -94,8 +94,7 @@ router.beforeEach(async (to, from, next) => {
     return
   }
 
-  const role = authStore.currentUser?.role
-  if (to.name !== 'AccessDenied' && !canAccessRoute(role, to.name)) {
+  if (to.name !== 'AccessDenied' && !canAccessRoute(authStore.currentUser?.effectiveModules, to.name)) {
     const access = getPageAccess(to.name)
     next({
       name: 'AccessDenied',

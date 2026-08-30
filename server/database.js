@@ -10,6 +10,7 @@ import { migrateSessionRetentionTables } from './lib/session-retention-service.j
 import { migrateStorageWatermarkTables } from './lib/storage-watermark-service.js'
 import { migrateAlertStreamState } from './lib/alert-stream-state.js'
 import { migrateAlertNotificationPreferences } from './lib/alert-notification-preferences.js'
+import { migrateModulePermissions } from './lib/module-permissions.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -246,6 +247,7 @@ migrateSessionRetentionTables(db)
 migrateStorageWatermarkTables(db)
 migrateAlertStreamState(db)
 migrateAlertNotificationPreferences(db)
+migrateModulePermissions(db)
 
 try {
   db.exec('ALTER TABLE scenarios ADD COLUMN execution_log TEXT DEFAULT \'[]\'')

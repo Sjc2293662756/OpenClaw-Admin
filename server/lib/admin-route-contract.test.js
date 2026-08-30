@@ -4,23 +4,25 @@ import test from 'node:test'
 
 const source = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
 
-test('Wizard and Office REST endpoints are all administrator-only', () => {
+test('Wizard and Office use the module boundary while keeping mutations administrator-only', () => {
+  assert.match(source, /app\.use\('\/api\/wizard',\s*officeModuleMiddleware\)/)
   const routePattern = /app\.(get|post|put|delete)\('\/api\/wizard\/(?:scenarios|tasks)(?:\/:id)?',\s*(\w+)/g
   const matches = [...source.matchAll(routePattern)]
   assert.equal(matches.length, 10)
   for (const match of matches) {
-    assert.equal(match[2], 'adminMiddleware', `${match[1]} ${match[0]} must be admin-only`)
+    const expected = match[1] === 'get' ? 'authMiddleware' : 'adminMiddleware'
+    assert.equal(match[2], expected, `${match[1]} ${match[0]} must preserve its action boundary`)
   }
 })
 
-test('system metrics uses the dedicated monitor role boundary', () => {
+test('system monitoring REST uses the effective module boundary', () => {
   assert.match(
     source,
-    /app\.get\('\/api\/system\/metrics',\s*systemMonitorMiddleware/
+    /app\.get\('\/api\/system\/metrics',\s*systemModuleMiddleware/
   )
   assert.match(
     source,
-    /app\.use\('\/api\/system\/storage-watermarks',\s*createStorageWatermarkRouter\(\{ db, systemMonitorMiddleware \}\)\)/
+    /app\.use\('\/api\/system\/storage-watermarks',\s*systemModuleMiddleware,\s*createStorageWatermarkRouter\(\{ db, systemMonitorMiddleware: authMiddleware \}\)\)/
   )
 })
 

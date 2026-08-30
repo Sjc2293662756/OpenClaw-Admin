@@ -5,6 +5,7 @@ import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NRadio, NRadioGroup, 
 import { useAuthStore } from '@/stores/auth'
 import { localizeApiError } from '@/utils/api-error'
 import { useI18n } from 'vue-i18n'
+import UserModulePermissionsPanel from '@/components/users/UserModulePermissionsPanel.vue'
 
 type UserRole = 'basic' | 'auditor' | 'standard' | 'admin'
 type UserStatus = 'active' | 'inactive'
@@ -124,6 +125,7 @@ onMounted(loadUser)
           <NFormItem :label="t('pages.gaiop.users.status')"><NRadioGroup v-model:value="form.status" :disabled="securityFieldsDisabled"><NSpace><NRadio value="active">{{ t('pages.gaiop.users.activate') }}</NRadio><NRadio value="inactive">{{ t('pages.gaiop.users.deactivate') }}</NRadio></NSpace></NRadioGroup></NFormItem>
           <NFormItem label=""><NSpace><NButton @click="router.push({ name: 'UserManagement' })">{{ t('pages.gaiop.users.back') }}</NButton><NButton type="primary" :disabled="!canManageTarget" :loading="saving" @click="submit">{{ t('pages.gaiop.users.save') }}</NButton></NSpace></NFormItem>
         </NForm>
+        <UserModulePermissionsPanel v-if="isInitialAdmin" :user-id="userId" />
       </template>
     </NSpin>
   </NCard>

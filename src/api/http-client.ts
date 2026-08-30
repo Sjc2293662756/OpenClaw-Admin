@@ -172,6 +172,16 @@ export class ApiClient {
             queueMicrotask(() => this.emit('alertStreamState', message))
           }
           break
+
+        case 'permissionsChanged':
+          if ((typeof message.userId === 'string' || typeof message.userId === 'number')
+            && Number.isSafeInteger(message.permissionVersion) && message.permissionVersion >= 0) {
+            queueMicrotask(() => this.emit('permissionsChanged', {
+              userId: String(message.userId),
+              permissionVersion: message.permissionVersion,
+            }))
+          }
+          break
       }
     } catch (e) {
       console.error('[ApiClient] Failed to parse message:', e)

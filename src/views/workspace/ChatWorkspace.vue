@@ -44,7 +44,7 @@ const {
   chatReadOnlyHint,
 } = usePermissions()
 const message = useMessage()
-const canAccessAdminConsole = computed(() => canAccessPage(authStore.currentUser?.role, 'dashboard'))
+const canAccessAdminConsole = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'dashboard'))
 const useDefaultWordmark = computed(() => usesDefaultPlatformBranding())
 
 const ready = ref(wsStore.state === ConnectionState.CONNECTED)

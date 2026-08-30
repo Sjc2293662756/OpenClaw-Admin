@@ -1,9 +1,10 @@
 export type UserRole = 'basic' | 'auditor' | 'standard' | 'admin'
 
-export type PageAccessKey =
+export type ModulePermissionKey =
   | 'dashboard'
-  | 'alerts'
-  | 'chat'
+  | 'alerts.records'
+  | 'alerts.notifications'
+  | 'alerts.export'
   | 'sessions'
   | 'reports'
   | 'cron'
@@ -22,16 +23,9 @@ export type PageAccessKey =
   | 'systemUpgrade'
   | 'platformBranding'
 
-type PageAccessDefinition = {
-  moduleName: string
-  roles: readonly UserRole[]
-}
-
-const ALL_ROLES: readonly UserRole[] = ['basic', 'auditor', 'standard', 'admin']
-const NON_BASIC_ROLES: readonly UserRole[] = ['auditor', 'standard', 'admin']
-const AUDIT_AND_ADMIN: readonly UserRole[] = ['auditor', 'admin']
-const STATUS_VIEWERS: readonly UserRole[] = ['auditor', 'standard', 'admin']
-const ADMIN_ONLY: readonly UserRole[] = ['admin']
+export type EffectiveModules = Partial<Record<ModulePermissionKey, boolean>>
+export type PageAccessKey = ModulePermissionKey | 'chat'
+type PageAccessDefinition = { moduleName: string }
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   basic: '基础用户',
@@ -42,32 +36,36 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 
 export const MANAGEMENT_ACCESS_DENIED_NOTICE = 'management-access-denied'
 
+// Presentation metadata only. The browser never reconstructs access from a
+// role: every decision below consumes the server's effectiveModules projection.
 export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
-  dashboard: { moduleName: '仪表盘', roles: NON_BASIC_ROLES },
-  alerts: { moduleName: '告警记录', roles: ALL_ROLES },
-  chat: { moduleName: '对话工作台', roles: ALL_ROLES },
-  sessions: { moduleName: '会话管理', roles: NON_BASIC_ROLES },
-  reports: { moduleName: '报告文件管理', roles: ALL_ROLES },
-  cron: { moduleName: '任务计划', roles: AUDIT_AND_ADMIN },
-  memory: { moduleName: '记忆管理', roles: ADMIN_ONLY },
-  models: { moduleName: '模型管理', roles: ADMIN_ONLY },
-  channels: { moduleName: '频道管理', roles: NON_BASIC_ROLES },
-  skills: { moduleName: 'Skills管理', roles: STATUS_VIEWERS },
-  system: { moduleName: '系统监视器', roles: STATUS_VIEWERS },
-  agents: { moduleName: '多智能体', roles: ADMIN_ONLY },
-  office: { moduleName: '智能体工坊', roles: ADMIN_ONLY },
-  users: { moduleName: '账户管理', roles: AUDIT_AND_ADMIN },
-  userAdministration: { moduleName: '账户管理', roles: ADMIN_ONLY },
-  audit: { moduleName: '审计信息', roles: AUDIT_AND_ADMIN },
-  settings: { moduleName: '系统设置', roles: NON_BASIC_ROLES },
-  systemConfiguration: { moduleName: '高级配置', roles: ADMIN_ONLY },
-  systemUpgrade: { moduleName: '系统升级', roles: ADMIN_ONLY },
-  platformBranding: { moduleName: '平台品牌配置', roles: ADMIN_ONLY },
+  dashboard: { moduleName: '仪表盘' },
+  'alerts.records': { moduleName: '告警记录' },
+  'alerts.notifications': { moduleName: '告警通知/弹窗' },
+  'alerts.export': { moduleName: '告警导出' },
+  chat: { moduleName: '对话工作台' },
+  sessions: { moduleName: '会话管理' },
+  reports: { moduleName: '报告文件管理' },
+  cron: { moduleName: '任务计划' },
+  memory: { moduleName: '记忆管理' },
+  models: { moduleName: '模型管理' },
+  channels: { moduleName: '频道管理' },
+  skills: { moduleName: 'Skills管理' },
+  system: { moduleName: '系统监视器' },
+  agents: { moduleName: '多智能体' },
+  office: { moduleName: '智能体工坊' },
+  users: { moduleName: '账户列表' },
+  userAdministration: { moduleName: '账户与模块权限管理' },
+  audit: { moduleName: '审计信息' },
+  settings: { moduleName: '系统设置' },
+  systemConfiguration: { moduleName: '高级配置' },
+  systemUpgrade: { moduleName: '系统升级' },
+  platformBranding: { moduleName: '平台品牌配置' },
 }
 
 export const ROUTE_ACCESS_KEYS: Record<string, PageAccessKey> = {
   Dashboard: 'dashboard',
-  AlertNotifications: 'alerts',
+  AlertNotifications: 'alerts.records',
   ChatWorkspace: 'chat',
   Sessions: 'sessions',
   SessionDetail: 'sessions',
@@ -105,8 +103,8 @@ export function getPageAccess(routeName: string | symbol | null | undefined) {
   return key ? { key, ...PAGE_ACCESS_MATRIX[key] } : null
 }
 
-export function canAccessPage(role: UserRole | null | undefined, key: PageAccessKey): boolean {
-  return Boolean(role && PAGE_ACCESS_MATRIX[key].roles.includes(role))
+export function canAccessPage(effectiveModules: EffectiveModules | null | undefined, key: PageAccessKey): boolean {
+  return key === 'chat' || effectiveModules?.[key] === true
 }
 
 export function canUseConversation(role: UserRole | null | undefined): boolean {
@@ -114,37 +112,31 @@ export function canUseConversation(role: UserRole | null | undefined): boolean {
 }
 
 export function resolveConfigManagementRedirect(
-  role: UserRole | null | undefined,
+  effectiveModules: EffectiveModules | null | undefined,
   requestedRedirect: string,
 ) {
-  if (canAccessPage(role, 'dashboard')) return requestedRedirect
-
-  return {
-    name: 'ChatWorkspace',
-    query: { notice: MANAGEMENT_ACCESS_DENIED_NOTICE },
-  }
+  if (canAccessPage(effectiveModules, 'dashboard')) return requestedRedirect
+  return { name: 'ChatWorkspace', query: { notice: MANAGEMENT_ACCESS_DENIED_NOTICE } }
 }
 
 export function resolvePasswordChangeReturn(
-  role: UserRole | null | undefined,
+  effectiveModules: EffectiveModules | null | undefined,
   returnTo?: string,
 ) {
   const requestedPath = returnTo?.trim() || ''
-  if (requestedPath === '/workspace' || requestedPath.startsWith('/workspace?')) {
-    return requestedPath
-  }
-  if ((requestedPath === '/users' || requestedPath.startsWith('/users?')) && canAccessPage(role, 'users')) {
+  if (requestedPath === '/workspace' || requestedPath.startsWith('/workspace?')) return requestedPath
+  if ((requestedPath === '/users' || requestedPath.startsWith('/users?')) && canAccessPage(effectiveModules, 'users')) {
     return { name: 'UserManagement' }
   }
-
-  return canAccessPage(role, 'users')
-    ? { name: 'UserManagement' }
-    : { name: 'ChatWorkspace' }
+  return canAccessPage(effectiveModules, 'users') ? { name: 'UserManagement' } : { name: 'ChatWorkspace' }
 }
 
-export function canAccessRoute(role: UserRole | null | undefined, routeName: string | symbol | null | undefined): boolean {
+export function canAccessRoute(
+  effectiveModules: EffectiveModules | null | undefined,
+  routeName: string | symbol | null | undefined,
+): boolean {
   const access = getPageAccess(routeName)
-  return !access || canAccessPage(role, access.key)
+  return !access || canAccessPage(effectiveModules, access.key)
 }
 
 export function canAccessInitialAdminRoute(

@@ -30,10 +30,10 @@ function validateInput(input) {
   return { ok: true, value: { endpoint: endpoint.value, accessToken } }
 }
 
-export function createGAIOPServiceRouter({ adminMiddleware, recordAudit, getServiceConfig, saveServiceConfig }) {
+export function createGAIOPServiceRouter({ adminMiddleware, viewerMiddleware = adminMiddleware, recordAudit, getServiceConfig, saveServiceConfig }) {
   const router = Router()
 
-  router.get('/', adminMiddleware, (_req, res) => {
+  router.get('/', viewerMiddleware, (_req, res) => {
     sendOk(res, { service: getServiceConfig() })
   })
 

@@ -1,15 +1,14 @@
-const ALERT_VIEWER_ROLES = new Set(['basic', 'standard', 'auditor', 'admin'])
+import { canAccessEffectiveModule } from './module-permissions.js'
 
 export function canReceiveSseData(user, data, {
   extractSessionKey,
   canAccessSession,
 } = {}) {
+  if (data?.type === 'permissionsChanged') return String(data.userId || '') === String(user?.id || '')
   if (data?.type === 'alert' || data?.type === 'alertStreamState') {
-    return ALERT_VIEWER_ROLES.has(user?.role)
+    return canAccessEffectiveModule(user, 'alerts.notifications')
   }
   if (data?.type !== 'event' || user?.role === 'admin') return true
   const sessionKey = extractSessionKey?.(data.payload)
   return Boolean(sessionKey && canAccessSession?.(user, sessionKey))
 }
-
-export const __test__ = { ALERT_VIEWER_ROLES }

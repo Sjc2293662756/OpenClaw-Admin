@@ -46,6 +46,7 @@ const saving = ref(false)
 const enabled = ref(true)
 const settings = ref<Settings | null>(null)
 const runtime = ref<Runtime | null>(null)
+const canManage = computed(() => authStore.isAdmin)
 
 const runtimeLabel = computed(() => ({
   pending: text('待部署联调', 'Pending deployment'),
@@ -89,6 +90,7 @@ async function loadConfiguration() {
 }
 
 async function saveConfiguration() {
+  if (!canManage.value) return
   saving.value = true
   try {
     const response = await fetch('/api/system-config/alert-ingestion', {
@@ -130,6 +132,9 @@ onMounted(() => { void loadConfiguration() })
       <NAlert type="info" :show-icon="true">
         {{ text('企业微信、Webhook 等通知频道不在此处配置；它们将统一由“频道管理”维护。本页不会下载或安装系统软件，也不会修改防火墙或 NAPM。', 'WeCom, Webhook, and other notification channels are not configured here; manage them in Channel Management. This page does not download or install software, or modify the firewall or NAPM.') }}
       </NAlert>
+      <NAlert v-if="!canManage" type="info" :bordered="false">
+        {{ text('当前模块为只读；只有管理员可以修改接收策略。', 'This module is read-only; only administrators can change the reception policy.') }}
+      </NAlert>
 
       <div class="ingestion-grid">
         <NCard class="app-card" :title="text('接收策略', 'Reception policy')">
@@ -145,9 +150,9 @@ onMounted(() => { void loadConfiguration() })
               <strong>{{ text('启用 Syslog 告警接收', 'Enable Syslog alert reception') }}</strong>
               <p>{{ text(`保存的是 ${platformBranding.productCode} 的目标运行策略；接收器未部署时会保持“待部署联调”。`, `This saves ${platformBranding.productCode}'s target operating policy. It remains pending deployment when the receiver is not deployed.`) }}</p>
             </div>
-            <NSwitch v-model:value="enabled" />
+            <NSwitch v-model:value="enabled" :disabled="!canManage" />
           </div>
-          <NButton type="primary" :loading="saving" @click="saveConfiguration">
+          <NButton type="primary" :disabled="!canManage" :loading="saving" @click="saveConfiguration">
             <template #icon><NIcon :component="SaveOutline" /></template>
             {{ text('保存接收策略', 'Save reception policy') }}
           </NButton>

@@ -87,6 +87,34 @@ test('global cost usage is limited to auditor and administrator', () => {
   assert.equal(getRpcPermissionDecision({ role: 'admin' }, 'usage.cost').allowed, true)
 })
 
+test('personal module allow opens only registered safe reads while deny blocks role defaults', () => {
+  const basicWithChannels = {
+    id: 'basic-override', role: 'basic',
+    effectiveModules: { channels: true },
+    moduleOverrides: { channels: 'allow' },
+  }
+  assert.equal(getRpcPermissionDecision(basicWithChannels, 'channels.status').allowed, true)
+  const unsafeChannelWrite = getRpcPermissionDecision(basicWithChannels, 'channel.auth')
+  assert.equal(unsafeChannelWrite.allowed, false)
+  assert.equal(unsafeChannelWrite.code, 'BASIC_WORKSPACE_ONLY')
+
+  const standardDashboardAllow = {
+    id: 'standard-override', role: 'standard',
+    effectiveModules: { dashboard: true },
+    moduleOverrides: { dashboard: 'allow' },
+  }
+  assert.equal(getRpcPermissionDecision(standardDashboardAllow, 'usage.cost').allowed, false)
+
+  const adminDeniedConfig = {
+    id: 'admin-denied', role: 'admin',
+    effectiveModules: { systemConfiguration: false, agents: false },
+    moduleOverrides: { systemConfiguration: 'deny', agents: 'deny' },
+  }
+  const denied = getRpcPermissionDecision(adminDeniedConfig, 'config.set')
+  assert.equal(denied.allowed, false)
+  assert.equal(denied.code, 'MODULE_ACCESS_DENIED')
+})
+
 test('read-only RPC classification is explicit and rejects unsafe lookalikes', () => {
   assert.equal(isReadOnlyRpcMethod('sessions.get'), true)
   assert.equal(isReadOnlyRpcMethod('config.get'), true)
@@ -178,6 +206,19 @@ test('basic REST boundary allows workspace transport, alert reads/preferences, a
     assert.equal(isBasicWorkspaceApiRequest(basic, method, path), false, `${method} ${path}`)
   }
   assert.equal(isBasicWorkspaceApiRequest(standard, 'GET', '/api/reports'), true)
+})
+
+test('basic REST boundary consumes the effective module projection for personal allow and deny', () => {
+  const allowed = { id: 'basic-1', role: 'basic', effectiveModules: { dashboard: true } }
+  assert.equal(isBasicWorkspaceApiRequest(allowed, 'GET', '/api/dashboard/summary'), true)
+
+  const denied = {
+    id: 'basic-1', role: 'basic',
+    effectiveModules: { 'alerts.records': false, 'alerts.notifications': false, 'alerts.export': false },
+  }
+  assert.equal(isBasicWorkspaceApiRequest(denied, 'GET', '/api/alerts'), false)
+  assert.equal(isBasicWorkspaceApiRequest(denied, 'GET', '/api/alerts/changes'), false)
+  assert.equal(isBasicWorkspaceApiRequest(denied, 'POST', '/api/alerts/export'), false)
 })
 
 test('basic REST middleware rejects direct management requests and preserves health', async () => {

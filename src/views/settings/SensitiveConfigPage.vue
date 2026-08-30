@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, h, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import {
   NAlert,
   NButton,
@@ -14,7 +13,6 @@ import {
   NModal,
   NRadio,
   NRadioGroup,
-  NResult,
   NSelect,
   NSpace,
   NTag,
@@ -43,7 +41,6 @@ interface SensitiveConfigItem {
   updatedAt: number
 }
 
-const router = useRouter()
 const authStore = useAuthStore()
 const { locale } = useI18n()
 const dialog = useDialog()
@@ -124,7 +121,6 @@ function closeForm() {
 }
 
 async function refresh(showMessage = true) {
-  if (!isAdmin.value) return
   loading.value = true
   try {
     const response = await fetch('/api/system-config/environment', { headers: headers() })
@@ -206,18 +202,17 @@ onMounted(() => { refresh(false) })
 
 <template>
   <section class="sensitive-config-page">
-    <NResult v-if="!isAdmin" status="403" :title="text('仅管理员可访问', 'Administrators only')" :description="text('环境与敏感配置属于系统安全配置，只有管理员可以查看和维护。', 'Environment and sensitive configuration is a system-security area that only administrators can view and manage.')">
-<template #footer><NButton @click="router.push({ name: 'SystemConfiguration' })">{{ text('返回高级配置', 'Back to advanced configuration') }}</NButton></template>
-    </NResult>
-
-    <template v-else>
+    <template>
       <NAlert type="warning" :bordered="false" class="stage-note">
         {{ text(`配置项保存于 ${platformBranding.productCode} 管理配置库，不会直接修改服务器 \`.env\`、操作系统或正在运行的服务。敏感值采用加密存储，列表和编辑时均不会回显原值。`, `Configuration items are stored in the ${platformBranding.productCode} management configuration store and do not directly change the server \`.env\`, operating system, or running services. Sensitive values are encrypted and are never shown again in the list or editor.`) }}
+      </NAlert>
+      <NAlert v-if="!isAdmin" type="info" :bordered="false" class="stage-note">
+        {{ text('当前模块为只读；敏感值始终不回显，只有管理员可以新增、修改或删除配置。', 'This module is read-only. Sensitive values are never revealed, and only administrators can add, change, or delete configuration.') }}
       </NAlert>
       <NCard :title="text('环境与敏感配置', 'Environment and sensitive configuration')" :bordered="false" class="sensitive-config-card">
         <template #header-extra>
           <NSpace>
-            <NButton type="primary" @click="openCreate">
+            <NButton type="primary" :disabled="!isAdmin" @click="openCreate">
               <template #icon><NIcon><AddOutline /></NIcon></template>{{ text('添加配置', 'Add configuration') }}
             </NButton>
             <NButton :loading="loading" @click="refresh()">

@@ -68,6 +68,7 @@ const showBackupConfirm = ref(false)
 const activeTaskId = ref<string | null>(null)
 const taskDetail = ref<TaskDetail | null>(null)
 const taskDetailLoading = ref(false)
+const canManage = computed(() => authStore.isAdmin)
 let taskPollTimer: number | null = null
 const runtimeLabel = computed(() => ({ 'not-configured': text('待部署', 'Not configured'), reachable: text('服务可用', 'Available'), unavailable: text('服务不可用', 'Unavailable') }[overview.value?.runtime.state || 'not-configured']))
 const runtimeType = computed(() => ({ 'not-configured': 'warning', reachable: 'success', unavailable: 'error' }[overview.value?.runtime.state || 'not-configured'] as 'warning' | 'success' | 'error'))
@@ -86,6 +87,7 @@ function componentLabel(component?: ComponentInfo | null) {
   return (component.version || text('未知版本', 'Unknown version')) + ' · ' + (component.status || text('未知状态', 'Unknown status'))
 }
 function choosePackage() {
+  if (!canManage.value) return
   fileInput.value?.click()
 }
 function onPackageSelected(event: Event) {
@@ -95,6 +97,7 @@ function onPackageSelected(event: Event) {
   validation.value = null
 }
 async function validatePackage() {
+  if (!canManage.value) return
   if (!selectedFile.value) {
     message.warning(text('请先选择 ZIP 格式升级包', 'Select a ZIP upgrade package first'))
     return
@@ -118,16 +121,19 @@ async function validatePackage() {
   }
 }
 function openExecutionConfirm() {
+  if (!canManage.value) return
   executionConfirmation.value = ''
   showExecutionConfirm.value = true
 }
 function openBackupConfirm(backup: Backup, action: 'rollback' | 'delete') {
+  if (!canManage.value) return
   selectedBackup.value = backup
   backupAction.value = action
   backupConfirmation.value = ''
   showBackupConfirm.value = true
 }
 async function confirmBackupAction() {
+  if (!canManage.value) return
   const backup = selectedBackup.value
   if (!backup) return
   backupActionLoading.value = true
@@ -200,6 +206,7 @@ async function loadTaskDetail(taskId: string, silent = false) {
   }
 }
 async function executeValidatedTask() {
+  if (!canManage.value) return
   if (!validation.value?.taskId) return
   executing.value = true
   try {
@@ -250,6 +257,9 @@ onBeforeUnmount(stopTaskPolling)
         <template v-else-if="overview?.runtime.state === 'not-configured'">{{ text('当前环境尚未配置升级服务。ISO 部署阶段将设置内部地址、服务身份令牌、受控目录和 systemd 服务；此页面不会直接连接服务器。', 'The upgrade service is not configured in this environment. ISO deployment configures its internal address, service token, controlled directories, and systemd service; this page never connects directly to a server.') }}</template>
         <template v-else>{{ text('BFF 无法连接升级服务。请在部署阶段检查升级服务与内部网络；页面未尝试执行升级。', 'The BFF cannot reach the upgrade service. Check the service and internal network during deployment; this page has not attempted an upgrade.') }}</template>
       </NAlert>
+      <NAlert v-if="!canManage" type="info" :bordered="false" class="read-only-tip">
+        {{ text('当前模块为只读；可以查看状态、任务和备份，但只有管理员可以校验、执行、回滚或删除。', 'This module is read-only. You can inspect status, tasks, and backups, but only administrators can validate, execute, roll back, or delete.') }}
+      </NAlert>
       <NGrid :cols="1" :x-gap="16" :y-gap="16" responsive="screen" item-responsive>
         <NGridItem v-if="taskDetail" span="1">
           <NCard :title="text('升级任务进度', 'Upgrade task progress')">
@@ -277,8 +287,8 @@ onBeforeUnmount(stopTaskPolling)
             <input ref="fileInput" type="file" accept=".zip,application/zip" class="hidden-input" @change="onPackageSelected">
             <div class="action-row">
               <span>{{ selectedFile ? selectedFile.name : text('尚未选择升级包', 'No upgrade package selected') }}</span>
-              <NButton @click="choosePackage">{{ text('选择 ZIP 包', 'Choose ZIP package') }}</NButton>
-              <NButton type="primary" :disabled="!selectedFile || overview?.runtime.state !== 'reachable'" :loading="validating" @click="validatePackage">{{ text('校验升级包', 'Validate package') }}</NButton>
+              <NButton :disabled="!canManage" @click="choosePackage">{{ text('选择 ZIP 包', 'Choose ZIP package') }}</NButton>
+              <NButton type="primary" :disabled="!canManage || !selectedFile || overview?.runtime.state !== 'reachable'" :loading="validating" @click="validatePackage">{{ text('校验升级包', 'Validate package') }}</NButton>
             </div>
             <NDescriptions v-if="validation" :column="1" bordered class="validation-result">
               <NDescriptionsItem :label="text('校验结果', 'Validation')"><NTag :type="validation.valid ? 'success' : 'error'">{{ validation.valid ? text('通过', 'Passed') : text('未通过', 'Failed') }}</NTag></NDescriptionsItem>
@@ -290,7 +300,7 @@ onBeforeUnmount(stopTaskPolling)
               <div v-for="item in validation.errors" :key="item.field + item.message">{{ item.field || text('校验', 'Validation') }}: {{ item.message }}</div>
             </NAlert>
             <div v-if="validation?.valid" class="execute-row">
-              <NButton type="error" @click="openExecutionConfirm">{{ text('确认并执行升级', 'Confirm and execute upgrade') }}</NButton>
+              <NButton type="error" :disabled="!canManage" @click="openExecutionConfirm">{{ text('确认并执行升级', 'Confirm and execute upgrade') }}</NButton>
             </div>
           </NCard>
         </NGridItem>
@@ -323,7 +333,7 @@ onBeforeUnmount(stopTaskPolling)
             <NEmpty v-else :description="text('暂无升级任务记录', 'No upgrade task records')" />
             <NTable v-if="overview?.backups?.length" :single-line="false" size="small" class="backup-table">
               <thead><tr><th>{{ text('备份组件', 'Backed-up component') }}</th><th>{{ text('版本', 'Version') }}</th><th>{{ text('创建时间', 'Created') }}</th></tr></thead>
-              <tbody><tr v-for="backup in overview.backups" :key="backup.id"><td>{{ backup.component }}</td><td>{{ backup.version }}</td><td>{{ formatTime(backup.createdAt || undefined) }}</td><td><NButton text type="warning" size="small" @click="openBackupConfirm(backup, 'rollback')">{{ text('回滚', 'Rollback') }}</NButton><NButton text type="error" size="small" @click="openBackupConfirm(backup, 'delete')">{{ text('删除', 'Delete') }}</NButton></td></tr></tbody>
+              <tbody><tr v-for="backup in overview.backups" :key="backup.id"><td>{{ backup.component }}</td><td>{{ backup.version }}</td><td>{{ formatTime(backup.createdAt || undefined) }}</td><td><NButton text type="warning" size="small" :disabled="!canManage" @click="openBackupConfirm(backup, 'rollback')">{{ text('回滚', 'Rollback') }}</NButton><NButton text type="error" size="small" :disabled="!canManage" @click="openBackupConfirm(backup, 'delete')">{{ text('删除', 'Delete') }}</NButton></td></tr></tbody>
             </NTable>
           </NCard>
         </NGridItem>

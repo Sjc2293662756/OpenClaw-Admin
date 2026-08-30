@@ -42,7 +42,7 @@ async function submit() {
 
 function returnFromPasswordChange() {
   const returnTo = typeof route.query.returnTo === 'string' ? route.query.returnTo : undefined
-  void router.push(resolvePasswordChangeReturn(authStore.currentUser?.role, returnTo))
+  void router.push(resolvePasswordChangeReturn(authStore.currentUser?.effectiveModules, returnTo))
 }
 </script>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import {
   NConfigProvider,
   NMessageProvider,
@@ -20,9 +20,11 @@ import { useAlertRealtimeStore } from '@/stores/alert-realtime'
 import { createGlobalSseLifecycle } from '@/realtime/global-sse-lifecycle'
 import AlertNotificationHost from '@/components/alerts/AlertNotificationHost.vue'
 import { primeAlertNotificationSound } from '@/alerts/notification-sound'
+import { canAccessPage, canAccessRoute, getPageAccess } from '@/permissions/access-control'
 
 const { theme, mode } = useTheme();
 const route = useRoute();
+const router = useRouter();
 const localeStore = useLocaleStore();
 const { t } = useI18n();
 const authStore = useAuthStore()
@@ -32,6 +34,31 @@ const globalSseLifecycle = createGlobalSseLifecycle(websocketStore, alertRealtim
 const appTitle = computed(() => t('app.title'));
 const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
 const activeTheme = computed(() => (lightOnlyRoute.value ? null : theme.value));
+const canReceiveAlertNotifications = computed(() => canAccessPage(
+  authStore.currentUser?.effectiveModules,
+  'alerts.notifications',
+))
+let permissionRefresh: Promise<void> | null = null
+
+const unsubscribePermissionsChanged = websocketStore.subscribe('permissionsChanged', (payload: unknown) => {
+  const event = payload as { userId?: string; permissionVersion?: number }
+  if (String(event.userId || '') !== String(authStore.currentUser?.id || '')) return
+  if (permissionRefresh) return
+  permissionRefresh = (async () => {
+    const valid = await authStore.checkAuth()
+    if (!valid) {
+      await router.replace({ name: 'Welcome', query: { redirect: route.fullPath } })
+      return
+    }
+    if (route.name !== 'AccessDenied' && !canAccessRoute(authStore.currentUser?.effectiveModules, route.name)) {
+      const access = getPageAccess(route.name)
+      await router.replace({
+        name: 'AccessDenied',
+        query: { module: access?.moduleName || '当前模块', returnTo: '/workspace' },
+      })
+    }
+  })().finally(() => { permissionRefresh = null })
+})
 
 const naiveLocale = computed(() =>
   localeStore.locale === "zh-CN" ? zhCN : enUS,
@@ -76,6 +103,7 @@ onUnmounted(() => {
   window.removeEventListener('pointerdown', primeAlertNotificationSound)
   window.removeEventListener('keydown', primeAlertNotificationSound)
   globalSseLifecycle.dispose()
+  unsubscribePermissionsChanged()
 })
 
 watch(
@@ -99,7 +127,7 @@ watch(
     <NNotificationProvider :max="3">
       <NMessageProvider>
         <NDialogProvider>
-          <AlertNotificationHost />
+          <AlertNotificationHost v-if="canReceiveAlertNotifications" />
           <RouterView />
         </NDialogProvider>
       </NMessageProvider>

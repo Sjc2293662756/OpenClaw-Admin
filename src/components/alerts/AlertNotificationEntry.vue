@@ -10,7 +10,7 @@ import { canAccessPage } from '@/permissions/access-control'
 const { t } = useI18n()
 const authStore = useAuthStore()
 const alerts = useAlertRealtimeStore()
-const visible = computed(() => canAccessPage(authStore.currentUser?.role, 'alerts'))
+const visible = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.notifications'))
 const badgeValue = computed<string | number | undefined>(() => alerts.unreadCount > 99 ? '99+' : alerts.unreadCount || undefined)
 </script>
 

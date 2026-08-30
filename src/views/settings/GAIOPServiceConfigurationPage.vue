@@ -38,6 +38,7 @@ const saving = ref(false)
 const endpoint = ref('')
 const accessToken = ref('')
 const service = ref<ServiceConfig | null>(null)
+const canManage = computed(() => authStore.isAdmin)
 
 const connected = computed(() => service.value?.state === 'connected')
 const statusText = computed(() => connected.value ? t('pages.gaiop.systemConfig.connected') : t('pages.gaiop.systemConfig.disconnected'))
@@ -67,6 +68,7 @@ async function loadService() {
 }
 
 async function saveService() {
+  if (!canManage.value) return
   saving.value = true
   try {
     const body: { endpoint: string; accessToken?: string } = { endpoint: endpoint.value.trim() }
@@ -111,19 +113,23 @@ onMounted(() => { void loadService() })
 
       <div class="service-grid">
         <NCard class="app-card" :title="t('pages.gaiop.systemConfig.connectionConfig')">
+          <NAlert v-if="!canManage" type="info" :bordered="false" class="read-only-tip">
+            当前模块为只读；只有管理员可以修改连接配置。
+          </NAlert>
           <NForm label-placement="top" class="service-form">
             <NFormItem :label="t('pages.gaiop.systemConfig.endpoint')">
-              <NInput v-model:value="endpoint" placeholder="例如：ws://127.0.0.1:3003" />
+              <NInput v-model:value="endpoint" :disabled="!canManage" placeholder="例如：ws://127.0.0.1:3003" />
             </NFormItem>
             <NFormItem :label="t('pages.gaiop.systemConfig.token')">
               <NInput
                 v-model:value="accessToken"
                 type="password"
                 show-password-on="click"
+                :disabled="!canManage"
                 :placeholder="service?.accessTokenConfigured ? t('pages.gaiop.systemConfig.tokenConfigured') : t('pages.gaiop.systemConfig.tokenRequired')"
               />
             </NFormItem>
-            <NButton type="primary" :loading="saving" @click="saveService">
+            <NButton type="primary" :disabled="!canManage" :loading="saving" @click="saveService">
               <template #icon><NIcon :component="SaveOutline" /></template>
               {{ t('pages.gaiop.systemConfig.saveReconnect') }}
             </NButton>
@@ -156,6 +162,7 @@ onMounted(() => { void loadService() })
 .service-hero p { margin: 0; color: #6d8b7c; line-height: 1.65; }
 .service-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 16px; }
 .service-form { max-width: 620px; }
+.read-only-tip { margin-bottom: 16px; }
 :global([data-theme='dark'] .back-button) { color: #8fc5a6; }
 :global([data-theme='dark'] .service-hero) { background: linear-gradient(118deg, #1d2421, #17251d); }
 :global([data-theme='dark'] .service-hero h1) { color: #d5eadc; }

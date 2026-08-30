@@ -16,12 +16,16 @@ export function createUsersRouter({
   userStatuses,
   createId,
   loginFailures,
+  usersViewerMiddleware = accountViewerMiddleware,
+  userAdministrationMiddleware = adminMiddleware,
+  notifyPermissionsChanged,
 }) {
   const router = Router()
 
-  router.get('/', accountViewerMiddleware, (req, res) => {
+  router.get('/', usersViewerMiddleware, (req, res) => {
     const users = db.prepare(`
-      SELECT id, username, role, description, status, is_initial_admin, must_change_password, created_at, updated_at
+      SELECT id, username, role, description, status, is_initial_admin, must_change_password,
+             permission_version, created_at, updated_at
       FROM users
       ORDER BY updated_at DESC
     `).all()
@@ -35,7 +39,7 @@ export function createUsersRouter({
     })
   })
 
-  router.post('/', adminMiddleware, (req, res) => {
+  router.post('/', userAdministrationMiddleware, adminMiddleware, (req, res) => {
     const username = String(req.body?.username || '').trim()
     const password = String(req.body?.password || '')
     const role = String(req.body?.role || '')
@@ -78,7 +82,7 @@ export function createUsersRouter({
     }
   })
 
-  router.put('/:id', adminMiddleware, (req, res) => {
+  router.put('/:id', userAdministrationMiddleware, adminMiddleware, (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
     if (!user) return sendError(res, { status: 404, code: 'USER_NOT_FOUND', message: '用户不存在' })
 
@@ -118,17 +122,22 @@ export function createUsersRouter({
     }
 
     const updatedAt = Date.now()
-    db.prepare('UPDATE users SET role = ?, description = ?, status = ?, updated_at = ? WHERE id = ?')
-      .run(role, description, status, updatedAt, user.id)
+    db.prepare(`
+      UPDATE users
+      SET role = ?, description = ?, status = ?,
+          permission_version = permission_version + ?, updated_at = ?
+      WHERE id = ?
+    `).run(role, description, status, roleChanged ? 1 : 0, updatedAt, user.id)
     if (roleChanged || statusChanged) {
       for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
     }
     recordAudit(req.user, '编辑用户', user.username, `角色：${user.role} → ${role}；状态：${user.status} → ${status}`)
     const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id)
+    if (roleChanged || statusChanged) notifyPermissionsChanged?.(user.id, Number(updatedUser.permission_version || 0))
     sendOk(res, { user: publicUser(updatedUser) })
   })
 
-  router.post('/:id/reset-password', adminMiddleware, (req, res) => {
+  router.post('/:id/reset-password', userAdministrationMiddleware, adminMiddleware, (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
     if (!user) return sendError(res, { status: 404, code: 'USER_NOT_FOUND', message: '用户不存在' })
     if (!canManageUser(req.user, user) || user.is_initial_admin) {
@@ -179,7 +188,7 @@ export function createUsersRouter({
     sendOk(res, { updatedAt, reauthenticate: true })
   })
 
-  router.delete('/:id', adminMiddleware, (req, res) => {
+  router.delete('/:id', userAdministrationMiddleware, adminMiddleware, (req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id)
     if (!user) return sendError(res, { status: 404, code: 'USER_NOT_FOUND', message: '用户不存在' })
     if (req.user.id === user.id) {
@@ -203,11 +212,14 @@ export function createUsersRouter({
       // record. Keep the existing delete lifecycle free of inaccessible rows.
       const preferencesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alert_notification_preferences'").get()
       if (preferencesTable) db.prepare('DELETE FROM alert_notification_preferences WHERE user_id = ?').run(user.id)
+      const overridesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_module_permission_overrides'").get()
+      if (overridesTable) db.prepare('DELETE FROM user_module_permission_overrides WHERE user_id = ?').run(user.id)
       db.prepare('DELETE FROM users WHERE id = ?').run(user.id)
     })
     deleteUser()
     for (const [token, session] of sessions) if (session.id === user.id) sessions.delete(token)
     loginFailures?.clear(user.username)
+    notifyPermissionsChanged?.(user.id, Number(user.permission_version || 0) + 1)
     recordAudit(req.user, '删除用户', user.username, `角色：${user.role}；已清除登录失败锁定`)
     sendOk(res)
   })

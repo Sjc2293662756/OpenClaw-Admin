@@ -45,10 +45,12 @@ import { createDashboardUsageRouter } from './routes/dashboard-usage.js'
 import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
 import { createMediaRouter } from './routes/media.js'
 import { createStorageWatermarkRouter } from './routes/storage-watermark.js'
+import { createModulePermissionsRouter } from './routes/module-permissions.js'
 import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
 import { AlertReceiverStreamClient } from './lib/alert-receiver-stream.js'
+import { createModuleAccessMiddleware, resolveEffectiveModulePermissions } from './lib/module-permissions.js'
 import { canReceiveSseData as canReceiveSseDataForUser } from './lib/sse-access.js'
 import { readSessionSettings } from './lib/session-settings.js'
 import {
@@ -361,6 +363,29 @@ function broadcastSSE(data) {
   return true
 }
 
+function notifyPermissionsChanged(userId, permissionVersion) {
+  const currentUser = db.prepare(`
+    SELECT id, username, role, status, is_initial_admin, must_change_password, permission_version
+    FROM users WHERE id = ?
+  `).get(userId)
+  const message = `data: ${JSON.stringify({ type: 'permissionsChanged', userId, permissionVersion })}\n\n`
+  for (const [clientId, client] of sseClients) {
+    if (String(client.user?.id || '') !== String(userId)) continue
+    try {
+      if (currentUser?.status === 'active') {
+        client.user = projectAuthUser(currentUser)
+        client.res.write(message)
+      } else {
+        client.res.write(message)
+        client.res.end()
+        sseClients.delete(clientId)
+      }
+    } catch {
+      sseClients.delete(clientId)
+    }
+  }
+}
+
 function isAuthEnabled() {
   return !!db.prepare('SELECT 1 FROM users LIMIT 1').get() || !!(envConfig.AUTH_USERNAME && envConfig.AUTH_PASSWORD)
 }
@@ -436,6 +461,21 @@ function publicUser(user) {
     mustChangePassword: Boolean(user.must_change_password),
     createdAt: user.created_at,
     updatedAt: user.updated_at,
+    permissionVersion: Number(user.permission_version || 0),
+  }
+}
+
+function projectAuthUser(user) {
+  const permissionProjection = resolveEffectiveModulePermissions(db, user)
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    isInitialAdmin: Boolean(user.is_initial_admin ?? user.isInitialAdmin),
+    mustChangePassword: Boolean(user.must_change_password ?? user.mustChangePassword),
+    effectiveModules: permissionProjection.effectiveModules,
+    moduleOverrides: permissionProjection.moduleOverrides,
+    permissionVersion: permissionProjection.permissionVersion,
   }
 }
 
@@ -460,6 +500,14 @@ function checkAuth(req) {
   if (!token) return null
   const session = sessions.get(token)
   if (!session) return null
+  const currentUser = db.prepare(`
+    SELECT id, username, role, status, is_initial_admin, must_change_password, permission_version
+    FROM users WHERE id = ?
+  `).get(session.id)
+  if (!currentUser || currentUser.status !== 'active') {
+    sessions.delete(token)
+    return null
+  }
   const now = Date.now()
   if (session.expires < now) {
     sessions.delete(token)
@@ -473,6 +521,7 @@ function checkAuth(req) {
     return null
   }
   session.lastActiveAt = now
+  Object.assign(session, projectAuthUser(currentUser))
   return session
 }
 
@@ -504,6 +553,23 @@ const operatorMiddleware = createRoleMiddleware(authMiddleware, ['basic', 'stand
 const auditViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '审计信息仅审计用户和管理员可查看')
 const accountViewerMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'admin'], '账户信息仅审计用户和管理员可查看')
 const systemMonitorMiddleware = createRoleMiddleware(authMiddleware, ['auditor', 'standard', 'admin'], '当前角色无权查看系统监控')
+const moduleAccessMiddleware = (moduleKey, message) => createModuleAccessMiddleware(authMiddleware, moduleKey, message)
+const dashboardModuleMiddleware = moduleAccessMiddleware('dashboard')
+const alertRecordsModuleMiddleware = moduleAccessMiddleware('alerts.records')
+const alertNotificationsModuleMiddleware = moduleAccessMiddleware('alerts.notifications')
+const alertExportModuleMiddleware = moduleAccessMiddleware('alerts.export')
+const sessionsModuleMiddleware = moduleAccessMiddleware('sessions')
+const reportsModuleMiddleware = moduleAccessMiddleware('reports')
+const channelsModuleMiddleware = moduleAccessMiddleware('channels')
+const systemModuleMiddleware = moduleAccessMiddleware('system')
+const usersModuleMiddleware = moduleAccessMiddleware('users')
+const userAdministrationModuleMiddleware = moduleAccessMiddleware('userAdministration')
+const auditModuleMiddleware = moduleAccessMiddleware('audit')
+const settingsModuleMiddleware = moduleAccessMiddleware('settings')
+const systemConfigurationModuleMiddleware = moduleAccessMiddleware('systemConfiguration')
+const systemUpgradeModuleMiddleware = moduleAccessMiddleware('systemUpgrade')
+const platformBrandingModuleMiddleware = moduleAccessMiddleware('platformBranding')
+const officeModuleMiddleware = moduleAccessMiddleware('office')
 
 // 设置 Hermes 代理的认证中间件
 
@@ -516,17 +582,27 @@ app.use('/api/auth', createAuthRouter({
   recordAudit,
   createId: randomUUID,
   getSessionSettings: () => readSessionSettings(db),
+  projectAuthUser,
   loginFailures,
 }))
-app.use('/api/system-settings/branding', createBrandingSettingsRouter({
+app.use('/api/system-settings/branding', platformBrandingModuleMiddleware, createBrandingSettingsRouter({
   db,
   initialAdminMiddleware,
   recordAudit,
 }))
 app.use('/api', createBasicWorkspaceOnlyMiddleware(authMiddleware, recordAudit))
-app.use('/api/system/storage-watermarks', createStorageWatermarkRouter({ db, systemMonitorMiddleware }))
-app.use('/api/system-settings/report-storage', createReportStorageRouter({ adminMiddleware, recordAudit }))
-app.use('/api/system-settings/sessions', createSessionSettingsRouter({
+const modulePermissionRouters = createModulePermissionsRouter({
+  db,
+  authMiddleware,
+  initialAdminMiddleware,
+  recordAudit,
+  notifyPermissionsChanged,
+})
+app.use('/api/module-permissions/catalog', modulePermissionRouters.catalogRouter)
+app.use('/api/users/:id/module-permissions', modulePermissionRouters.userRouter)
+app.use('/api/system/storage-watermarks', systemModuleMiddleware, createStorageWatermarkRouter({ db, systemMonitorMiddleware: authMiddleware }))
+app.use('/api/system-settings/report-storage', settingsModuleMiddleware, createReportStorageRouter({ adminMiddleware, recordAudit }))
+app.use('/api/system-settings/sessions', settingsModuleMiddleware, createSessionSettingsRouter({
   db,
   authMiddleware,
   adminMiddleware,
@@ -534,7 +610,7 @@ app.use('/api/system-settings/sessions', createSessionSettingsRouter({
   gateway,
   getGateway: () => gateway,
 }))
-app.use('/api/session-retention', createSessionRetentionRouter({
+app.use('/api/session-retention', sessionsModuleMiddleware, createSessionRetentionRouter({
   db,
   viewerMiddleware: auditViewerMiddleware,
   adminMiddleware,
@@ -546,15 +622,17 @@ app.use('/api/session-retention', createSessionRetentionRouter({
     automaticDeletionEnabled: String(envConfig.GAIOP_SESSION_RETENTION_AUTO_DELETE).trim().toLowerCase() === 'true',
   },
 }))
-app.use('/api/system-config/gaiop-service', createGAIOPServiceRouter({
+app.use('/api/system-config/gaiop-service', systemConfigurationModuleMiddleware, createGAIOPServiceRouter({
   adminMiddleware,
+  viewerMiddleware: authMiddleware,
   recordAudit,
   getServiceConfig: getGAIOPServiceConfig,
   saveServiceConfig: saveGAIOPServiceConfig,
 }))
-app.use('/api/system-config/alert-ingestion', createAlertIngestionRouter({ db, adminMiddleware, recordAudit }))
-app.use('/api/system-upgrade', createSystemUpgradeRouter({
+app.use('/api/system-config/alert-ingestion', systemConfigurationModuleMiddleware, createAlertIngestionRouter({ db, adminMiddleware, viewerMiddleware: authMiddleware, recordAudit }))
+app.use('/api/system-upgrade', systemUpgradeModuleMiddleware, createSystemUpgradeRouter({
   adminMiddleware,
+  viewerMiddleware: authMiddleware,
   recordAudit,
   getUpgradeConfig: () => ({
     serviceUrl: envConfig.GAIOP_UPGRADE_SERVICE_URL,
@@ -562,16 +640,16 @@ app.use('/api/system-upgrade', createSystemUpgradeRouter({
   }),
 }))
 app.use('/api/dashboard/usage', createDashboardUsageRouter({
-  authMiddleware,
+  authMiddleware: dashboardModuleMiddleware,
   getGateway: () => gateway,
   db,
 }))
 app.use('/api/dashboard/summary', createDashboardSummaryRouter({
-  authMiddleware,
+  authMiddleware: dashboardModuleMiddleware,
   getGateway: () => gateway,
   db,
 }))
-app.use('/api/channels/personal-wechat', createPersonalWechatRouter({
+app.use('/api/channels/personal-wechat', channelsModuleMiddleware, createPersonalWechatRouter({
   db,
   adminMiddleware,
   recordAudit,
@@ -580,7 +658,7 @@ app.use('/api/channels/personal-wechat', createPersonalWechatRouter({
   adapterBaseUrl: envConfig.PERSONAL_WECHAT_ADAPTER_URL,
   adapterToken: envConfig.PERSONAL_WECHAT_ADAPTER_TOKEN,
 }))
-app.use('/api/channels', createChannelsRouter({
+app.use('/api/channels', channelsModuleMiddleware, createChannelsRouter({
   authMiddleware,
   adminMiddleware,
   recordAudit,
@@ -599,7 +677,15 @@ app.use('/api/workspace/sessions', createWorkspaceSessionsRouter({
     storeDirectory: envConfig.GAIOP_REPORT_PROVENANCE_STORE_DIR,
   },
 }))
-app.use('/api/alerts', createAlertsRouter({ db, authMiddleware, recordAudit }))
+app.use('/api/alerts', createAlertsRouter({
+  db,
+  authMiddleware,
+  recordsMiddleware: alertRecordsModuleMiddleware,
+  notificationsMiddleware: alertNotificationsModuleMiddleware,
+  exportMiddleware: alertExportModuleMiddleware,
+  recordAudit,
+}))
+app.use('/api/wizard', officeModuleMiddleware)
 
 // 迁移保留：阶段 B 已由下方独立路由接管这些 API。保留旧实现仅用于短期回归比对，
 // 不再注册，确认线上稳定后会在后续清理。
@@ -708,9 +794,12 @@ app.use('/api/users', createUsersRouter({
   userStatuses: USER_STATUSES,
   createId: randomUUID,
   loginFailures,
+  usersViewerMiddleware: usersModuleMiddleware,
+  userAdministrationMiddleware: userAdministrationModuleMiddleware,
+  notifyPermissionsChanged,
 }))
-app.use('/api/audit-logs', createAuditRouter({ db, auditViewerMiddleware, recordAudit }))
-app.use('/api/data-sources', createDataSourcesRouter({
+app.use('/api/audit-logs', auditModuleMiddleware, createAuditRouter({ db, auditViewerMiddleware, recordAudit }))
+app.use('/api/data-sources', systemConfigurationModuleMiddleware, createDataSourcesRouter({
   db,
   authMiddleware,
   adminMiddleware,
@@ -725,16 +814,17 @@ app.use('/api/data-sources', createDataSourcesRouter({
   getDataSourceRuntimeStatus,
   writeActiveDataSourceRuntime,
 }))
-app.use('/api/system-config/environment', createSensitiveConfigRouter({
+app.use('/api/system-config/environment', systemConfigurationModuleMiddleware, createSensitiveConfigRouter({
   db,
   adminMiddleware,
+  viewerMiddleware: authMiddleware,
   recordAudit,
   encryptSensitiveConfigValue,
   isSensitiveConfigEncryptionReady,
   toPublicSystemSensitiveConfig,
   validateSystemSensitiveConfigInput,
 }))
-app.use('/api/reports', createReportsRouter({ db, authMiddleware, adminMiddleware, recordAudit }))
+app.use('/api/reports', createReportsRouter({ db, authMiddleware, moduleMiddleware: reportsModuleMiddleware, adminMiddleware, recordAudit }))
 const stopReportRegistrySync = startReportRegistrySync(db)
 app.use('/api/media', createMediaRouter({
   authMiddleware,
@@ -1000,7 +1090,7 @@ async function getDiskSpace() {
   }
 }
 
-app.get('/api/system/metrics', systemMonitorMiddleware, async (req, res) => {
+app.get('/api/system/metrics', systemModuleMiddleware, async (req, res) => {
   try {
     const cpus = os.cpus()
     const totalMem = os.totalmem()
@@ -1594,7 +1684,7 @@ app.post('/api/files/upload', adminMiddleware, upload.single('file'), async (req
   }
 })
 
-app.get('/api/status', authMiddleware, async (req, res) => {
+app.get('/api/status', systemModuleMiddleware, async (req, res) => {
   try {
     if (!gateway.isConnected) {
       return res.status(503).json({ error: 'Gateway not connected' })
@@ -3042,7 +3132,7 @@ function keyCodeToX11KeySym(keyCode, key) {
 // ============ Wizard API (Scenarios & Tasks) ============
 
 // Scenarios API
-app.get('/api/wizard/scenarios', adminMiddleware, (req, res) => {
+app.get('/api/wizard/scenarios', authMiddleware, (req, res) => {
   try {
     const rows = db.prepare('SELECT * FROM scenarios ORDER BY updated_at DESC').all()
     const scenarios = rows.map(row => ({
@@ -3066,7 +3156,7 @@ app.get('/api/wizard/scenarios', adminMiddleware, (req, res) => {
   }
 })
 
-app.get('/api/wizard/scenarios/:id', adminMiddleware, (req, res) => {
+app.get('/api/wizard/scenarios/:id', authMiddleware, (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM scenarios WHERE id = ?').get(req.params.id)
     if (!row) {
@@ -3190,7 +3280,7 @@ app.delete('/api/wizard/scenarios/:id', adminMiddleware, (req, res) => {
 })
 
 // Tasks API
-app.get('/api/wizard/tasks', adminMiddleware, (req, res) => {
+app.get('/api/wizard/tasks', authMiddleware, (req, res) => {
   try {
     const scenarioId = req.query.scenarioId
     let rows
@@ -3221,7 +3311,7 @@ app.get('/api/wizard/tasks', adminMiddleware, (req, res) => {
   }
 })
 
-app.get('/api/wizard/tasks/:id', adminMiddleware, (req, res) => {
+app.get('/api/wizard/tasks/:id', authMiddleware, (req, res) => {
   try {
     const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(req.params.id)
     if (!row) {

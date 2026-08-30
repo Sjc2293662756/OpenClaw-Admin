@@ -10,11 +10,15 @@ import { alertNotificationDuration, alertNotificationType } from '@/alerts/notif
 import { destroyActiveNotification, destroyAllActiveNotifications, forgetActiveNotification } from '@/alerts/notification-lifecycle'
 import { playAlertNotificationSound } from '@/alerts/notification-sound'
 import AlertNotificationPreferencesPanel from './AlertNotificationPreferencesPanel.vue'
+import { useAuthStore } from '@/stores/auth'
+import { canAccessPage } from '@/permissions/access-control'
 
 const router = useRouter()
 const { t, locale } = useI18n()
 const alerts = useAlertRealtimeStore()
 const notification = useNotification()
+const authStore = useAuthStore()
+const canViewRecords = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.records'))
 const detailCursor = ref<number | null>(null)
 const severityFilter = ref('__all__')
 const freshCursor = ref<number | null>(null)
@@ -35,6 +39,7 @@ const clearLabel = computed(() => selectedSeverity.value === null ? t('pages.gai
 
 function notRecorded() { return t('pages.gaiop.alerts.notRecorded') }
 function showDetails(item: AlertRealtimeItem) {
+  if (!canViewRecords.value) return
   alerts.markRead(item.cursor)
   destroyActiveNotification(activeNotifications, item.cursor)
   alerts.closeMessageCenter()
@@ -84,7 +89,9 @@ function notifyNext() {
     type: alertNotificationType(String(payload.severity || '')),
     duration: alertNotificationDuration(String(payload.severity || '')),
     onAfterLeave: () => forgetActiveNotification(activeNotifications, item.cursor),
-    action: () => h(NButton, { size: 'small', onClick: () => showDetails(item) }, { default: () => t('pages.gaiop.alertCenter.viewDetails') }),
+    action: canViewRecords.value
+      ? () => h(NButton, { size: 'small', onClick: () => showDetails(item) }, { default: () => t('pages.gaiop.alertCenter.viewDetails') })
+      : undefined,
   })
   activeNotifications.set(item.cursor, notice)
   // Sound is tied to an actually-created live popup, never merely to a
@@ -164,7 +171,7 @@ function streamText() {
             <NText depth="3" class="alert-center-time">{{ formatAlertTime(item.payload.occurredAt, locale, notRecorded()) }}</NText>
             <NSpace class="alert-center-actions" :size="6">
               <NButton text size="small" @click.stop="toggleExpanded(item)"><template #icon><NIcon :component="isExpanded(item.cursor) ? ChevronUpOutline : ChevronDownOutline" /></template>{{ t('pages.gaiop.alertCenter.brief') }}</NButton>
-              <NButton text type="primary" size="small" @click.stop="showDetails(item)"><template #icon><NIcon :component="EyeOutline" /></template>{{ t('pages.gaiop.alertCenter.viewDetails') }}</NButton>
+              <NButton v-if="canViewRecords" text type="primary" size="small" @click.stop="showDetails(item)"><template #icon><NIcon :component="EyeOutline" /></template>{{ t('pages.gaiop.alertCenter.viewDetails') }}</NButton>
             </NSpace>
             <div v-if="isExpanded(item.cursor)" class="alert-center-brief">
               <NText v-for="field in briefFields(item)" :key="field.label"><strong>{{ field.label }}:</strong> {{ field.value }}</NText>

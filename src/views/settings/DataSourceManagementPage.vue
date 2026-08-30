@@ -149,7 +149,7 @@ const columns = computed<DataTableColumns<DataSourceDraft>>(() => [
     title: text('操作', 'Actions'), key: 'actions', width: 214, fixed: 'right', render: row => h(NSpace, { size: 'small', wrap: false }, { default: () => [
       h(NButton, { size: 'small', disabled: !isAdmin.value, onClick: () => edit(row) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => text('详情', 'Details') }),
       h(NButton, { size: 'small', type: row.isActive ? 'success' : 'primary', secondary: !row.isActive, disabled: !isAdmin.value || !!row.isActive, onClick: () => activate(row) }, { icon: () => h(NIcon, null, { default: () => h(PlayCircleOutline) }), default: () => row.isActive ? text('运行中', 'Active') : text('启用', 'Enable') }),
-      h(NDropdown, { trigger: 'click', options: [{ label: text('测试连接', 'Test connection'), key: 'test' }, { label: text('删除数据源', 'Delete data source'), key: 'remove', disabled: !isAdmin.value }], onSelect: (key: string) => key === 'test' ? testConnection(row) : remove(row) }, { default: () => h(NButton, { size: 'small', quaternary: true, 'aria-label': text('更多操作', 'More actions') }, { icon: () => h(NIcon, null, { default: () => h(EllipsisHorizontalOutline) }) }) }),
+      h(NDropdown, { trigger: 'click', options: [{ label: text('测试连接', 'Test connection'), key: 'test', disabled: !isAdmin.value }, { label: text('删除数据源', 'Delete data source'), key: 'remove', disabled: !isAdmin.value }], onSelect: (key: string) => key === 'test' ? testConnection(row) : remove(row) }, { default: () => h(NButton, { size: 'small', quaternary: true, disabled: !isAdmin.value, 'aria-label': text('更多操作', 'More actions') }, { icon: () => h(NIcon, null, { default: () => h(EllipsisHorizontalOutline) }) }) }),
     ] })
   },
 ])

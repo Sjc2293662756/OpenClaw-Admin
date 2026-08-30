@@ -6,13 +6,14 @@ import { applyAlertIngestionRuntime, readAlertIngestionRuntime } from '../lib/al
 export function createAlertIngestionRouter({
   db,
   adminMiddleware,
+  viewerMiddleware = adminMiddleware,
   recordAudit,
   readRuntime = readAlertIngestionRuntime,
   applyRuntime = applyAlertIngestionRuntime,
 }) {
   const router = Router()
 
-  router.get('/', adminMiddleware, async (_req, res) => {
+  router.get('/', viewerMiddleware, async (_req, res) => {
     sendOk(res, { settings: readAlertIngestionSettings(db), runtime: await readRuntime() })
   })
 

@@ -4,6 +4,7 @@ import { NAlert, NButton, NCard, NForm, NFormItem, NSelect, NSpace, NSwitch, NTe
 import { useI18n } from 'vue-i18n'
 import { localizeApiError } from '@/utils/api-error'
 import { useAuthStore } from '@/stores/auth'
+import { canAccessPage } from '@/permissions/access-control'
 import { useLocaleStore } from '@/stores/locale'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
 import { DEFAULT_ALERT_NOTIFICATION_PREFERENCES, useAlertRealtimeStore, type AlertNotificationPreferences } from '@/stores/alert-realtime'
@@ -23,7 +24,7 @@ const reportStorageConfigured = ref(false)
 const reportStorageRoot = ref('')
 const reportStorageLoading = ref(false)
 const reportStorageError = ref(false)
-const canConfigureAlertNotifications = computed(() => ['standard', 'auditor', 'admin'].includes(authStore.currentUser?.role || ''))
+const canConfigureAlertNotifications = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.notifications'))
 const alertPreferencesDraft = ref<AlertNotificationPreferences>({ ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES })
 const alertPreferencesLoaded = ref(false)
 const alertPreferenceRows = computed(() => [

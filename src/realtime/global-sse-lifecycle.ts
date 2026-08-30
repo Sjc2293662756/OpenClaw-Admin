@@ -21,7 +21,7 @@ export function createGlobalSseLifecycle(websocket: ConnectionStore, alerts: Ale
   let syncGeneration = 0
 
   function accountOf(user: AuthUser | null) {
-    return user ? String(user.id || user.username) : null
+    return user ? `${String(user.id || user.username)}:${Number(user.permissionVersion || 0)}` : null
   }
 
   async function sync(token: string | null, user: AuthUser | null) {
@@ -35,12 +35,14 @@ export function createGlobalSseLifecycle(websocket: ConnectionStore, alerts: Ale
       previousToken = token
       previousAccount = account
       alerts.activate(user)
+      const notificationsAllowed = user.effectiveModules?.['alerts.notifications'] === true
       // A saved all-off preference must be known before the browser starts
       // consuming its one alert SSE stream. This prevents a just-logged-in
       // account from flashing a notification while its setting is loading.
-      await alerts.loadPreferences()
+      if (notificationsAllowed) await alerts.loadPreferences()
       if (generation !== syncGeneration || previousToken !== token || previousAccount !== account) return
-      alerts.start()
+      if (notificationsAllowed) alerts.start()
+      else alerts.stop()
       websocket.connect()
     } else {
       if (previousToken === null && previousAccount === null) return

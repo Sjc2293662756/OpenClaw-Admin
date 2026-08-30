@@ -129,4 +129,19 @@ describe('ApiClient authenticated fetch SSE', () => {
     expect(state).toHaveBeenCalledWith(expect.objectContaining({ state: 'connected' }))
     client.disconnect()
   })
+
+  it('dispatches a validated targeted permission-version refresh event', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamingResponse([
+      'data: {"type":"permissionsChanged","userId":"user-1","permissionVersion":7}\n\n',
+      'data: {"type":"permissionsChanged","userId":"user-1","permissionVersion":-1}\n\n',
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient({ getToken: () => 'login-token', reconnectInterval: 60_000 })
+    const changed = vi.fn()
+    client.on('permissionsChanged', changed)
+    client.connect()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
+    expect(changed).toHaveBeenCalledWith({ userId: 'user-1', permissionVersion: 7 })
+    client.disconnect()
+  })
 })

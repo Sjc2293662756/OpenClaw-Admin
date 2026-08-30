@@ -26,18 +26,27 @@ function readTimestamp(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
-export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertSource = readGAIOPAlerts, readAlertChanges = readGAIOPAlertChanges }) {
+export function createAlertsRouter({
+  db,
+  authMiddleware,
+  recordsMiddleware = authMiddleware,
+  notificationsMiddleware = authMiddleware,
+  exportMiddleware = authMiddleware,
+  recordAudit,
+  readAlertSource = readGAIOPAlerts,
+  readAlertChanges = readGAIOPAlertChanges,
+}) {
   const router = Router()
   const assertAlertViewer = (req, res) => {
     if (ALERT_VIEWER_ROLES.has(req.user?.role)) return true
     sendError(res, { status: 403, code: 'ALERT_ACCESS_DENIED', message: '当前账号无权使用告警通知设置' })
     return false
   }
-  router.get('/preferences', authMiddleware, (req, res) => {
+  router.get('/preferences', notificationsMiddleware, (req, res) => {
     if (!assertAlertViewer(req, res)) return
     return sendOk(res, { preferences: readAlertNotificationPreferences(db, req.user.id) })
   })
-  router.put('/preferences', authMiddleware, (req, res) => {
+  router.put('/preferences', notificationsMiddleware, (req, res) => {
     if (!assertAlertViewer(req, res)) return
     const validated = validateAlertNotificationPreferences(req.body)
     if (!validated.ok) return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_PREFERENCES_INVALID', message: validated.error })
@@ -45,7 +54,7 @@ export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertS
     recordAudit(req.user, '保存账户告警通知设置', '告警通知设置', '已更新当前账户的实时提醒、声音与三档页面弹窗/告警通知开关')
     return sendOk(res, { preferences })
   })
-  router.post('/export', authMiddleware, (req, res) => {
+  router.post('/export', exportMiddleware, (req, res) => {
     if (!ALERT_EXPORTER_ROLES.has(req.user?.role)) {
       return sendError(res, { status: 403, code: 'ALERT_EXPORT_DENIED', message: '当前账号无权导出告警记录' })
     }
@@ -60,11 +69,11 @@ export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertS
     res.setHeader('Content-Disposition', `attachment; filename="GAIOP-alerts.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`)
     return res.send(createAlertExportWorkbook(req.body?.rows, locale))
   })
-  router.get('/time', authMiddleware, (req, res) => {
+  router.get('/time', recordsMiddleware, (req, res) => {
     if (!assertAlertViewer(req, res)) return
     sendOk(res, { now: Date.now() })
   })
-  router.get('/changes', authMiddleware, async (req, res) => {
+  router.get('/changes', notificationsMiddleware, async (req, res) => {
     if (!ALERT_VIEWER_ROLES.has(req.user?.role)) {
       return sendError(res, { status: 403, code: 'ALERT_ACCESS_DENIED', message: '当前账号无权读取告警实时补偿' })
     }
@@ -82,7 +91,7 @@ export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertS
       return sendError(res, { status: 503, code: 'ALERT_SOURCE_UNAVAILABLE', message: 'GAIOP 告警接收器暂不可用，请联系管理员检查接收器服务状态' })
     }
   })
-  router.get('/', authMiddleware, async (req, res) => {
+  router.get('/', recordsMiddleware, async (req, res) => {
     if (!assertAlertViewer(req, res)) return
     try {
       const locateId = readFilter(req.query.locateId)

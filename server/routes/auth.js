@@ -12,10 +12,21 @@ export function createAuthRouter({
   recordAudit,
   createId,
   getSessionSettings,
+  projectAuthUser = (user) => ({
+    id: user.id,
+    username: user.username,
+    role: user.role,
+    isInitialAdmin: Boolean(user.is_initial_admin ?? user.isInitialAdmin),
+    mustChangePassword: Boolean(user.must_change_password ?? user.mustChangePassword),
+  }),
   loginFailures = createLoginFailureTracker(),
   loginRateLimiter = createLoginIpRateLimiter(),
 }) {
   const router = Router()
+  const publicAuthUser = (user) => {
+    const { moduleOverrides: _moduleOverrides, ...projection } = user
+    return projection
+  }
 
   router.get('/config', (_req, res) => {
     sendOk(res, { enabled: isAuthEnabled() })
@@ -74,13 +85,7 @@ export function createAuthRouter({
     }
 
     loginFailures.clear(username)
-    const sessionUser = {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      isInitialAdmin: Boolean(user.is_initial_admin),
-      mustChangePassword: Boolean(user.must_change_password),
-    }
+    const sessionUser = projectAuthUser(user)
     const now = Date.now()
     const policy = getSessionSettings()
     const token = createId()
@@ -91,7 +96,7 @@ export function createAuthRouter({
       expires: now + policy.loginSessionHours * 60 * 60 * 1000,
     })
     recordAudit(sessionUser, '登录', '管理平台', '登录成功', { req, category: 'authentication', result: 'success', source: 'auth' })
-    sendOk(res, { token, user: sessionUser })
+    sendOk(res, { token, user: publicAuthUser(sessionUser) })
   })
 
   router.post('/logout', (req, res) => {
@@ -107,13 +112,7 @@ export function createAuthRouter({
   router.get('/check', authMiddleware, (req, res) => {
     sendOk(res, {
       authenticated: true,
-      user: {
-        id: req.user.id,
-        username: req.user.username,
-        role: req.user.role,
-        isInitialAdmin: Boolean(req.user.isInitialAdmin),
-        mustChangePassword: Boolean(req.user.mustChangePassword),
-      },
+      user: publicAuthUser(projectAuthUser(req.user)),
     })
   })
 

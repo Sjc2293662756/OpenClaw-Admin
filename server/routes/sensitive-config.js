@@ -4,6 +4,7 @@ import { sendError, sendOk } from '../lib/api-response.js'
 export function createSensitiveConfigRouter({
   db,
   adminMiddleware,
+  viewerMiddleware = adminMiddleware,
   recordAudit,
   encryptSensitiveConfigValue,
   isSensitiveConfigEncryptionReady,
@@ -12,7 +13,7 @@ export function createSensitiveConfigRouter({
 }) {
   const router = Router()
 
-  router.get('/', adminMiddleware, (_req, res) => {
+  router.get('/', viewerMiddleware, (_req, res) => {
     const rows = db.prepare(`SELECT config_key, category, description, is_sensitive, value_plain, value_encrypted, updated_at
       FROM system_sensitive_configs ORDER BY category, config_key`).all()
     sendOk(res, { configs: rows.map(toPublicSystemSensitiveConfig) })

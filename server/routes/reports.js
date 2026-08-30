@@ -443,8 +443,9 @@ function streamReport(res, filePath, row, disposition) {
   stream.pipe(res)
 }
 
-export function createReportsRouter({ db, authMiddleware, adminMiddleware, recordAudit, retentionService = null }) {
+export function createReportsRouter({ db, authMiddleware, moduleMiddleware = authMiddleware, adminMiddleware, recordAudit, retentionService = null }) {
   const router = Router()
+  router.use(moduleMiddleware)
   const retention = retentionService || new ReportRetentionService({
     db,
     reportRoot,

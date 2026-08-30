@@ -85,6 +85,7 @@ export class OpenClawWebSocket {
 
     this.apiClient.on('alert', (data: unknown) => this.emit('alert', data))
     this.apiClient.on('alertStreamState', (data: unknown) => this.emit('alertStreamState', data))
+    this.apiClient.on('permissionsChanged', (data: unknown) => this.emit('permissionsChanged', data))
   }
 
   connect(url?: string, auth?: string): void {

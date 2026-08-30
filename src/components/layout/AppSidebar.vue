@@ -31,12 +31,15 @@ import {
 } from '@vicons/ionicons5'
 import { NIcon } from 'naive-ui'
 import { routes } from '@/router/routes'
+import { useAuthStore } from '@/stores/auth'
+import { canAccessInitialAdminRoute, canAccessRoute } from '@/permissions/access-control'
 
 defineProps<{ collapsed: boolean }>()
 
 const route = useRoute()
 const router = useRouter()
 const { t } = useI18n()
+const authStore = useAuthStore()
 
 const iconMap: Record<string, unknown> = {
   GridOutline,
@@ -77,7 +80,12 @@ const menuOptions = computed<MenuOption[]>(() => {
   return mainRoute.children
     .filter((child) => {
       if (child.meta?.hidden) return false
-      return true
+      if (!authStore.authEnabled) return true
+      if (child.meta?.initialAdminOnly === true && !canAccessInitialAdminRoute(
+        authStore.currentUser?.role,
+        authStore.currentUser?.isInitialAdmin,
+      )) return false
+      return canAccessRoute(authStore.currentUser?.effectiveModules, child.name)
     })
     .map((child) => ({
       label: child.meta?.titleKey ? t(child.meta.titleKey as string) : (child.meta?.title as string),

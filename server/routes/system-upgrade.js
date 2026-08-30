@@ -297,6 +297,7 @@ function parseBackupId(value) {
 
 export function createSystemUpgradeRouter({
   adminMiddleware,
+  viewerMiddleware = adminMiddleware,
   getUpgradeConfig,
   readOverview = readSystemUpgradeOverview,
   validatePackage = validateUpgradePackage,
@@ -308,7 +309,7 @@ export function createSystemUpgradeRouter({
 }) {
   const router = Router()
 
-  router.get('/overview', adminMiddleware, async (req, res) => {
+  router.get('/overview', viewerMiddleware, async (req, res) => {
     const config = getUpgradeConfig()
     const overview = await readOverview({
       serviceUrl: config.serviceUrl,
@@ -369,7 +370,7 @@ export function createSystemUpgradeRouter({
     sendOk(res, { taskId, status: 'accepted' }, 202)
   })
 
-  router.get('/tasks/:taskId', adminMiddleware, async (req, res) => {
+  router.get('/tasks/:taskId', viewerMiddleware, async (req, res) => {
     const taskId = String(req.params.taskId || '')
     if (!/^[0-9a-f-]{36}$/i.test(taskId)) {
       return sendError(res, { status: 400, code: 'UPGRADE_TASK_ID_INVALID', message: '升级任务标识无效' })

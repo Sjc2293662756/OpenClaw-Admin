@@ -18,6 +18,15 @@ test('alert and alert stream state follow the same roles as GET /api/alerts', ()
     assert.equal(canReceiveSseData({ role: 'admin' }, data, dependencies), true)
     assert.equal(canReceiveSseData(null, data, dependencies), false)
   }
+  assert.equal(canReceiveSseData({ role: 'standard', effectiveModules: { 'alerts.notifications': false } }, { type: 'alert' }, dependencies), false)
+  assert.equal(canReceiveSseData({ role: 'basic', effectiveModules: { 'alerts.notifications': true } }, { type: 'alertStreamState' }, dependencies), true)
+})
+
+test('permission refresh events are delivered only to the target user', () => {
+  const event = { type: 'permissionsChanged', userId: 'target-user', permissionVersion: 3 }
+  assert.equal(canReceiveSseData({ id: 'target-user', role: 'basic' }, event, dependencies), true)
+  assert.equal(canReceiveSseData({ id: 'other-user', role: 'basic' }, event, dependencies), false)
+  assert.equal(canReceiveSseData(null, event, dependencies), false)
 })
 
 test('keeps existing Gateway event session isolation and non-event broadcasts', () => {

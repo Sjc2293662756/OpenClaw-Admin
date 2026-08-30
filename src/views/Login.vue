@@ -39,7 +39,7 @@ function redirectToPlatform() {
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/workspace'
   const entry = typeof route.query.entry === 'string' ? route.query.entry : ''
   router.push(entry === 'config'
-    ? resolveConfigManagementRedirect(authStore.currentUser?.role, redirect)
+    ? resolveConfigManagementRedirect(authStore.currentUser?.effectiveModules, redirect)
     : redirect)
 }
 
