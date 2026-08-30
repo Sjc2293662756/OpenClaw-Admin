@@ -256,6 +256,14 @@ test('formal report archive imports only a matched audit pair and isolates the o
     })
     assert.equal(deniedDownload.status, 404)
 
+    const deniedPreview = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/preview`, {
+      headers: { 'x-test-user': 'user-b' },
+    })
+    assert.equal(deniedPreview.status, 404)
+
+    const ownUnsupportedPreview = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/preview`)
+    assert.equal(ownUnsupportedPreview.status, 415)
+
     const auditorDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
       headers: { 'x-test-role': 'auditor' },
     })

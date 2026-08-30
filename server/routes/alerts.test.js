@@ -54,6 +54,23 @@ test('alert list uses the formal receiver read model without changing the browse
   }
 })
 
+test('basic users can read system alert records and the BFF time without gaining export access', async () => {
+  const context = await startTestServer(async () => ({
+    alerts: [{ id: 'basic-visible', occurredAt: '2026-08-30T01:00:00.000Z', sourceHost: '10.0.0.8', category: 'appAlerts', severity: '重大', name: 'basic list record', metrics: [] }],
+    availableCount: 1,
+    hasMore: false,
+  }), { role: 'basic', userId: 'basic-1' })
+  try {
+    const list = await fetch(context.baseUrl)
+    assert.equal(list.status, 200)
+    assert.equal((await list.json()).alerts[0].id, 'basic-visible')
+    assert.equal((await fetch(`${context.baseUrl}/time`)).status, 200)
+    assert.equal((await fetch(`${context.baseUrl}/export`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [{}] }),
+    })).status, 403)
+  } finally { context.server.close(); context.db.close() }
+})
+
 test('alert changes returns a baseline without a cursor and replays continuous pages in cursor order', async () => {
   const calls = []
   const context = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), {
@@ -81,10 +98,10 @@ test('alert changes returns a baseline without a cursor and replays continuous p
   }
 })
 
-test('alert changes rejects basic users and invalid cursors, and reports receiver failure safely', async () => {
+test('alert changes permits basic users, rejects invalid cursors, and reports receiver failure safely', async () => {
   const basic = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { role: 'basic' })
   try {
-    assert.equal((await fetch(`${basic.baseUrl}/changes?afterSequence=0`)).status, 403)
+    assert.equal((await fetch(`${basic.baseUrl}/changes?afterSequence=0`)).status, 200)
   } finally { basic.server.close() }
 
   const invalid = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }))
@@ -156,13 +173,14 @@ test('account alert notification preferences use secure defaults, persist per ac
   }
 })
 
-test('alert notification preferences reject users without the existing alert permission', async () => {
+test('alert notification preferences allow basic users but remain current-account only', async () => {
   const context = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { role: 'basic' })
   try {
-    assert.equal((await fetch(`${context.baseUrl}/preferences`)).status, 403)
+    assert.equal((await fetch(`${context.baseUrl}/preferences`)).status, 200)
     assert.equal((await fetch(`${context.baseUrl}/preferences`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(defaultPreferences),
-    })).status, 403)
+    })).status, 200)
+    assert.equal((await fetch(`${context.baseUrl}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [{}] }) })).status, 403)
   } finally { context.server.close(); context.db.close() }
 })
 

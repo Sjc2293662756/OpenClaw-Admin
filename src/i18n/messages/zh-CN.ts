@@ -3535,6 +3535,7 @@ export default {
       },
       alertCenter: {
         title: '告警通知', open: '打开告警通知', empty: '暂无告警通知', markAllRead: '全部已读', markFilteredRead: '当前筛选全部已读', clear: '清空全部', clearFiltered: '清空当前筛选', remove: '移除', severityFilter: '按告警级别筛选',
+        preferences: '通知设置',
         triggered: '新告警', viewDetails: '查看详情', brief: '简要详情', dataSource: '数据源', alertType: '告警类型', alertNumber: '告警编号', triggeredMetrics: '触发指标', triggerCondition: '触发条件', description: '告警描述',
         historyRefreshRequired: '告警流存在待刷新或未解决的历史缺口；当前实时连接正常并不表示缺失记录已补齐。', streamState: '告警实时连接状态：{state}',
       },

@@ -59,6 +59,7 @@ const pagination = ref<Pagination>({ page: 1, pageSize: 10, maxResults: 200, ava
 const categoryOptions = ref<Array<{ label: string; value: string }>>([])
 const isCustomLimit = computed(() => resultLimitChoice.value === 'custom')
 const activeResultLimit = computed(() => isCustomLimit.value ? Math.min(Math.max(Number(customResultLimit.value) || 200, pageSize.value), 3000) : Number(resultLimitChoice.value))
+const canExportAlerts = computed(() => authStore.currentUser?.role !== 'basic')
 
 const pageSizeOptions = computed(() => [10, 20, 50, 100].map((value) => ({ label: locale.value === 'zh-CN' ? `${value} 条/页` : `${value} / page`, value })))
 const resultLimitOptions = computed(() => [50, 100, 200, 500, 1000].map((value) => ({ label: `TOP ${value}`, value: String(value) })).concat([{ label: locale.value === 'zh-CN' ? '自定义 TOP' : 'Custom TOP', value: 'custom' }]))
@@ -417,7 +418,7 @@ onUnmounted(() => alertRealtimeStore.setAlertDetailOpen(false))
           <NInputNumber v-if="isCustomLimit" v-model:value="customResultLimit" :min="pageSize" :max="3000" :precision="0" :placeholder="text('最高 3000 条', 'Up to 3000')" style="width: 150px" />
           <NButton v-if="isCustomLimit" type="primary" @click="applyResultLimit">{{ text('应用条数', 'Apply limit') }}</NButton>
           <NButton :disabled="!alerts.length" @click="copyCurrentPage"><template #icon><CopyOutline /></template>{{ text('复制内容', 'Copy') }}</NButton>
-          <NButton :loading="exportLoading" :disabled="!alerts.length" @click="exportCurrentPage"><template #icon><DownloadOutline /></template>{{ t('pages.gaiop.alerts.export') }}</NButton>
+          <NButton v-if="canExportAlerts" :loading="exportLoading" :disabled="!alerts.length" @click="exportCurrentPage"><template #icon><DownloadOutline /></template>{{ t('pages.gaiop.alerts.export') }}</NButton>
         </NSpace>
       </div>
 

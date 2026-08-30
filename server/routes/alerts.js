@@ -9,7 +9,8 @@ import {
   validateAlertNotificationPreferences,
 } from '../lib/alert-notification-preferences.js'
 
-const ALERT_VIEWER_ROLES = new Set(['standard', 'auditor', 'admin'])
+const ALERT_VIEWER_ROLES = new Set(['basic', 'standard', 'auditor', 'admin'])
+const ALERT_EXPORTER_ROLES = new Set(['standard', 'auditor', 'admin'])
 
 function readFilter(value, maxLength = 120) {
   return String(value || '').trim().slice(0, maxLength)
@@ -45,6 +46,9 @@ export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertS
     return sendOk(res, { preferences })
   })
   router.post('/export', authMiddleware, (req, res) => {
+    if (!ALERT_EXPORTER_ROLES.has(req.user?.role)) {
+      return sendError(res, { status: 403, code: 'ALERT_EXPORT_DENIED', message: '当前账号无权导出告警记录' })
+    }
     const locale = normalizeExportLocale(req.body?.locale)
     const rows = normalizeAlertExportRows(req.body?.rows, locale)
     if (!rows.length) {
@@ -56,7 +60,8 @@ export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertS
     res.setHeader('Content-Disposition', `attachment; filename="GAIOP-alerts.xlsx"; filename*=UTF-8''${encodeURIComponent(fileName)}`)
     return res.send(createAlertExportWorkbook(req.body?.rows, locale))
   })
-  router.get('/time', authMiddleware, (_req, res) => {
+  router.get('/time', authMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
     sendOk(res, { now: Date.now() })
   })
   router.get('/changes', authMiddleware, async (req, res) => {
@@ -78,6 +83,7 @@ export function createAlertsRouter({ db, authMiddleware, recordAudit, readAlertS
     }
   })
   router.get('/', authMiddleware, async (req, res) => {
+    if (!assertAlertViewer(req, res)) return
     try {
       const locateId = readFilter(req.query.locateId)
       const filters = {

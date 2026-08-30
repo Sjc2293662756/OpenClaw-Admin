@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, h, onUnmounted, ref, watch } from 'vue'
-import { NAlert, NButton, NButtonGroup, NDrawer, NDrawerContent, NEmpty, NIcon, NList, NListItem, NSelect, NTag, NText, NSpace, useNotification } from 'naive-ui'
-import { ChevronDownOutline, ChevronUpOutline, EyeOutline, TrashOutline } from '@vicons/ionicons5'
+import { NAlert, NButton, NButtonGroup, NDrawer, NDrawerContent, NEmpty, NIcon, NList, NListItem, NModal, NSelect, NTag, NText, NSpace, useNotification } from 'naive-ui'
+import { ChevronDownOutline, ChevronUpOutline, EyeOutline, SettingsOutline, TrashOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { useAlertRealtimeStore, type AlertRealtimeItem } from '@/stores/alert-realtime'
@@ -9,6 +9,7 @@ import { alertActionLabel, alertSeverityLabel, alertSeverityType, alertSource, a
 import { alertNotificationDuration, alertNotificationType } from '@/alerts/notification-policy'
 import { destroyActiveNotification, destroyAllActiveNotifications, forgetActiveNotification } from '@/alerts/notification-lifecycle'
 import { playAlertNotificationSound } from '@/alerts/notification-sound'
+import AlertNotificationPreferencesPanel from './AlertNotificationPreferencesPanel.vue'
 
 const router = useRouter()
 const { t, locale } = useI18n()
@@ -17,6 +18,7 @@ const notification = useNotification()
 const detailCursor = ref<number | null>(null)
 const severityFilter = ref('__all__')
 const freshCursor = ref<number | null>(null)
+const preferencesVisible = ref(false)
 const activeNotifications = new Map<number, { destroy: () => void }>()
 let freshTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -144,6 +146,7 @@ function streamText() {
         <NButton :disabled="!filteredUnreadCount" @click="markFilteredRead">{{ markAllLabel }}</NButton>
         <NButton :disabled="!filteredEvents.length" @click="clearFiltered">{{ clearLabel }}</NButton>
       </NButtonGroup>
+      <NButton size="small" secondary class="alert-center-preferences" @click="preferencesVisible = true"><template #icon><NIcon :component="SettingsOutline" /></template>{{ t('pages.gaiop.alertCenter.preferences') }}</NButton>
       <NSelect v-model:value="severityFilter" :options="severityOptions" :aria-label="t('pages.gaiop.alertCenter.severityFilter')" class="alert-center-filter" />
       <NAlert v-if="streamText()" type="warning" :bordered="false" class="alert-center-status">{{ streamText() }}</NAlert>
       <NList v-if="filteredEvents.length" hoverable clickable>
@@ -172,11 +175,15 @@ function streamText() {
       <NEmpty v-else :description="t('pages.gaiop.alertCenter.empty')" />
     </NDrawerContent>
   </NDrawer>
+  <NModal v-model:show="preferencesVisible" preset="card" :title="t('pages.gaiop.alertCenter.preferences')" style="width: min(680px, 94vw)">
+    <AlertNotificationPreferencesPanel />
+  </NModal>
 </template>
 
 <style scoped>
 .alert-center-status { margin-bottom: 12px; }
 .alert-center-toolbar { margin-bottom: 12px; }
+.alert-center-preferences { margin: 0 0 12px; }
 .alert-center-filter { width: 100%; margin-bottom: 12px; }
 .alert-center-item { display: grid; gap: 5px; cursor: pointer; }
 .alert-center-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--text-color-3, #8a8f98); font-size: 12px; line-height: 1.5; }

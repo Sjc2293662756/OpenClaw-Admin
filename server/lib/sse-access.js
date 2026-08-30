@@ -1,4 +1,4 @@
-const ALERT_VIEWER_ROLES = new Set(['standard', 'auditor', 'admin'])
+const ALERT_VIEWER_ROLES = new Set(['basic', 'standard', 'auditor', 'admin'])
 
 export function canReceiveSseData(user, data, {
   extractSessionKey,

@@ -3529,6 +3529,7 @@ export default {
       },
       alertCenter: {
         title: 'Alert Notifications', open: 'Open alert notifications', empty: 'No alert notifications', markAllRead: 'Mark all read', markFilteredRead: 'Mark filtered read', clear: 'Clear all', clearFiltered: 'Clear filtered', remove: 'Remove', severityFilter: 'Filter by alert severity',
+        preferences: 'Notification settings',
         triggered: 'New alert', viewDetails: 'View details', brief: 'Brief details', dataSource: 'Data source', alertType: 'Alert type', alertNumber: 'Alert number', triggeredMetrics: 'Triggered metrics', triggerCondition: 'Trigger condition', description: 'Alert description',
         historyRefreshRequired: 'The alert stream has a pending refresh or unresolved historical gap. A connected stream does not mean missing records were recovered.', streamState: 'Alert realtime connection: {state}',
       },

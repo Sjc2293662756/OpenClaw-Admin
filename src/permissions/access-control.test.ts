@@ -17,10 +17,10 @@ const roles: UserRole[] = ['basic', 'auditor', 'standard', 'admin']
 
 const expected: Record<PageAccessKey, UserRole[]> = {
   dashboard: ['auditor', 'standard', 'admin'],
-  alerts: ['auditor', 'standard', 'admin'],
+  alerts: roles,
   chat: roles,
   sessions: ['auditor', 'standard', 'admin'],
-  reports: ['auditor', 'standard', 'admin'],
+  reports: roles,
   cron: ['auditor', 'admin'],
   memory: ['admin'],
   models: ['admin'],
@@ -58,7 +58,8 @@ describe('four-role page access matrix', () => {
     expect(canAccessRoute('basic', 'ChatWorkspace')).toBe(true)
     expect(canAccessRoute('basic', 'Dashboard')).toBe(false)
     expect(canAccessRoute('basic', 'Sessions')).toBe(false)
-    expect(canAccessRoute('basic', 'Files')).toBe(false)
+    expect(canAccessRoute('basic', 'AlertNotifications')).toBe(true)
+    expect(canAccessRoute('basic', 'Files')).toBe(true)
     expect(getPageAccess('SystemUpgrade')?.moduleName).toBe('系统升级')
     expect(getPageAccess('PlatformBranding')?.moduleName).toBe('平台品牌配置')
   })

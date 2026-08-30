@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInputNumber, NModal, NSelect, NSpace, NTag, NText, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
-import { ArchiveOutline, DownloadOutline, RefreshOutline, ReturnUpBackOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
+import { ArchiveOutline, DownloadOutline, EyeOutline, RefreshOutline, ReturnUpBackOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
+import PdfViewer from '@/components/common/PdfViewer.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { rangeForPreset, type TimeRange, type TimeRangePreset } from '@/utils/time-range'
@@ -53,6 +54,11 @@ const reports = ref<ReportFile[]>([])
 const recoveryReports = ref<RecoveryReport[]>([])
 const recoveryVisible = ref(false)
 const recoveryLoading = ref(false)
+const previewVisible = ref(false)
+const previewing = ref(false)
+const previewReport = ref<ReportFile | null>(null)
+const previewUrl = ref('')
+const previewText = ref('')
 const serverNow = ref(Date.now())
 const reportTypeFilter = ref('all')
 const timePreset = ref<TimeRangePreset>('last30days')
@@ -217,6 +223,44 @@ async function download(report: ReportFile) {
   }
 }
 
+function releasePreview() {
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+  previewText.value = ''
+  previewReport.value = null
+}
+
+function isPdfReport(report: ReportFile) {
+  return report.mimeType === 'application/pdf' || report.name.toLowerCase().endsWith('.pdf')
+}
+
+function isPreviewable(report: ReportFile) {
+  return isPdfReport(report) || /\.(txt|md|json|csv|log)$/i.test(report.name)
+}
+
+async function preview(report: ReportFile) {
+  releasePreview()
+  previewReport.value = report
+  previewVisible.value = true
+  previewing.value = true
+  try {
+    const response = await fetch(`/api/reports/${encodeURIComponent(report.id)}/preview`, { headers: headers() })
+    if (!response.ok) {
+      const data = await response.json().catch(() => null)
+      throw new Error(localizeApiError(data, text('报告预览失败', 'Failed to preview report')))
+    }
+    const blob = await response.blob()
+    if (isPdfReport(report)) previewUrl.value = URL.createObjectURL(blob)
+    else previewText.value = await blob.text()
+  } catch (error) {
+    previewVisible.value = false
+    releasePreview()
+    message.error(error instanceof Error ? error.message : text('报告预览失败', 'Failed to preview report'))
+  } finally {
+    previewing.value = false
+  }
+}
+
 async function updateLongTermKeep(report: ReportFile) {
   try {
     const response = await fetch(`/api/reports/${report.id}/retention`, {
@@ -322,6 +366,7 @@ const columns = computed<DataTableColumns<ReportFile>>(() => [
     fixed: 'right',
     render: row => {
       const actions = [
+        h(NButton, { size: 'small', secondary: true, disabled: row.status !== 'ready' || !isPreviewable(row), onClick: () => preview(row) }, { icon: () => h(NIcon, null, { default: () => h(EyeOutline) }), default: () => text('预览', 'Preview') }),
         h(NButton, { size: 'small', type: 'primary', secondary: true, disabled: row.status !== 'ready', onClick: () => download(row) }, { icon: () => h(NIcon, null, { default: () => h(DownloadOutline) }), default: () => text('下载', 'Download') }),
       ]
       if (isAdmin.value) {
@@ -348,6 +393,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   refreshTimer = null
+  releasePreview()
 })
 </script>
 
@@ -406,6 +452,11 @@ onBeforeUnmount(() => {
         <template #empty><NEmpty :description="text('恢复区暂无报告', 'No reports in recovery')" /></template>
       </NDataTable>
     </NModal>
+    <NModal v-model:show="previewVisible" preset="card" :title="previewReport ? `${text('预览报告', 'Preview report')}：${previewReport.name}` : text('预览报告', 'Preview report')" style="width: min(1100px, 96vw)" @after-leave="releasePreview">
+      <NText v-if="previewing" depth="3">{{ text('正在加载报告预览…', 'Loading report preview…') }}</NText>
+      <PdfViewer v-else-if="previewUrl" :url="previewUrl" />
+      <pre v-else class="report-text-preview">{{ previewText }}</pre>
+    </NModal>
   </section>
 </template>
 
@@ -413,6 +464,7 @@ onBeforeUnmount(() => {
 .report-page { display: grid; gap: 16px; }
 .report-note { line-height: 1.65; }
 .report-card { min-height: 420px; }
+.report-text-preview { max-height: 70vh; margin: 0; overflow: auto; padding: 14px; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 8px; background: var(--code-color, var(--body-color)); }
 .time-toolbar { justify-content: flex-end; }
 .filters { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0 14px; }
 .display-controls { justify-content: flex-end; }

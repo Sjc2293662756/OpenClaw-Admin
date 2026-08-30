@@ -146,7 +146,7 @@ test('unknown read-like RPC names are denied for every role including administra
   }
 })
 
-test('basic REST boundary allows only workspace transport and own password change', () => {
+test('basic REST boundary allows workspace transport, alert reads/preferences, and personal report reads', () => {
   const basic = { id: 'basic-1', role: 'basic' }
   const standard = { id: 'standard-1', role: 'standard' }
   for (const [method, path] of [
@@ -154,15 +154,21 @@ test('basic REST boundary allows only workspace transport and own password chang
     ['POST', '/api/workspace/sessions'],
     ['GET', '/api/events'],
     ['GET', '/api/media?path=image.png'],
+    ['GET', '/api/alerts?page=1'],
+    ['GET', '/api/alerts/time'],
+    ['GET', '/api/alerts/changes?afterSequence=1'],
+    ['GET', '/api/alerts/preferences'],
+    ['PUT', '/api/alerts/preferences'],
     ['GET', '/api/reports?sourceSessionId=owned'],
     ['GET', '/api/reports/owned-report/download'],
+    ['GET', '/api/reports/owned-report/preview'],
     ['PUT', '/api/users/basic-1/password'],
   ]) {
     assert.equal(isBasicWorkspaceApiRequest(basic, method, path), true, `${method} ${path}`)
   }
   for (const [method, path] of [
     ['GET', '/api/dashboard/summary'],
-    ['GET', '/api/reports/owned-report/preview'],
+    ['POST', '/api/alerts/export'],
     ['GET', '/api/reports/retention/recovery'],
     ['DELETE', '/api/reports/owned-report'],
     ['GET', '/api/channels/config'],
@@ -187,6 +193,12 @@ test('basic REST middleware rejects direct management requests and preserves hea
   app.get('/api/reports', (_req, res) => res.json({ ok: true }))
   app.get('/api/reports/:id/download', (_req, res) => res.json({ ok: true }))
   app.get('/api/reports/:id/preview', (_req, res) => res.json({ ok: true }))
+  app.get('/api/alerts', (_req, res) => res.json({ ok: true }))
+  app.get('/api/alerts/time', (_req, res) => res.json({ ok: true }))
+  app.get('/api/alerts/changes', (_req, res) => res.json({ ok: true }))
+  app.get('/api/alerts/preferences', (_req, res) => res.json({ ok: true }))
+  app.put('/api/alerts/preferences', (_req, res) => res.json({ ok: true }))
+  app.post('/api/alerts/export', (_req, res) => res.json({ ok: true }))
   app.put('/api/users/:id/password', (_req, res) => res.json({ ok: true }))
 
   const server = app.listen(0)
@@ -198,7 +210,13 @@ test('basic REST middleware rejects direct management requests and preserves hea
     assert.equal((await fetch(`${baseUrl}/api/rpc`, { method: 'POST' })).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/reports?sourceSessionId=owned`)).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/reports/owned-report/download`)).status, 200)
-    const denied = await fetch(`${baseUrl}/api/reports/owned-report/preview`)
+    assert.equal((await fetch(`${baseUrl}/api/reports/owned-report/preview`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/alerts`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/alerts/time`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/alerts/changes`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/alerts/preferences`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/alerts/preferences`, { method: 'PUT' })).status, 200)
+    const denied = await fetch(`${baseUrl}/api/alerts/export`, { method: 'POST' })
     assert.equal(denied.status, 403)
     assert.equal((await denied.json()).code, 'BASIC_WORKSPACE_ONLY')
     assert.equal((await fetch(`${baseUrl}/api/users/basic-1/password`, { method: 'PUT' })).status, 200)

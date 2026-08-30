@@ -227,8 +227,16 @@ export function isBasicWorkspaceApiRequest(user, method, originalUrl) {
   const path = String(originalUrl || '').split('?')[0]
   if (normalizedMethod === 'POST' && (path === '/api/rpc' || path === '/api/workspace/sessions')) return true
   if (normalizedMethod === 'GET' && (path === '/api/events' || path === '/api/media')) return true
+  if (normalizedMethod === 'GET' && (
+    path === '/api/alerts'
+    || path === '/api/alerts/time'
+    || path === '/api/alerts/changes'
+    || path === '/api/alerts/preferences'
+  )) return true
+  if (normalizedMethod === 'PUT' && path === '/api/alerts/preferences') return true
   if (normalizedMethod === 'GET' && path === '/api/reports') return true
   if (normalizedMethod === 'GET' && /^\/api\/reports\/[^/]+\/download$/u.test(path)) return true
+  if (normalizedMethod === 'GET' && /^\/api\/reports\/[^/]+\/preview$/u.test(path)) return true
   if (normalizedMethod === 'PUT' && basicPasswordChangeTarget(path) === String(user.id || '')) return true
   return false
 }

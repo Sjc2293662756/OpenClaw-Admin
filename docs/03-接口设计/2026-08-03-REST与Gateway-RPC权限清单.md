@@ -8,7 +8,7 @@
 
 除 `/api/auth/config`、`/api/auth/login`、`/api/auth/logout`、`/api/health` 和构建产物静态资源外，所有正式业务 REST 均需 Bearer 登录认证。登录 Token 不再接受 URL 查询参数。
 
-2026-08-04 起，基础用户在通用认证之后先经过 `BASIC_WORKSPACE_ONLY` 服务端边界：除认证、健康检查外，仅允许 `/api/rpc`、`POST /api/workspace/sessions`、`GET /api/events`、本人会话 `GET /api/media` 和 `PUT /api/users/<本人ID>/password`。下表基础列已按该边界更新；被拦截请求不会进入后续管理 Router。
+2026-08-30 起，基础用户在通用认证之后先经过 `BASIC_WORKSPACE_ONLY` 服务端边界：除认证、健康检查外，仅允许 `/api/rpc`、`POST /api/workspace/sessions`、`GET /api/events`、本人会话 `GET /api/media`、本人报告的列表/下载/预览、告警列表/时间/补偿/当前账户偏好和 `PUT /api/users/<本人ID>/password`。告警导出、系统告警配置、报告留存/删除及其它管理 Router 仍被拦截。
 
 ### 1.1 核查依据
 
@@ -70,7 +70,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | GET `/api/health` | 健康 | 是 | 公开 | 公开 | 公开 | 公开 | 公开 | 固定健康和连接摘要 | 保留 |
 | GET `/api/status` | Gateway 状态 | 是 | — | 403 | 只读 | 只读 | 只读 | Gateway 状态 | 基础用户由工作台 SSE/RPC 获取必要状态 |
 | POST `/api/rpc` | Gateway BFF | 是 | — | 显式集合 | 显式集合 | 显式只读 | 显式管理集合 | 业务数据；见第 4 节 | 收紧为默认拒绝 |
-| GET `/api/events` | 实时事件 | 是 | — | 本人 Gateway 事件；无告警事件 | 本人 Gateway 事件；告警只读 | 全量只读事件和告警 | 全量事件和告警 | 会话事件流、告警页面模型和非敏感告警流状态 | 保留；Bearer fetch SSE、心跳、会话隔离和告警角色过滤 |
+| GET `/api/events` | 实时事件 | 是 | — | 本人 Gateway 事件；告警只读 | 本人 Gateway 事件；告警只读 | 全量只读事件和告警 | 全量事件和告警 | 会话事件流、告警页面模型和非敏感告警流状态 | 保留；Bearer fetch SSE、心跳、会话隔离和告警角色过滤 |
 | GET `/api/dashboard/summary` | 仪表盘 | 是 | — | 403 | 本人会话口径 | 全量只读 | 全量 | 聚合指标 | 基础用户不进入管理控制台 |
 | GET `/api/dashboard/usage` | 仪表盘 Usage | 是 | — | 403 | 本人聚合 | 全量只读 | 全量 | 消息、Token、趋势、模型、工具聚合 | 基础用户不进入管理控制台 |
 | GET `/api/channels/config` | 频道 | 是 | — | 403 | 安全状态 | 安全状态 | 管理读取 | 非管理员无地址、密钥、原始配置 | 基础用户不进入管理控制台 |
@@ -83,9 +83,11 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | POST `/api/session-retention/cancel` | 会话留存 | 是 | — | 403 | 403 | 403 | 管理 | 取消待删除状态 | 管理员专属；同一活动快照保持取消 |
 | PUT `/api/session-retention/long-term` | 会话留存 | 是 | — | 403 | 403 | 403 | 管理 | 设置或取消长期保留 | 管理员专属；不调用 Gateway 删除 |
 | POST `/api/session-retention/attachments` | 会话附件留存 | 是 | — | 403 | 403 | 403 | 管理 | 登记相对引用、类别和到期元数据 | 管理员专属；响应和审计不返回附件路径，不删除文件 |
-| GET `/api/alerts` | 告警 | 是 | — | 403 | 只读 | 全量只读 | 全量 | 告警业务数据 | 基础用户不进入管理控制台 |
-| GET `/api/alerts/time` | 告警 | 是 | — | 403 | 只读 | 只读 | 只读 | 服务器时间 | 基础用户不进入管理控制台 |
-| POST `/api/alerts/export` | 告警 | 是 | — | 403 | 当前页导出 | 当前页导出 | 当前页导出 | 告警业务数据 | 基础用户不进入管理控制台 |
+| GET `/api/alerts` | 告警 | 是 | — | 只读 | 只读 | 全量只读 | 全量 | 告警业务数据 | 系统级列表，不按用户归属隔离 |
+| GET `/api/alerts/time` | 告警 | 是 | — | 只读 | 只读 | 只读 | 只读 | 服务器时间 | 仅供筛选范围 |
+| GET/PUT `/api/alerts/preferences` | 告警 | 是 | — | 当前账户 | 当前账户 | 当前账户 | 当前账户 | 八项通知偏好 | 不接受 userId，不能读取或写入他人偏好 |
+| GET `/api/alerts/changes` | 告警 | 是 | — | 只读补偿 | 只读补偿 | 只读补偿 | 只读补偿 | 告警页面模型与游标 | 保持 SSE 断线补偿语义 |
+| POST `/api/alerts/export` | 告警 | 是 | — | 403 | 当前页导出 | 当前页导出 | 当前页导出 | 告警业务数据 | 基础用户不可导出 |
 | GET `/api/users` | 账户 | 是 | — | 403 | 403 | 安全字段只读 | 管理读取 | 用户名、角色、状态；无密码哈希 | 审计/管理员可读 |
 | POST `/api/users` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 新账户与临时密码入参 | 管理员专属 |
 | PUT `/api/users/:id` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 角色、状态 | 管理员专属 |
@@ -93,9 +95,9 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | PUT `/api/users/:id/password` | 账户 | 是 | — | 本人 | 本人 | 本人 | 本人 | 当前密码和新密码入参 | 仅本人改密并校验当前密码；管理员修改他人须走 reset-password |
 | DELETE `/api/users/:id` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 账户状态 | 管理员专属 |
 | GET `/api/audit-logs` | 审计 | 是 | — | 403 | 403 | 全量只读 | 全量 | 审计业务数据 | 审计/管理员只读 |
-| GET `/api/reports` | 报告 | 是 | — | 403 | 本人 | 全量只读 | 全量 | 报告元数据、安全来源字段 | 基础用户不进入管理控制台 |
-| GET `/api/reports/:id/download` | 报告 | 是 | — | 403 | 本人 | 全量只读 | 全量 | 报告文件 | 基础用户不进入管理控制台 |
-| GET `/api/reports/:id/preview` | 报告 | 是 | — | 403 | 本人 | 全量只读 | 全量 | PDF/文本报告内容 | 基础用户不进入管理控制台 |
+| GET `/api/reports` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | 报告元数据、安全来源字段 | `source_user_id` 必须精确匹配当前登录 ID |
+| GET `/api/reports/:id/download` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | 报告文件 | 未归属/他人 ID 均 404 |
+| GET `/api/reports/:id/preview` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | PDF/文本报告内容 | 未归属/他人 ID 均 404 |
 | DELETE `/api/reports/:id` | 报告 | 是 | — | 403 | 403 | 403 | 管理 | 报告和审计伴随文件 | 管理员专属 |
 | GET `/api/data-sources` | 数据源 | 是 | — | 403 | 安全列表 | 安全列表 | 管理读取 | 不返回密码明文或密文 | 基础用户不进入管理控制台 |
 | POST `/api/data-sources` | 数据源 | 是 | — | 403 | 403 | 403 | 管理 | 数据源地址和凭据写入 | 管理员专属，凭据加密存储 |
@@ -152,7 +154,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | WebChat 会话删除/发送/停止 | 基础和标准均可在本人会话中执行工作台对话、停止和删除 | 全部拒绝 | 允许 | `/api/rpc` 在转发 Gateway 前先解析 sessionKey 并查归属 |
 | 会话留存状态与附件登记 | 基础/标准拒绝 | 全量安全摘要只读 | 管理 | `createSessionRetentionRouter`；取消、长期保留和附件登记使用管理员中间件 |
 | Usage | 先过滤本人会话，再重算消息、Token、趋势、模型、工具和分组聚合 | 全量只读 | 全量 | `filterSessionUsagePayload`；不是全局数据透传，也不是简单清零 |
-| 报告列表、预览、下载 | 基础拒绝；标准仅 `source_user_id` 匹配本人 | 全量只读 | 全量 | 基础 REST 边界 + `resolveReportOrError`和报告列表 SQL 条件 |
+| 报告列表、预览、下载 | 仅 `source_user_id` 匹配本人 | 全量只读 | 全量 | 基础 REST 边界 + `resolveReportOrError`和报告列表 SQL 条件 |
 | 实时 SSE 会话事件 | 仅能接收可访问 sessionKey 的事件 | 全量只读 | 全量 | `extractSessionKeyFromEvent` + `canAccessWorkspaceSession` |
 | 聊天媒体 | 必须携带并通过 `X-GAIOP-Session-Key` 归属 | 携带会话标识后全量只读 | 管理访问 | `createMediaRouter` 先认证/会话授权，再读文件 |
 | 用户账户 | 无权列表 | 只读安全字段 | 管理 | `accountViewerMiddleware` + `publicUser` |
@@ -303,7 +305,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | 分帧 | `TextDecoder` 支持跨 chunk 缓冲、CRLF 归一和多 `data:` 行合并 | 以 `data: <JSON>\n\n` 发送业务事件 | 不假定一个 fetch chunk 就是一个 SSE 事件 |
 | 心跳 | 忽略以 `:` 开头的 SSE 注释 | 每 15 秒写入 `: heartbeat` | 心跳不进入业务事件解析 |
 | 事件隔离 | 仅消费服务端已筛选的事件 | 非管理员的 `event` 必须提取到 sessionKey 且通过归属检查 | 前端过滤不是安全边界 |
-| 告警事件 | 阶段四消费 `alert` / `alertStreamState`，当前前端可忽略未知类型 | 标准、审计、管理员允许；基础用户拒绝；告警投影与 `GET /api/alerts` 一致 | 基础用户不得获得告警字段、序列边界或流状态 |
+| 告警事件 | 阶段四消费 `alert` / `alertStreamState`，当前前端可忽略未知类型 | 四类登录角色允许；告警投影与 `GET /api/alerts` 一致 | 基础用户仍不得获得其它无归属敏感 SSE 数据 |
 | 断线重连 | 传输异常/正常 EOF 后按 1.5 倍退避，上限 30 秒、默认最多 20 次 | 释放断开的 clientId | connection generation 防止旧请求回写新状态 |
 | 401 | 进入 failed，发出 `unauthorized`，清除本地登录并不再重连 | 返回稳定 401 JSON，不升级为 SSE | 过期登录不会形成无限重连 |
 | 退出/页面卸载 | 清理 timer，递增 generation，Abort 当前 fetch | request close 清理心跳和 client 记录 | 退出后不留后台连接 |
