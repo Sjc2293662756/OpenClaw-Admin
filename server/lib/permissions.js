@@ -225,7 +225,11 @@ export function isBasicWorkspaceApiRequest(user, method, originalUrl) {
   if (user?.role !== 'basic') return true
   const normalizedMethod = String(method || 'GET').toUpperCase()
   const path = String(originalUrl || '').split('?')[0]
-  if (normalizedMethod === 'POST' && (path === '/api/rpc' || path === '/api/workspace/sessions')) return true
+  if (normalizedMethod === 'POST' && (
+    path === '/api/rpc'
+    || path === '/api/workspace/sessions'
+    || path === '/api/alerts/export'
+  )) return true
   if (normalizedMethod === 'GET' && (path === '/api/events' || path === '/api/media')) return true
   if (normalizedMethod === 'GET' && (
     path === '/api/alerts'

@@ -117,8 +117,8 @@ watch(() => alerts.preferencesLoadError, (error) => {
   notification.warning({
     title: locale.value === 'zh-CN' ? '告警通知设置暂不可用' : 'Alert notification settings are unavailable',
     content: locale.value === 'zh-CN'
-      ? '已按安全默认值保持全部提醒开启；请前往系统设置检查并重试。'
-      : 'All alerts remain enabled as the safe default. Open System Settings to retry.',
+      ? '已按安全默认值保持全部提醒开启；请在告警通知设置中重试。'
+      : 'All alerts remain enabled as the safe default. Retry in Alert notification settings.',
     duration: 0,
   })
 })

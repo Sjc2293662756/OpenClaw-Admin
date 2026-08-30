@@ -174,9 +174,9 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     return activeAccount.value === account && preferenceGeneration === generation
   }
 
-  async function loadPreferences(): Promise<boolean> {
+  async function loadPreferences({ retry = false }: { retry?: boolean } = {}): Promise<boolean> {
     if (!activeAccount.value) return false
-    if (preferencesReady.value) return true
+    if (preferencesReady.value && !retry) return true
     if (preferenceLoadPromise) return preferenceLoadPromise
     const account = activeAccount.value
     const generation = preferenceGeneration
@@ -204,11 +204,12 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
         // A configuration read failure must preserve alert visibility. The
         // conservative operational default is the documented all-enabled
         // policy, and the UI exposes this failure rather than silently losing
-        // the account's live alerts.
+        // the account's live alerts. Keep the request unready so a deliberate
+        // user retry can fetch the current account's saved value later.
         preferences.value = { ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES }
-        preferencesReady.value = true
+        preferencesReady.value = false
         preferencesLoadError.value = error instanceof Error ? error.message : 'ALERT_NOTIFICATION_PREFERENCES_UNAVAILABLE'
-        return true
+        return false
       } finally {
         if (isCurrentPreferenceRequest(account, generation)) {
           preferencesLoading.value = false
@@ -221,6 +222,13 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
       if (preferenceLoadPromise === run) preferenceLoadPromise = null
     }).catch(() => {})
     return run
+  }
+
+  function retryPreferences(): Promise<boolean> {
+    // This is intentionally explicit: a failed preference read must never
+    // create an automatic fetch loop. Concurrent clicks share the in-flight
+    // request, while activate()/logout abort and invalidate it as before.
+    return loadPreferences({ retry: true })
   }
 
   async function savePreferences(next: AlertNotificationPreferences): Promise<AlertNotificationPreferences> {
@@ -530,7 +538,7 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     activeAccount, lastCursor, recentEvents, unreadCount, notificationQueue, messageCenterOpen, alertDetailOpen, detailFocusRequest, streamState, gapState,
     historyRefreshRequired, lastErrorCode, hasActiveGap,
     preferences, preferencesReady, preferencesLoading, preferencesLoadError, preferencesSaving, preferencesSaveError,
-    activate, loadPreferences, savePreferences, start, stop, addEvent, handleStreamState, compensate,
+    activate, loadPreferences, retryPreferences, savePreferences, start, stop, addEvent, handleStreamState, compensate,
     markRead, markReadBySeverity, remove, clear, clearBySeverity, dequeueNotification, openMessageCenter, closeMessageCenter, setAlertDetailOpen, requestDetailFocus, clearForLogout,
   }
 })

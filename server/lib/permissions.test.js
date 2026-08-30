@@ -159,6 +159,7 @@ test('basic REST boundary allows workspace transport, alert reads/preferences, a
     ['GET', '/api/alerts/changes?afterSequence=1'],
     ['GET', '/api/alerts/preferences'],
     ['PUT', '/api/alerts/preferences'],
+    ['POST', '/api/alerts/export'],
     ['GET', '/api/reports?sourceSessionId=owned'],
     ['GET', '/api/reports/owned-report/download'],
     ['GET', '/api/reports/owned-report/preview'],
@@ -168,7 +169,6 @@ test('basic REST boundary allows workspace transport, alert reads/preferences, a
   }
   for (const [method, path] of [
     ['GET', '/api/dashboard/summary'],
-    ['POST', '/api/alerts/export'],
     ['GET', '/api/reports/retention/recovery'],
     ['DELETE', '/api/reports/owned-report'],
     ['GET', '/api/channels/config'],
@@ -216,9 +216,7 @@ test('basic REST middleware rejects direct management requests and preserves hea
     assert.equal((await fetch(`${baseUrl}/api/alerts/changes`)).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/alerts/preferences`)).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/alerts/preferences`, { method: 'PUT' })).status, 200)
-    const denied = await fetch(`${baseUrl}/api/alerts/export`, { method: 'POST' })
-    assert.equal(denied.status, 403)
-    assert.equal((await denied.json()).code, 'BASIC_WORKSPACE_ONLY')
+    assert.equal((await fetch(`${baseUrl}/api/alerts/export`, { method: 'POST' })).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/users/basic-1/password`, { method: 'PUT' })).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/users/other/password`, { method: 'PUT' })).status, 403)
     assert.equal((await fetch(`${baseUrl}/api/reports`, { headers: { 'x-test-role': 'standard' } })).status, 200)

@@ -107,7 +107,7 @@ describe('alert realtime store', () => {
     expect(store.notificationQueue).toEqual([])
   })
 
-  it('loads and saves the current account preferences, and keeps safe defaults visible on a load failure', async () => {
+  it('loads and saves the current account preferences, then keeps safe defaults visible after a failed read', async () => {
     const store = useAlertRealtimeStore()
     store.activate({ id: 'one', username: 'one', role: 'admin' })
     vi.stubGlobal('fetch', vi.fn()
@@ -130,9 +130,42 @@ describe('alert realtime store', () => {
 
     store.activate({ id: 'two', username: 'two', role: 'admin' })
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network unavailable')))
-    await expect(store.loadPreferences()).resolves.toBe(true)
+    await expect(store.loadPreferences()).resolves.toBe(false)
     expect(store.preferences.realtimeEnabled).toBe(true)
     expect(store.preferencesLoadError).toContain('network unavailable')
+    expect(store.preferencesReady).toBe(false)
+  })
+
+  it('retries a failed preference read only when explicitly requested and never lets a stale retry change accounts', async () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'basic' })
+    const firstFetch = vi.fn().mockRejectedValue(new Error('temporary failure'))
+    vi.stubGlobal('fetch', firstFetch)
+    await expect(store.loadPreferences()).resolves.toBe(false)
+    await Promise.resolve()
+    expect(firstFetch).toHaveBeenCalledOnce()
+    expect(store.preferences.realtimeEnabled).toBe(true)
+    expect(store.preferencesReady).toBe(false)
+
+    const lateResponse = deferred<Response>()
+    const signals: AbortSignal[] = []
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => {
+      signals.push(init.signal as AbortSignal)
+      return lateResponse.promise
+    }))
+    const retry = store.retryPreferences()
+    store.activate({ id: 'two', username: 'two', role: 'basic' })
+    expect(signals[0]?.aborted).toBe(true)
+    lateResponse.resolve(new Response(JSON.stringify({ ok: true, preferences: {
+      realtimeEnabled: false, soundEnabled: false,
+      minorPopupEnabled: false, minorNotificationEnabled: false,
+      majorPopupEnabled: false, majorNotificationEnabled: false,
+      criticalPopupEnabled: false, criticalNotificationEnabled: false,
+    } }), { headers: { 'content-type': 'application/json' } }))
+    await expect(retry).resolves.toBe(false)
+    expect(store.activeAccount).toContain('two')
+    expect(store.preferences.realtimeEnabled).toBe(true)
+    expect(store.preferencesReady).toBe(false)
   })
 
   it('invalidates a late preference response after an account switch', async () => {

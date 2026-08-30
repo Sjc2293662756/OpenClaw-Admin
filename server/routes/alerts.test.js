@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import test from 'node:test'
+import AdmZip from 'adm-zip'
 import Database from 'better-sqlite3'
 import express from 'express'
 import { createAlertsRouter } from './alerts.js'
@@ -54,7 +55,7 @@ test('alert list uses the formal receiver read model without changing the browse
   }
 })
 
-test('basic users can read system alert records and the BFF time without gaining export access', async () => {
+test('basic users can read system alert records, time, and export the current six-field page as XLSX', async () => {
   const context = await startTestServer(async () => ({
     alerts: [{ id: 'basic-visible', occurredAt: '2026-08-30T01:00:00.000Z', sourceHost: '10.0.0.8', category: 'appAlerts', severity: '重大', name: 'basic list record', metrics: [] }],
     availableCount: 1,
@@ -65,9 +66,19 @@ test('basic users can read system alert records and the BFF time without gaining
     assert.equal(list.status, 200)
     assert.equal((await list.json()).alerts[0].id, 'basic-visible')
     assert.equal((await fetch(`${context.baseUrl}/time`)).status, 200)
-    assert.equal((await fetch(`${context.baseUrl}/export`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [{}] }),
-    })).status, 403)
+    const exported = await fetch(`${context.baseUrl}/export`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: [{
+        occurredAt: '2026-08-30 09:00', severity: '重大', name: 'basic list record',
+        category: 'appAlerts', sourceHost: '10.0.0.8', status: '触发中', hiddenField: 'must-not-export',
+      }] }),
+    })
+    assert.equal(exported.status, 200)
+    assert.match(String(exported.headers.get('content-type')), /spreadsheetml/)
+    const sheet = new AdmZip(Buffer.from(await exported.arrayBuffer())).readAsText('xl/worksheets/sheet1.xml')
+    assert.match(sheet, /basic list record/)
+    assert.doesNotMatch(sheet, /must-not-export/)
+    assert.equal(context.audits.filter((entry) => entry.action === '导出 Syslog 告警').length, 1)
   } finally { context.server.close(); context.db.close() }
 })
 
@@ -99,9 +110,19 @@ test('alert changes returns a baseline without a cursor and replays continuous p
 })
 
 test('alert changes permits basic users, rejects invalid cursors, and reports receiver failure safely', async () => {
-  const basic = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { role: 'basic' })
+  const basicChangeCalls = []
+  const basic = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), {
+    role: 'basic',
+    // This role regression must remain completely offline: no local Receiver,
+    // tunnel, or 237 state may influence a unit test.
+    readAlertChanges: async (_env, options) => {
+      basicChangeCalls.push(options)
+      return { events: [], latestSequence: 0, hasMore: false, historyRefreshRequired: false }
+    },
+  })
   try {
     assert.equal((await fetch(`${basic.baseUrl}/changes?afterSequence=0`)).status, 200)
+    assert.deepEqual(basicChangeCalls, [{ afterSequence: 0, limit: 200 }])
   } finally { basic.server.close() }
 
   const invalid = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }))
@@ -180,8 +201,32 @@ test('alert notification preferences allow basic users but remain current-accoun
     assert.equal((await fetch(`${context.baseUrl}/preferences`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(defaultPreferences),
     })).status, 200)
-    assert.equal((await fetch(`${context.baseUrl}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [{}] }) })).status, 403)
+    assert.equal((await fetch(`${context.baseUrl}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [{}] }) })).status, 200)
   } finally { context.server.close(); context.db.close() }
+})
+
+test('all four roles retain bounded, sanitized current-page exports and empty input remains rejected', async () => {
+  const rows = Array.from({ length: 101 }, (_value, index) => ({
+    occurredAt: `2026-08-30 ${index}`, severity: '轻微', name: `safe\u0000-row-${index}`,
+    category: 'appAlerts', sourceHost: '10.0.0.8', status: '触发中', extra: 'not-exported',
+  }))
+  for (const role of ['basic', 'standard', 'auditor', 'admin']) {
+    const context = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), { role })
+    try {
+      const empty = await fetch(`${context.baseUrl}/export`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [] }),
+      })
+      assert.equal(empty.status, 400, `${role} empty export`)
+      const exported = await fetch(`${context.baseUrl}/export`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }),
+      })
+      assert.equal(exported.status, 200, `${role} export`)
+      const sheet = new AdmZip(Buffer.from(await exported.arrayBuffer())).readAsText('xl/worksheets/sheet1.xml')
+      assert.equal((sheet.match(/<row /g) || []).length, 101, `${role} header plus 100 rows`)
+      assert.match(sheet, /safe-row-0/)
+      assert.doesNotMatch(sheet, /extra/)
+    } finally { context.server.close(); context.db.close() }
+  }
 })
 
 test('filters a historical custom range before applying the browser TOP limit', async () => {

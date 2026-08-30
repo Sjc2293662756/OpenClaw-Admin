@@ -42,6 +42,11 @@ async function save() {
   }
 }
 
+async function retry() {
+  await alerts.retryPreferences()
+  reset()
+}
+
 watch(() => alerts.preferences, reset, { deep: true })
 onMounted(async () => {
   await alerts.loadPreferences()
@@ -55,8 +60,9 @@ onMounted(async () => {
       {{ text('设置仅属于当前账户，只影响之后到达的新告警。页面弹窗依赖同级告警通知；关闭通知会暂时关闭弹窗并保留原选择。', 'Settings belong only to this account and affect only future alerts. A page popup depends on alert notification for the same severity; disabling notification temporarily disables the popup while preserving its choice.') }}
     </NAlert>
     <NAlert v-if="alerts.preferencesLoadError" type="warning" :bordered="false">
-      {{ text('暂时无法读取已保存设置，当前按全部开启的安全默认值继续接收告警；请重试。', 'Saved settings could not be loaded. Alerts remain enabled using the safe default; please retry.') }}
+      {{ text('暂时无法读取已保存设置，当前按全部开启的安全默认值继续接收告警；请在此重试。', 'Saved settings could not be loaded. Alerts remain enabled using the safe default; retry here.') }}
     </NAlert>
+    <NButton v-if="alerts.preferencesLoadError" size="small" :loading="alerts.preferencesLoading" class="alert-preferences-retry" @click="retry">{{ text('重试', 'Retry') }}</NButton>
     <NAlert v-if="alerts.preferencesSaveError" type="error" :bordered="false">
       {{ text('上一次保存没有成功，当前保留未保存的选择。', 'The last save did not succeed. Your unsaved choices are still shown.') }}
     </NAlert>
@@ -91,6 +97,7 @@ onMounted(async () => {
 <style scoped>
 .alert-preferences { display: grid; gap: 12px; }
 .alert-preferences-loading { color: var(--text-color-3); padding: 18px 0 4px; }
+.alert-preferences-retry { justify-self: start; margin-top: -4px; }
 .alert-preferences-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
 .alert-preferences-row :deep(.n-text--depth-3) { display: block; margin-top: 4px; line-height: 1.5; }
 .alert-preferences-grid { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(112px, 1fr) minmax(126px, 1fr); align-items: center; overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; }

@@ -8,7 +8,7 @@
 
 除 `/api/auth/config`、`/api/auth/login`、`/api/auth/logout`、`/api/health` 和构建产物静态资源外，所有正式业务 REST 均需 Bearer 登录认证。登录 Token 不再接受 URL 查询参数。
 
-2026-08-30 起，基础用户在通用认证之后先经过 `BASIC_WORKSPACE_ONLY` 服务端边界：除认证、健康检查外，仅允许 `/api/rpc`、`POST /api/workspace/sessions`、`GET /api/events`、本人会话 `GET /api/media`、本人报告的列表/下载/预览、告警列表/时间/补偿/当前账户偏好和 `PUT /api/users/<本人ID>/password`。告警导出、系统告警配置、报告留存/删除及其它管理 Router 仍被拦截。
+2026-08-30 起，基础用户在通用认证之后先经过 `BASIC_WORKSPACE_ONLY` 服务端边界：除认证、健康检查外，仅允许 `/api/rpc`、`POST /api/workspace/sessions`、`GET /api/events`、本人会话 `GET /api/media`、本人报告的列表/下载/预览、告警列表/时间/补偿/当前账户偏好、`POST /api/alerts/export` 当前页导出和 `PUT /api/users/<本人ID>/password`。告警规则/接收器/系统配置、报告留存/删除及其它管理 Router 仍被拦截。
 
 ### 1.1 核查依据
 
@@ -87,7 +87,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | GET `/api/alerts/time` | 告警 | 是 | — | 只读 | 只读 | 只读 | 只读 | 服务器时间 | 仅供筛选范围 |
 | GET/PUT `/api/alerts/preferences` | 告警 | 是 | — | 当前账户 | 当前账户 | 当前账户 | 当前账户 | 八项通知偏好 | 不接受 userId，不能读取或写入他人偏好 |
 | GET `/api/alerts/changes` | 告警 | 是 | — | 只读补偿 | 只读补偿 | 只读补偿 | 只读补偿 | 告警页面模型与游标 | 保持 SSE 断线补偿语义 |
-| POST `/api/alerts/export` | 告警 | 是 | — | 403 | 当前页导出 | 当前页导出 | 当前页导出 | 告警业务数据 | 基础用户不可导出 |
+| POST `/api/alerts/export` | 告警 | 是 | — | 当前页导出 | 当前页导出 | 当前页导出 | 当前页导出 | 当前页六个展示字段、最多 100 条 | 不额外查询 Receiver；输入清理、Excel 生成和审计保持一致 |
 | GET `/api/users` | 账户 | 是 | — | 403 | 403 | 安全字段只读 | 管理读取 | 用户名、角色、状态；无密码哈希 | 审计/管理员可读 |
 | POST `/api/users` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 新账户与临时密码入参 | 管理员专属 |
 | PUT `/api/users/:id` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 角色、状态 | 管理员专属 |

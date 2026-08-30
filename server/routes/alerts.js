@@ -10,7 +10,7 @@ import {
 } from '../lib/alert-notification-preferences.js'
 
 const ALERT_VIEWER_ROLES = new Set(['basic', 'standard', 'auditor', 'admin'])
-const ALERT_EXPORTER_ROLES = new Set(['standard', 'auditor', 'admin'])
+const ALERT_EXPORTER_ROLES = new Set(['basic', 'standard', 'auditor', 'admin'])
 
 function readFilter(value, maxLength = 120) {
   return String(value || '').trim().slice(0, maxLength)
