@@ -31,6 +31,9 @@ const alertPreferenceRows = computed(() => [
   { label: text('重大', 'Major'), popup: 'majorPopupEnabled', notification: 'majorNotificationEnabled' },
   { label: text('紧急', 'Critical'), popup: 'criticalPopupEnabled', notification: 'criticalNotificationEnabled' },
 ] as Array<{ label: string; popup: AlertPreferenceBooleanKey; notification: AlertPreferenceBooleanKey }>)
+const hasEnabledPagePopup = computed(() => alertPreferenceRows.value.some((row) => (
+  alertPreferencesDraft.value[row.popup] === true && alertPreferencesDraft.value[row.notification] === true
+)))
 const alertPreferencesDirty = computed(() => Object.keys(DEFAULT_ALERT_NOTIFICATION_PREFERENCES)
   .some((key) => alertPreferencesDraft.value[key as keyof AlertNotificationPreferences] !== alerts.preferences[key as keyof AlertNotificationPreferences]))
 
@@ -91,6 +94,10 @@ function resetAlertPreferencesDraft() {
   alertPreferencesLoaded.value = alerts.preferencesReady
 }
 
+function updatePopupPreference(key: AlertPreferenceBooleanKey, value: boolean) {
+  alertPreferencesDraft.value[key] = value
+}
+
 async function loadAlertPreferences() {
   if (!canConfigureAlertNotifications.value) return
   await alerts.loadPreferences()
@@ -140,7 +147,7 @@ onMounted(() => {
 
     <NCard v-if="canConfigureAlertNotifications" :title="text('告警通知设置', 'Alert notification settings')" class="app-card alert-preferences-card">
       <NAlert type="info" :bordered="false">
-        {{ text('设置仅属于当前账户。关闭实时告警提醒时会保留各子项选择；重新开启后恢复。保存后仅影响新到达的告警，现有告警通知不会被移除。', 'Settings belong only to your account. Turning off real-time alerts preserves each choice for when it is turned back on. Saved changes affect only new alerts and do not remove existing notifications.') }}
+        {{ text('设置仅属于当前账户。页面弹窗依赖同级告警通知：关闭通知会暂时关闭弹窗，重新打开后恢复原选择。关闭实时告警提醒时也会保留各子项选择；保存后仅影响新到达的告警，现有告警通知不会被移除。', 'Settings belong only to your account. A page popup depends on alert notification for the same severity: turning notification off temporarily disables the popup and restores its saved choice when notification is turned back on. Turning off real-time alerts also preserves each choice. Saved changes affect only new alerts and do not remove existing notifications.') }}
       </NAlert>
       <NAlert v-if="alerts.preferencesLoadError" type="warning" :bordered="false" class="alert-preferences-message">
         {{ text('暂时无法读取已保存设置，当前已按全部开启的安全默认值继续接收告警；请重试。', 'Saved settings could not be loaded. Alerts remain enabled using the safe default; please retry.') }}
@@ -155,8 +162,8 @@ onMounted(() => {
           <NSwitch v-model:value="alertPreferencesDraft.realtimeEnabled" />
         </div>
         <div class="alert-preferences-sound">
-          <div><NText strong>{{ text('声音提醒', 'Sound reminders') }}</NText><NText depth="3">{{ text('仅在实际创建页面弹窗时播放。', 'Only plays when a popup is actually created.') }}</NText></div>
-          <NSwitch v-model:value="alertPreferencesDraft.soundEnabled" :disabled="!alertPreferencesDraft.realtimeEnabled" />
+          <div><NText strong>{{ text('声音提醒', 'Sound reminders') }}</NText><NText depth="3">{{ text('仅在实际创建页面弹窗时播放；没有可用页面弹窗时不会发声。', 'Only plays when a popup is actually created; it stays silent when no page popup is enabled.') }}</NText></div>
+          <NSwitch v-model:value="alertPreferencesDraft.soundEnabled" :disabled="!alertPreferencesDraft.realtimeEnabled || !hasEnabledPagePopup" />
         </div>
         <div class="alert-preferences-grid" :class="{ 'is-disabled': !alertPreferencesDraft.realtimeEnabled }">
           <div class="alert-preferences-grid-header">{{ text('级别', 'Severity') }}</div>
@@ -164,7 +171,11 @@ onMounted(() => {
           <div class="alert-preferences-grid-header">{{ text('告警通知', 'Alert notification') }}</div>
           <template v-for="row in alertPreferenceRows" :key="row.popup">
             <NText>{{ row.label }}</NText>
-            <NSwitch v-model:value="alertPreferencesDraft[row.popup]" :disabled="!alertPreferencesDraft.realtimeEnabled" />
+            <NSwitch
+              :value="alertPreferencesDraft[row.popup] && alertPreferencesDraft[row.notification]"
+              :disabled="!alertPreferencesDraft.realtimeEnabled || !alertPreferencesDraft[row.notification]"
+              @update:value="updatePopupPreference(row.popup, $event)"
+            />
             <NSwitch v-model:value="alertPreferencesDraft[row.notification]" :disabled="!alertPreferencesDraft.realtimeEnabled" />
           </template>
         </div>

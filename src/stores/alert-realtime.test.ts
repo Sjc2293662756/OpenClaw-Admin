@@ -72,10 +72,10 @@ describe('alert realtime store', () => {
       minorNotificationEnabled: false,
       majorPopupEnabled: false,
     }
-    store.addEvent({ ...event(1, 'minor-popup-only'), payload: { id: 'minor-popup-only', severity: '轻微' } })
+    store.addEvent({ ...event(1, 'minor-disabled'), payload: { id: 'minor-disabled', severity: '轻微' } })
     store.addEvent({ ...event(2, 'major-drawer-only'), payload: { id: 'major-drawer-only', severity: '重大' } })
     store.addEvent({ type: 'alert', action: 'recovered', cursor: 3, payload: { id: 'minor-recovered', severity: '轻微' } })
-    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([1])
+    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([])
     expect(store.recentEvents.map((item) => item.cursor).sort()).toEqual([2])
     expect(store.lastCursor).toBe(3)
 
@@ -83,7 +83,7 @@ describe('alert realtime store', () => {
     store.addEvent({ ...event(4, 'disabled'), payload: { id: 'disabled', severity: '紧急' } })
     expect(store.lastCursor).toBe(4)
     expect(store.recentEvents.map((item) => item.cursor).sort()).toEqual([2])
-    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([1])
+    expect(store.notificationQueue.map((item) => item.cursor)).toEqual([])
   })
 
   it('preserves existing drawer entries when settings change and never creates a popup for recovered or compensation actions', () => {
@@ -95,6 +95,16 @@ describe('alert realtime store', () => {
     store.addEvent({ type: 'alert', action: 'compensation', cursor: 3, payload: { id: 'compensation', severity: '紧急' } })
     expect(store.recentEvents.map((item) => item.cursor)).toEqual([1])
     expect(store.notificationQueue.map((item) => item.cursor)).toEqual([1])
+  })
+
+  it('treats a page popup as a notification delivery detail rather than an independent channel', () => {
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    store.preferences = { ...store.preferences, majorNotificationEnabled: false, majorPopupEnabled: true }
+    store.addEvent({ ...event(1), payload: { id: 'major-without-notification', severity: '重大' } })
+    expect(store.lastCursor).toBe(1)
+    expect(store.recentEvents).toEqual([])
+    expect(store.notificationQueue).toEqual([])
   })
 
   it('loads and saves the current account preferences, and keeps safe defaults visible on a load failure', async () => {
@@ -116,7 +126,7 @@ describe('alert realtime store', () => {
     await expect(store.loadPreferences()).resolves.toBe(true)
     expect(store.preferences.soundEnabled).toBe(false)
     await expect(store.savePreferences({ ...store.preferences, realtimeEnabled: false })).resolves.toMatchObject({ realtimeEnabled: false })
-    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[1][1]?.method).toBe('PUT')
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[1]?.[1]?.method).toBe('PUT')
 
     store.activate({ id: 'two', username: 'two', role: 'admin' })
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network unavailable')))

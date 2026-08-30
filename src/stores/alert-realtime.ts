@@ -285,7 +285,11 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
     const prefix = levelPreferencePrefix(event.payload?.severity)
     if (!prefix) return false
     const notificationEnabled = preferences.value[`${prefix}NotificationEnabled` as keyof AlertNotificationPreferences] === true
-    const popupEnabled = !isCompensation
+    // A floating page alert is a delivery detail of an account notification,
+    // not an independent channel. When the matching notification is off,
+    // retain the saved popup choice for a later re-enable but never deliver it.
+    const popupEnabled = notificationEnabled
+      && !isCompensation
       && event.action === 'triggered'
       && preferences.value[`${prefix}PopupEnabled` as keyof AlertNotificationPreferences] === true
     if (!notificationEnabled && !popupEnabled) return false
