@@ -9,6 +9,7 @@ async function withServer(options, callback) {
   configureTrustedProxy(app)
   app.use(createCorsMiddleware(options))
   app.get('/probe', (req, res) => res.json({ ip: req.ip }))
+  app.get('/assets/app.js', (_req, res) => res.type('javascript').send('export default true'))
   const server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')
   try {
@@ -38,6 +39,17 @@ test('production CORS allows the public origin and denies an arbitrary public or
     const denied = await fetch(`${baseUrl}/probe`, { headers: { Origin: 'https://attacker.example' } })
     assert.equal(denied.status, 403)
     assert.equal((await denied.json()).code, 'CORS_ORIGIN_DENIED')
+  })
+})
+
+test('production CORS leaves same-origin module requests available', async () => {
+  await withServer({ allowedOrigins: 'https://101.254.114.237', isDevelopment: false }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/assets/app.js`, {
+      headers: { Origin: baseUrl },
+    })
+    assert.equal(response.status, 200)
+    assert.equal(await response.text(), 'export default true')
+    assert.equal(response.headers.get('access-control-allow-origin'), null)
   })
 })
 

@@ -36,6 +36,25 @@ export function parseAllowedOrigins(value) {
   return origins
 }
 
+function requestOrigin(req) {
+  const protocol = String(req.protocol || '').trim().toLowerCase()
+  const host = String(req.get('host') || '').trim()
+  if (!protocol || !host) return null
+  try {
+    return new URL(`${protocol}://${host}`).origin
+  } catch {
+    return null
+  }
+}
+
+function isSameOriginRequest(req, origin) {
+  try {
+    return new URL(origin).origin === requestOrigin(req)
+  } catch {
+    return false
+  }
+}
+
 export function createCorsMiddleware({ allowedOrigins = '', isDevelopment = false } = {}) {
   const configuredOrigins = parseAllowedOrigins(allowedOrigins)
   if (!isDevelopment && configuredOrigins.size === 0) {
@@ -45,6 +64,11 @@ export function createCorsMiddleware({ allowedOrigins = '', isDevelopment = fals
   return (req, res, next) => {
     const origin = String(req.headers.origin || '').trim()
     if (!origin) return next()
+
+    // Browser module imports carry Origin even when they target this same Admin
+    // origin. CORS policy only governs cross-origin requests; rejecting these
+    // imports prevents the SPA entry from loading its dynamic chunks.
+    if (isSameOriginRequest(req, origin)) return next()
 
     const allowed = configuredOrigins.has(origin) || (isDevelopment && DEVELOPMENT_ORIGIN_PATTERN.test(origin))
     if (!allowed) {
