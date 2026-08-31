@@ -37,6 +37,7 @@ import { renderSimpleMarkdown } from '@/utils/markdown'
 import { loadSelectedSessionWithBackgroundList } from '@/utils/session-loading'
 import { selectWorkspacePromptTexts } from '@/utils/workspace-prompts'
 import { stripInternalDocxMediaPaths } from '@/utils/report-media'
+import { interleaveReportTranscriptItems } from '@/utils/chat-report-attachments'
 import {
   isConversationTranscriptRole,
   projectConversationStructuredMessage,
@@ -669,6 +670,7 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
     if (!prepared) continue
     rendered.push({
       key: item.id || `${item.role}-${idx}`,
+      messageIndex: idx,
       item,
       structured: prepared.structured,
       html: prepared.html,
@@ -728,6 +730,7 @@ interface StructuredMessageView {
 
 interface RenderMessage {
   key: string
+  messageIndex: number
   item: ChatMessage
   structured: StructuredMessageView | null
   html: string
@@ -879,7 +882,7 @@ const reportCompletionSignal = computed(() => {
 const {
   downloadingReportId,
   downloadReport,
-  reportsForMessage,
+  reportsForMessageIndex,
 } = useChatReportAttachments(normalizedSessionKey, messageList, reportCompletionSignal)
 
 const currentToolProgress = computed(() => {
@@ -1053,6 +1056,10 @@ const renderedMessages = computed<RenderMessage[]>(() => {
   if (role === 'all') return visibleMessageEntries.value
   return visibleMessageEntries.value.filter((entry) => entry.item.role === role)
 })
+
+const renderedTranscriptEntries = computed(() =>
+  interleaveReportTranscriptItems(renderedMessages.value, reportsForMessageIndex)
+)
 
 const filteredQuickReplies = computed(() => {
   const query = quickReplySearch.value.trim().toLowerCase()
@@ -2960,14 +2967,15 @@ async function handleSend() {
               <div class="chat-transcript-shell">
                 <NSpin :show="transcriptLoading" class="chat-transcript-spin">
                   <div ref="transcriptRef" class="chat-transcript" @scroll="handleTranscriptScroll">
-                    <template v-if="renderedMessages.length">
+                    <template v-if="renderedTranscriptEntries.length">
                       <div
-                        v-for="entry in renderedMessages"
+                        v-for="entry in renderedTranscriptEntries"
                         :key="entry.key"
                         v-memo="[
                           entry.item,
                           entry.html,
-                          reportsForMessage(entry.item),
+                          entry.transcriptType,
+                          entry.reports,
                           expandedToolCalls,
                           expandedToolResults,
                           downloadingReportId,
@@ -2977,7 +2985,7 @@ async function handleSend() {
                         ]"
                         class="chat-turn"
                       >
-                        <div class="chat-bubble" :class="`is-${entry.item.role}`">
+                        <div v-if="entry.transcriptType === 'message'" class="chat-bubble" :class="`is-${entry.item.role}`">
                           <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
                           <NSpace align="center" :size="6">
                             <NTag size="small" :type="roleType(entry.item.role)" :bordered="false" round>
@@ -3188,12 +3196,9 @@ async function handleSend() {
                         </div>
 
                         </div>
-                        <div
-                          v-if="reportsForMessage(entry.item).length"
-                          class="chat-bubble is-assistant chat-report-message"
-                        >
+                        <div v-else class="chat-bubble is-assistant chat-report-message">
                           <ReportAttachmentList
-                            :reports="reportsForMessage(entry.item)"
+                            :reports="entry.reports"
                             :downloading-id="downloadingReportId"
                             @download="downloadReport"
                           />

@@ -69,6 +69,7 @@ const EVENT_WRAPPER_KEYS = [
   'body',
 ] as const
 const MESSAGE_CONTAINER_KEYS = ['messages', 'items', 'transcript', 'history', 'events', 'turns'] as const
+const TRANSPORT_TIMESTAMP_PREFIX_PATTERN = /^\[[A-Z][a-z]{2}\s+\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}(?:\s+[A-Z]{2,5}(?:[+-]\d{1,2}(?::\d{2})?)?)?\]\s*/u
 
 export const useChatStore = defineStore('chat', () => {
   const CONTEXT_COMPACTION_DETAIL_ZH = '上下文压缩中...'
@@ -449,9 +450,10 @@ export const useChatStore = defineStore('chat', () => {
       try {
         const history = await wsStore.rpc.listChatHistory(normalizedKey)
         if (requestId !== historyRequestId || sessionKey.value !== normalizedKey) return
+        const mergedHistory = mergePendingMessages(history)
         const hasCompletedTurn =
           (convergenceActive || activeRealtimeTerminal) &&
-          hasAuthoritativeAssistantReply(history)
+          hasAuthoritativeAssistantReply(mergedHistory)
         if (hasCompletedTurn) {
           authoritativeReplyObserved = true
           resetActiveRealtimeProjection()
@@ -460,7 +462,9 @@ export const useChatStore = defineStore('chat', () => {
         // Gateway can acknowledge a send before its transcript is visible to
         // chat.history. Keep optimistic local turns during every refresh so a
         // temporary empty/partial response cannot blank a running conversation.
-        const nextMessages = mergePendingMessages(history)
+        const nextMessages = hasCompletedTurn
+          ? mergePendingMessages(history)
+          : mergedHistory
         const changed = !areMessageListsEquivalent(messages.value, nextMessages)
         if (changed) {
           messages.value = nextMessages
@@ -753,7 +757,7 @@ export const useChatStore = defineStore('chat', () => {
       const item = history[index]
       if (
         item?.role === 'user' &&
-        (!activeTurnUserContent || item.content.trim() === activeTurnUserContent)
+        (!activeTurnUserContent || normalizeUserContent(item.content) === normalizeUserContent(activeTurnUserContent))
       ) {
         latestUserIndex = index
         break
@@ -811,16 +815,65 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  function normalizeUserContent(content: string): string {
+    return content
+      .replace(TRANSPORT_TIMESTAMP_PREFIX_PATTERN, '')
+      .replace(/\s+/gu, ' ')
+      .trim()
+  }
+
+  function isPendingTranscriptMessage(item: ChatMessage): boolean {
+    const id = item.id || ''
+    return id.startsWith('web-') || id.startsWith('local-') || id === activeRealtimeMessageId
+  }
+
+  function messagesMatch(left: ChatMessage, right: ChatMessage): boolean {
+    if (left.id && right.id && left.id === right.id) return true
+    if (left.role !== right.role) return false
+    if (left.role === 'user') {
+      return normalizeUserContent(left.content) === normalizeUserContent(right.content)
+    }
+    return left.content === right.content
+  }
+
+  function findPendingInsertionIndex(
+    item: ChatMessage,
+    currentIndex: number,
+    merged: ChatMessage[],
+  ): number {
+    for (let index = currentIndex + 1; index < messages.value.length; index += 1) {
+      const anchor = messages.value[index]
+      if (!anchor || isPendingTranscriptMessage(anchor)) continue
+      const anchorIndex = merged.findIndex((candidate) => messagesMatch(candidate, anchor))
+      if (anchorIndex >= 0) return anchorIndex
+    }
+
+    for (let index = currentIndex - 1; index >= 0; index -= 1) {
+      const anchor = messages.value[index]
+      if (!anchor) continue
+      const anchorIndex = merged.findIndex((candidate) => messagesMatch(candidate, anchor))
+      if (anchorIndex >= 0) return anchorIndex + 1
+    }
+
+    // A newly-created Gateway transcript can temporarily persist only the
+    // assistant result. The local user placeholder is the sole trustworthy
+    // turn boundary in that shape, so keep it directly before the first reply.
+    if (item.role === 'user') {
+      const firstAssistantIndex = merged.findIndex((candidate) => candidate.role === 'assistant')
+      if (firstAssistantIndex >= 0) return firstAssistantIndex
+    }
+    return merged.length
+  }
+
   function mergePendingMessages(history: ChatMessage[]): ChatMessage[] {
     // Only preserve explicit local user placeholders and the one active chat
     // stream. Agent telemetry and completed realtime projections must never
     // outlive the authoritative Gateway transcript.
     const merged = [...history]
-    const pending = messages.value.filter((item) => {
-      const id = item.id || ''
-      return id.startsWith('web-') || id.startsWith('local-') || id === activeRealtimeMessageId
-    })
-    for (const item of pending) {
+    const pending = messages.value
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => isPendingTranscriptMessage(item))
+    for (const { item, index } of pending) {
       const existingIndex = item.id
         ? merged.findIndex((existing) => existing.id && existing.id === item.id)
         : -1
@@ -832,10 +885,10 @@ export const useChatStore = defineStore('chat', () => {
         continue
       }
 
-      const alreadyPresent = merged.some((existing) =>
-        existing.role === item.role && existing.content === item.content
-      )
-      if (!alreadyPresent) merged.push(item)
+      const alreadyPresent = merged.some((existing) => messagesMatch(existing, item))
+      if (alreadyPresent) continue
+      const insertionIndex = findPendingInsertionIndex(item, index, merged)
+      merged.splice(insertionIndex, 0, item)
     }
     return merged
   }

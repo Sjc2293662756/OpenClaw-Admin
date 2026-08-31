@@ -45,6 +45,7 @@ import {
   isConversationTranscriptRole,
   projectConversationStructuredMessage,
 } from '@/utils/chat-transcript-projection'
+import { interleaveReportTranscriptItems } from '@/utils/chat-report-attachments'
 import type { ChatMessage, ChatMessageContent, AgentInstance, Skill, SessionsUsageSession } from '@/api/types'
 import AuthenticatedMediaImage from '@/components/common/AuthenticatedMediaImage.vue'
 import ReportAttachmentList from '@/components/chat/ReportAttachmentList.vue'
@@ -946,6 +947,7 @@ interface StructuredMessageView {
 
 interface RenderMessage {
   key: string
+  messageIndex: number
   item: ChatMessage
   structured: StructuredMessageView | null
 }
@@ -1637,6 +1639,7 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
         if (!structured) continue
         rendered.push({
           key: item.id || `${item.role}-${idx}`,
+          messageIndex: idx,
           item,
           structured,
         })
@@ -1650,6 +1653,7 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
     if (parsed && !structured) continue
     rendered.push({
       key: item.id || `${item.role}-${idx}`,
+      messageIndex: idx,
       item,
       structured,
     })
@@ -1678,8 +1682,12 @@ const reportCompletionSignal = computed(() => {
 const {
   downloadingReportId,
   downloadReport,
-  reportsForMessage,
+  reportsForMessageIndex,
 } = useChatReportAttachments(selectedSessionKey, messageList, reportCompletionSignal)
+
+const visibleTranscriptEntries = computed(() =>
+  interleaveReportTranscriptItems(visibleMessageEntries.value, reportsForMessageIndex)
+)
 
 const agentBusy = computed(() => {
   const phase = currentAgentStatus.value.phase
@@ -2145,11 +2153,11 @@ watch(selectedSessionKey, async (newSessionKey) => {
           </div>
           <div v-else class="message-list">
             <div
-              v-for="entry in visibleMessageEntries"
+              v-for="entry in visibleTranscriptEntries"
               :key="entry.key"
               class="chat-turn"
             >
-              <div class="chat-bubble" :class="`is-${entry.item.role}`">
+              <div v-if="entry.transcriptType === 'message'" class="chat-bubble" :class="`is-${entry.item.role}`">
                 <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
                 <NSpace align="center" :size="6">
                   <NTag size="small" :type="roleType(entry.item.role)" :bordered="false" round>
@@ -2362,12 +2370,9 @@ watch(selectedSessionKey, async (newSessionKey) => {
               </div>
 
               </div>
-              <div
-                v-if="reportsForMessage(entry.item).length"
-                class="chat-bubble is-assistant chat-report-message"
-              >
+              <div v-else class="chat-bubble is-assistant chat-report-message">
                 <ReportAttachmentList
-                  :reports="reportsForMessage(entry.item)"
+                  :reports="entry.reports"
                   :downloading-id="downloadingReportId"
                   @download="downloadReport"
                 />
@@ -2624,11 +2629,11 @@ watch(selectedSessionKey, async (newSessionKey) => {
           </div>
           <div v-else class="message-list expanded">
             <div
-              v-for="entry in visibleMessageEntries"
+              v-for="entry in visibleTranscriptEntries"
               :key="entry.key"
               class="chat-turn"
             >
-              <div class="chat-bubble" :class="`is-${entry.item.role}`">
+              <div v-if="entry.transcriptType === 'message'" class="chat-bubble" :class="`is-${entry.item.role}`">
                 <NSpace justify="space-between" align="center" class="chat-bubble-meta" :size="8">
                 <NSpace align="center" :size="6">
                   <NTag size="small" :type="roleType(entry.item.role)" :bordered="false" round>
@@ -2803,12 +2808,9 @@ watch(selectedSessionKey, async (newSessionKey) => {
               </div>
 
               </div>
-              <div
-                v-if="reportsForMessage(entry.item).length"
-                class="chat-bubble is-assistant chat-report-message"
-              >
+              <div v-else class="chat-bubble is-assistant chat-report-message">
                 <ReportAttachmentList
-                  :reports="reportsForMessage(entry.item)"
+                  :reports="entry.reports"
                   :downloading-id="downloadingReportId"
                   @download="downloadReport"
                 />

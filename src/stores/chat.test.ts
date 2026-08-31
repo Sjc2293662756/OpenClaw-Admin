@@ -544,6 +544,103 @@ describe('realtime event routing', () => {
 })
 
 describe('post-send history fallback', () => {
+  it('keeps the local first question before assistant-only Gateway history and converges', async () => {
+    vi.useFakeTimers()
+    const sessionKey = 'agent:main:main:dm:webchat-assistant-only-history'
+    const persistedReply: ChatMessage = {
+      id: 'gateway-assistant-1',
+      role: 'assistant',
+      content: '未找到性能对象，请确认名称后重试。',
+    }
+    mocks.sendChatMessage.mockResolvedValue(undefined)
+    mocks.listChatHistory.mockResolvedValue([persistedReply])
+    const store = useChatStore()
+    store.setSessionKey(sessionKey)
+    await store.sendMessage('生成性能综述报告')
+    store.handleRealtimeEvent('chat', {
+      runId: 'run-assistant-only-history',
+      sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: persistedReply.content },
+    }, { refreshHistory: false })
+
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+    expect(store.messages.map((item) => [item.role, item.content])).toEqual([
+      ['user', '生成性能综述报告'],
+      ['assistant', '未找到性能对象，请确认名称后重试。'],
+    ])
+    expect(store.messages.some((item) => item.id?.startsWith('chat-stream:'))).toBe(false)
+
+    const convergedMessages = store.messages
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+    expect(store.messages).toBe(convergedMessages)
+    store.clearTimers()
+  })
+
+  it('keeps later persisted conversation turns after an assistant-only first reply', async () => {
+    vi.useFakeTimers()
+    const sessionKey = 'agent:main:main:dm:webchat-assistant-only-followup'
+    const firstReply: ChatMessage = {
+      id: 'gateway-assistant-1',
+      role: 'assistant',
+      content: '第一轮回复',
+    }
+    mocks.sendChatMessage.mockResolvedValue(undefined)
+    mocks.listChatHistory.mockResolvedValueOnce([firstReply])
+    const store = useChatStore()
+    store.setSessionKey(sessionKey)
+    await store.sendMessage('第一轮问题')
+    store.handleRealtimeEvent('chat', {
+      runId: 'run-assistant-only-followup',
+      sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: firstReply.content },
+    }, { refreshHistory: false })
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+
+    mocks.listChatHistory.mockResolvedValueOnce([
+      firstReply,
+      { id: 'gateway-user-2', role: 'user', content: '第二轮问题' },
+      { id: 'gateway-assistant-2', role: 'assistant', content: '第二轮回复' },
+    ])
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+
+    expect(store.messages.map((item) => item.content)).toEqual([
+      '第一轮问题',
+      '第一轮回复',
+      '第二轮问题',
+      '第二轮回复',
+    ])
+    store.clearTimers()
+  })
+
+  it('replaces the local first question with a timestamp-wrapped persisted user turn', async () => {
+    vi.useFakeTimers()
+    const sessionKey = 'agent:main:main:dm:webchat-persisted-user-envelope'
+    const prompt = '生成最近七天综述报告'
+    const history: ChatMessage[] = [
+      { id: 'gateway-user-1', role: 'user', content: `[Sun 2026-08-31 16:30 GMT+8] ${prompt}` },
+      { id: 'gateway-assistant-1', role: 'assistant', content: '报告已生成，格式：docx。' },
+    ]
+    mocks.sendChatMessage.mockResolvedValue(undefined)
+    mocks.listChatHistory.mockResolvedValue(history)
+    const store = useChatStore()
+    store.setSessionKey(sessionKey)
+    await store.sendMessage(prompt)
+    store.handleRealtimeEvent('chat', {
+      runId: 'run-persisted-user-envelope',
+      sessionKey,
+      state: 'final',
+      message: { role: 'assistant', content: history[1]?.content },
+    }, { refreshHistory: false })
+
+    await store.fetchHistory(sessionKey, { silent: true, clearError: false })
+
+    expect(store.messages).toEqual(history)
+    expect(store.messages.filter((item) => item.role === 'user')).toHaveLength(1)
+    store.clearTimers()
+  })
+
   it('uses one terminal convergence run and stops after authoritative history arrives', async () => {
     vi.useFakeTimers()
     const sessionKey = 'agent:main:main:dm:webchat-smooth-convergence'
