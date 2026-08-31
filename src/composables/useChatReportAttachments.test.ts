@@ -76,7 +76,7 @@ describe('useChatReportAttachments', () => {
       expect.objectContaining({ headers: { Authorization: 'Bearer test-token' }, cache: 'no-store' }),
     )
     await vi.waitFor(() => expect(
-      attachments.reportsForMessage(messages.value[1]!).map((item) => item.name)
+      attachments.reportsForMessageIndex(1).map((item) => item.name)
     ).toEqual(['238web_业务综述报告.docx']))
     scope.stop()
   })
@@ -137,25 +137,25 @@ describe('useChatReportAttachments', () => {
     await nextTick()
     await vi.advanceTimersByTimeAsync(250)
     await vi.waitFor(() => expect(
-      attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)
+      attachments.reportsForMessageIndex(1).map((item) => item.id)
     ).toEqual(['stable-report-id']))
 
     // A later registration retry must not erase a report which was already
     // returned for this exact session.
     await vi.advanceTimersByTimeAsync(1250)
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
-    expect(attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)).toEqual(['stable-report-id'])
+    expect(attachments.reportsForMessageIndex(1).map((item) => item.id)).toEqual(['stable-report-id'])
 
     // A lagging history snapshot temporarily has no completion anchor, so no
     // card is appended at the conversation tail.
     messages.value = [{ ...source }]
     await nextTick()
-    expect(attachments.reportsForMessage(messages.value[0]!)).toEqual([])
+    expect(attachments.reportsForMessageIndex(0)).toEqual([])
 
     const persistedReply: ChatMessage = { role: 'assistant', content: '报告已生成，格式：docx。' }
     messages.value = [{ ...source }, persistedReply]
     await nextTick()
-    expect(attachments.reportsForMessage(messages.value[1]!).map((item) => item.id)).toEqual(['stable-report-id'])
+    expect(attachments.reportsForMessageIndex(1).map((item) => item.id)).toEqual(['stable-report-id'])
     scope.stop()
   })
 
@@ -183,14 +183,47 @@ describe('useChatReportAttachments', () => {
 
     await attachments.refreshReports(sessionKey.value)
     expect(fetchMock).toHaveBeenCalledTimes(2)
-    await vi.waitFor(() => expect(attachments.reportsForMessage(messages.value[1]!)).toHaveLength(1))
-    const initialReports = attachments.reportsForMessage(messages.value[1]!)
+    await vi.waitFor(() => expect(attachments.reportsForMessageIndex(1)).toHaveLength(1))
+    const initialReports = attachments.reportsForMessageIndex(1)
 
     await attachments.refreshReports(sessionKey.value, { preserveExisting: true })
     await nextTick()
 
     expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(attachments.reportsForMessage(messages.value[1]!)).toBe(initialReports)
+    expect(attachments.reportsForMessageIndex(1)).toBe(initialReports)
+    scope.stop()
+  })
+
+  it('rejects wrong-session records and deduplicates the current report id', async () => {
+    const currentSession = 'agent:main:main:dm:webchat-current'
+    const currentReport = {
+      id: 'current-report',
+      name: '当前会话报告.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: 2048,
+      status: 'ready',
+      sourceSessionId: currentSession,
+      sourceMessageId: 'user-current',
+      sourceMessagePreview: '生成当前报告',
+      createdAt: 1787622913043,
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => response([
+      currentReport,
+      { ...currentReport },
+      { ...currentReport, id: 'other-report', sourceSessionId: 'agent:main:main:dm:webchat-other' },
+    ])))
+    const sessionKey = ref(currentSession)
+    const messages = ref<ChatMessage[]>([
+      { id: 'user-current', role: 'user', content: '生成当前报告' },
+      { id: 'assistant-current', role: 'assistant', content: '报告已生成，格式：docx。' },
+    ])
+    const scope = effectScope()
+    const attachments = scope.run(() => useChatReportAttachments(sessionKey, messages))!
+
+    await vi.waitFor(() => expect(attachments.reportsForMessageIndex(1).map((item) => item.id)).toEqual([
+      'current-report',
+    ]))
+    expect(attachments.reportsForMessageIndex(0)).toEqual([])
     scope.stop()
   })
 })

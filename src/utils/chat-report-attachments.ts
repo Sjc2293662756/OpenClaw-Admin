@@ -75,15 +75,6 @@ export function reportGenerationSignalSignature(messages: ChatMessage[]): string
   return ''
 }
 
-function messageTimestamp(message: ChatMessage): number | null {
-  const raw = String(message.timestamp || '').trim()
-  const numeric = Number(raw)
-  const value = raw && Number.isFinite(numeric) && numeric > 0
-    ? numeric
-    : Date.parse(raw)
-  return Number.isFinite(value) ? value : null
-}
-
 function normalizedSourcePreview(value: string): string {
   return value
     .replace(TRANSPORT_TIMESTAMP_PREFIX_PATTERN, '')
@@ -91,130 +82,100 @@ function normalizedSourcePreview(value: string): string {
     .trim()
 }
 
-function followingAssistantMessages(
+function uniqueCompletionTarget(
   messages: ChatMessage[],
-  assistantMessages: Array<{ message: ChatMessage; index: number; text: string }>,
   sourceIndex: number,
-) {
+): number | undefined {
   const nextUserIndex = messages.findIndex((message, index) =>
     index > sourceIndex && message.role === 'user'
   )
   const turnEnd = nextUserIndex >= 0 ? nextUserIndex : messages.length
-  return assistantMessages.filter((candidate) =>
-    candidate.index > sourceIndex && candidate.index < turnEnd
-  )
-}
-
-function pickFollowingTarget(
-  following: Array<{ message: ChatMessage; index: number; text: string }>,
-  report: ChatReportFile,
-) {
-  return following.find((candidate) => candidate.text.includes(report.name))
-    || [...following].reverse().find(({ message }) => hasReportDocumentReference(message))
-    || [...following].reverse().find(({ message }) => hasReportCompletionSignal(message))
-    || [...following].reverse().find((candidate) => {
-      const timestamp = messageTimestamp(candidate.message)
-      return timestamp !== null && timestamp >= report.createdAt
-    })
-    || following[following.length - 1]
+  const candidates = messages
+    .map((message, index) => ({ message, index }))
+    .filter(({ message, index }) =>
+      index > sourceIndex
+      && index < turnEnd
+      && hasReportCompletionSignal(message)
+    )
+  return candidates.length === 1 ? candidates[0]?.index : undefined
 }
 
 /**
- * Associate session-owned report records with the assistant reply that announced
- * them. Source message id is authoritative. Filename and time are placement-only
- * hints after the BFF has already filtered reports by the authenticated session.
+ * Associate session-owned reports with one explicit completion reply in their
+ * source user turn. A source id is authoritative; a unique normalized preview
+ * is the only fallback when Gateway persistence replaces the browser id.
  */
-export function mapReportsToAssistantMessages(
+export function mapReportsToAssistantMessageIndexes(
   messages: ChatMessage[],
   reports: ChatReportFile[],
-): Map<ChatMessage, ChatReportFile[]> {
-  const result = new Map<ChatMessage, ChatReportFile[]>()
-  const assistantMessages = messages
-    .map((message, index) => ({ message, index, text: messageText(message) }))
-    .filter(({ message, text }) => message.role === 'assistant' && text.trim().length > 0)
-  const reportCandidates = assistantMessages.filter(({ message }) => hasReportCompletionSignal(message))
-
-  if (assistantMessages.length === 0) return result
-
-  const messageIndexById = new Map<string, number>()
+): Map<number, ChatReportFile[]> {
+  const result = new Map<number, ChatReportFile[]>()
+  const messageIndexesById = new Map<string, number[]>()
   messages.forEach((message, index) => {
-    if (message.id) messageIndexById.set(message.id, index)
+    if (!message.id) return
+    const indexes = messageIndexesById.get(message.id) || []
+    indexes.push(index)
+    messageIndexesById.set(message.id, indexes)
   })
 
   const sortedReports = [...reports].sort((left, right) => left.createdAt - right.createdAt)
+  const attachedReportIds = new Set<string>()
   for (const report of sortedReports) {
-    let target: (typeof assistantMessages)[number] | undefined
-    const exactSourceIndex = report.sourceMessageId
-      ? messageIndexById.get(report.sourceMessageId)
-      : undefined
+    if (!report.id || attachedReportIds.has(report.id)) continue
+    let targetIndex: number | undefined
+    const exactSourceIndexes = report.sourceMessageId
+      ? messageIndexesById.get(report.sourceMessageId) || []
+      : []
     const sourcePreview = String(report.sourceMessagePreview || '').trim()
 
-    if (exactSourceIndex !== undefined) {
-      target = pickFollowingTarget(
-        followingAssistantMessages(messages, assistantMessages, exactSourceIndex),
-        report,
-      )
+    if (exactSourceIndexes.length === 1) {
+      targetIndex = uniqueCompletionTarget(messages, exactSourceIndexes[0]!)
     }
 
-    // A Gateway history refresh can preserve the browser's optimistic `web-*`
-    // source message at the end of the list while the persisted user turn has a
-    // new id and an inbound timestamp envelope.  An exact id with no following
-    // assistant is therefore not a usable turn boundary; fall back to the
-    // signed source preview and choose the nearest completed persisted turn.
-    if (!target && sourcePreview) {
+    if (targetIndex === undefined && sourcePreview) {
       const normalizedPreview = normalizedSourcePreview(sourcePreview)
-      const previewTurns = messages
+      const previewTargets = messages
         .map((message, index) => ({ message, index }))
         .filter(({ message }) =>
           message.role === 'user'
           && normalizedSourcePreview(messageText(message).slice(0, 1000)) === normalizedPreview
         )
-        .map(({ index }) => ({
-          index,
-          following: followingAssistantMessages(messages, assistantMessages, index),
-        }))
-        .filter(({ following }) => following.length > 0)
-        .map(({ index, following }) => ({
-          index,
-          target: pickFollowingTarget(following, report),
-        }))
-        .filter((candidate): candidate is { index: number; target: (typeof assistantMessages)[number] } => Boolean(candidate.target))
-
-      previewTurns.sort((left, right) => {
-        const leftTimestamp = messageTimestamp(left.target.message)
-        const rightTimestamp = messageTimestamp(right.target.message)
-        if (leftTimestamp !== null && rightTimestamp !== null && Number.isFinite(report.createdAt)) {
-          return Math.abs(leftTimestamp - report.createdAt) - Math.abs(rightTimestamp - report.createdAt)
-        }
-        return right.index - left.index
-      })
-      target = previewTurns[0]?.target
+        .map(({ index }) => uniqueCompletionTarget(messages, index))
+        .filter((index): index is number => index !== undefined)
+      const uniqueTargets = [...new Set(previewTargets)]
+      if (uniqueTargets.length === 1) targetIndex = uniqueTargets[0]
     }
 
-    if (!target) {
-      target = reportCandidates.find((candidate) => candidate.text.includes(report.name))
-    }
-
-    if (!target && Number.isFinite(report.createdAt)) {
-      const nearby = reportCandidates
-        .map((candidate) => ({
-          candidate,
-          distance: Math.abs((messageTimestamp(candidate.message) ?? Number.POSITIVE_INFINITY) - report.createdAt),
-        }))
-        .filter(({ distance }) => distance <= 30 * 60 * 1000)
-        .sort((left, right) => left.distance - right.distance)[0]
-      target = nearby?.candidate
-    }
-
-    if (!target && reportCandidates.length === 1 && reports.length === 1) {
-      target = reportCandidates[0]
-    }
-
-    if (!target) continue
-    const attached = result.get(target.message) || []
+    if (targetIndex === undefined) continue
+    const attached = result.get(targetIndex) || []
     attached.push(report)
-    result.set(target.message, attached)
+    result.set(targetIndex, attached)
+    attachedReportIds.add(report.id)
   }
 
+  return result
+}
+
+export type ReportTranscriptEntry<T extends { key: string; messageIndex: number }> = T & {
+  transcriptType: 'message' | 'report'
+  reports: ChatReportFile[]
+}
+
+export function interleaveReportTranscriptItems<T extends { key: string; messageIndex: number }>(
+  messages: T[],
+  reportsForMessageIndex: (messageIndex: number) => ChatReportFile[],
+): ReportTranscriptEntry<T>[] {
+  const result: ReportTranscriptEntry<T>[] = []
+  for (const message of messages) {
+    result.push({ ...message, transcriptType: 'message', reports: [] })
+    const reports = reportsForMessageIndex(message.messageIndex)
+    if (reports.length === 0) continue
+    result.push({
+      ...message,
+      key: `reports-after:${message.key}:${reports.map((report) => report.id).join(',')}`,
+      transcriptType: 'report',
+      reports,
+    })
+  }
   return result
 }

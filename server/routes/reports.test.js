@@ -213,10 +213,9 @@ test('formal report archive imports only a matched audit pair and isolates the o
   process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH = attributionIndex
 
   const server = (await createReportsApp((req) => {
-    if (req.get('x-test-role') === 'auditor') return { id: 'auditor-1', role: 'auditor' }
-    return req.get('x-test-user') === 'user-b'
-      ? { id: 'user-b', role: 'basic' }
-      : { id: 'user a', role: 'basic' }
+    const role = req.get('x-test-role') || 'basic'
+    const id = req.get('x-test-user') || (role === 'admin' || role === 'auditor' ? `${role}-1` : 'user a')
+    return { id, role }
   })).listen(0, '127.0.0.1')
   await once(server, 'listening')
   try {
@@ -242,6 +241,33 @@ test('formal report archive imports only a matched audit pair and isolates the o
     const otherUserPayload = await otherUserResponse.json()
     assert.equal(otherUserResponse.status, 200)
     assert.deepEqual(otherUserPayload.reports, [])
+
+    for (const role of ['basic', 'standard', 'admin', 'auditor']) {
+      const roleResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, {
+        headers: { 'x-test-role': role },
+      })
+      const rolePayload = await roleResponse.json()
+      assert.equal(roleResponse.status, 200, `${role} report list`)
+      assert.equal(rolePayload.reports.length, 3, `${role} can read its permitted reports`)
+
+      const roleDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
+        headers: { 'x-test-role': role },
+      })
+      assert.equal(roleDownload.status, 200, `${role} permitted report download`)
+      assert.equal(await roleDownload.text(), 'report')
+    }
+
+    for (const role of ['basic', 'standard']) {
+      const deniedList = await fetch(`http://127.0.0.1:${server.address().port}/reports`, {
+        headers: { 'x-test-role': role, 'x-test-user': 'user-b' },
+      })
+      assert.deepEqual((await deniedList.json()).reports, [], `${role} cannot list another user's reports`)
+
+      const deniedRoleDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
+        headers: { 'x-test-role': role, 'x-test-user': 'user-b' },
+      })
+      assert.equal(deniedRoleDownload.status, 404, `${role} cannot download another user's report`)
+    }
 
     const auditorResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, {
       headers: { 'x-test-role': 'auditor' },

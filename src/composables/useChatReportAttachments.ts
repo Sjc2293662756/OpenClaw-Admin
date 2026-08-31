@@ -4,7 +4,7 @@ import { useMessage } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import type { ChatMessage } from '@/api/types'
 import {
-  mapReportsToAssistantMessages,
+  mapReportsToAssistantMessageIndexes,
   reportGenerationSignalSignature,
   type ChatReportFile,
 } from '@/utils/chat-report-attachments'
@@ -56,7 +56,7 @@ export function useChatReportAttachments(
   let retryGeneration = 0
 
   const reportsByMessage = computed(() =>
-    mapReportsToAssistantMessages(messages.value, reports.value)
+    mapReportsToAssistantMessageIndexes(messages.value, reports.value)
   )
 
   const reportMessageSignature = computed(() =>
@@ -98,13 +98,25 @@ export function useChatReportAttachments(
         throw new Error(data?.error || data?.message || t('pages.chat.reportAttachment.loadFailed'))
       }
       if (generation === requestGeneration && key === currentSessionKey()) {
+        const sessionReports = data.reports.filter((report) =>
+          String(report.sourceSessionId || '').trim() === key
+        )
         let nextReports: ChatReportFile[]
         if (options?.preserveExisting) {
-          const merged = new Map(reports.value.map((report) => [report.id, report]))
-          for (const report of data.reports) merged.set(report.id, report)
-          nextReports = [...merged.values()].sort((left, right) => left.createdAt - right.createdAt)
+          const merged = new Map(
+            reports.value
+              .filter((report) => String(report.sourceSessionId || '').trim() === key)
+              .map((report) => [report.id, report]),
+          )
+          for (const report of sessionReports) merged.set(report.id, report)
+          nextReports = [...merged.values()].sort((left, right) =>
+            left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+          )
         } else {
-          nextReports = data.reports
+          const unique = new Map(sessionReports.map((report) => [report.id, report]))
+          nextReports = [...unique.values()].sort((left, right) =>
+            left.createdAt - right.createdAt || left.id.localeCompare(right.id)
+          )
         }
         if (!areReportListsEquivalent(reports.value, nextReports)) {
           reports.value = nextReports
@@ -133,8 +145,8 @@ export function useChatReportAttachments(
     }
   }
 
-  function reportsForMessage(message: ChatMessage): ChatReportFile[] {
-    return reportsByMessage.value.get(message) || EMPTY_REPORTS
+  function reportsForMessageIndex(messageIndex: number): ChatReportFile[] {
+    return reportsByMessage.value.get(messageIndex) || EMPTY_REPORTS
   }
 
   async function downloadReport(report: ChatReportFile) {
@@ -194,6 +206,6 @@ export function useChatReportAttachments(
     downloadingReportId,
     downloadReport,
     refreshReports,
-    reportsForMessage,
+    reportsForMessageIndex,
   }
 }
