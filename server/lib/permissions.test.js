@@ -115,6 +115,40 @@ test('personal module allow opens only registered safe reads while deny blocks r
   assert.equal(denied.code, 'MODULE_ACCESS_DENIED')
 })
 
+test('system status and health RPC follow the effective system module without affecting chat', () => {
+  const basicDefault = { role: 'basic', effectiveModules: { system: false } }
+  for (const method of ['status', 'health']) {
+    const decision = getRpcPermissionDecision(basicDefault, method)
+    assert.equal(decision.allowed, false, `basic default ${method}`)
+    assert.equal(decision.code, 'MODULE_ACCESS_DENIED')
+  }
+
+  const basicAllowed = {
+    role: 'basic',
+    effectiveModules: { system: true },
+    moduleOverrides: { system: 'allow' },
+  }
+  assert.equal(getRpcPermissionDecision(basicAllowed, 'status').allowed, true)
+  assert.equal(getRpcPermissionDecision(basicAllowed, 'health').allowed, true)
+
+  const standardDefault = { role: 'standard', effectiveModules: { system: true } }
+  assert.equal(getRpcPermissionDecision(standardDefault, 'status').allowed, true)
+  assert.equal(getRpcPermissionDecision(standardDefault, 'health').allowed, true)
+
+  const standardDenied = {
+    role: 'standard',
+    effectiveModules: { system: false },
+    moduleOverrides: { system: 'deny' },
+  }
+  for (const method of ['status', 'health']) {
+    const decision = getRpcPermissionDecision(standardDenied, method)
+    assert.equal(decision.allowed, false, `standard deny ${method}`)
+    assert.equal(decision.code, 'MODULE_ACCESS_DENIED')
+  }
+
+  assert.equal(getRpcPermissionDecision(basicDefault, 'chat.send').allowed, true)
+})
+
 test('read-only RPC classification is explicit and rejects unsafe lookalikes', () => {
   assert.equal(isReadOnlyRpcMethod('sessions.get'), true)
   assert.equal(isReadOnlyRpcMethod('config.get'), true)

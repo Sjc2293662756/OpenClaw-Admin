@@ -352,7 +352,7 @@ const RPC_MODULE_KEYS = new Map([
   ['plugins.list', ['channels']], ['plugin.list', ['channels']], ['plugins.status', ['channels']], ['plugin.status', ['channels']],
   ['channel.auth', ['channels']], ['channels.auth', ['channels']], ['web.login.start', ['channels']], ['channel.pair', ['channels']], ['channels.pair', ['channels']],
   ['skills.status', ['skills']], ['skills.list', ['skills']], ['skills.install', ['skills']], ['skills.update', ['skills']],
-  ['system-presence', ['system']], ['node.list', ['system']],
+  ['status', ['system']], ['health', ['system']], ['system-presence', ['system']], ['node.list', ['system']],
   ['models.list', ['models', 'agents']], ['model.list', ['models', 'agents']], ['agent.model.set', ['models', 'agents']],
   ['tools.list', ['agents']], ['agents.list', ['agents', 'memory']], ['agent.list', ['agents', 'memory']],
   ['agents.files.list', ['memory', 'agents']], ['agent.files.list', ['memory', 'agents']],

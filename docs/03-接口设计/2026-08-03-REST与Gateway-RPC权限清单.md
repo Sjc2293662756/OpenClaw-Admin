@@ -90,13 +90,13 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | GET/PUT `/api/alerts/preferences` | 告警 | 是 | — | 当前账户 | 当前账户 | 当前账户 | 当前账户 | 八项通知偏好 | 不接受 userId，不能读取或写入他人偏好 |
 | GET `/api/alerts/changes` | 告警 | 是 | — | 只读补偿 | 只读补偿 | 只读补偿 | 只读补偿 | 告警页面模型与游标 | 保持 SSE 断线补偿语义 |
 | POST `/api/alerts/export` | 告警 | 是 | — | 当前页导出 | 当前页导出 | 当前页导出 | 当前页导出 | 当前页六个展示字段、最多 100 条 | 不额外查询 Receiver；输入清理、Excel 生成和审计保持一致 |
-| GET `/api/users` | 账户 | 是 | — | 403 | 403 | 安全字段只读 | 管理读取 | 用户名、角色、状态；无密码哈希 | 审计/管理员可读 |
+| GET `/api/users` | 账户 | 是 | — | `users` allow 时安全只读 | `users` allow 时安全只读 | 默认安全只读 | 默认管理读取 | 用户名、角色、状态；无密码哈希、Token、`mustChangePassword` | 最终 `users` 权限控制查看；所有获准角色使用同一安全投影 |
 | POST `/api/users` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 新账户与临时密码入参 | 管理员专属 |
 | PUT `/api/users/:id` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 角色、状态 | 管理员专属 |
 | POST `/api/users/:id/reset-password` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 临时密码入参 | 管理员专属 |
 | PUT `/api/users/:id/password` | 账户 | 是 | — | 本人 | 本人 | 本人 | 本人 | 当前密码和新密码入参 | 仅本人改密并校验当前密码；管理员修改他人须走 reset-password |
 | DELETE `/api/users/:id` | 账户 | 是 | — | 403 | 403 | 403 | 管理 | 账户状态 | 管理员专属 |
-| GET `/api/audit-logs` | 审计 | 是 | — | 403 | 403 | 全量只读 | 全量 | 审计业务数据 | 审计/管理员只读 |
+| GET `/api/audit-logs`、POST `/api/audit-logs/export` | 审计 | 是 | — | `audit` allow 时全量只读 | `audit` allow 时全量只读 | 默认全量只读 | 默认全量只读 | 审计业务数据 | 最终 `audit` 权限是唯一查看门禁；deny 对全部角色生效 |
 | GET `/api/reports` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | 报告元数据、安全来源字段 | `source_user_id` 必须精确匹配当前登录 ID |
 | GET `/api/reports/:id/download` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | 报告文件 | 未归属/他人 ID 均 404 |
 | GET `/api/reports/:id/preview` | 报告 | 是 | — | 本人 | 本人 | 全量只读 | 全量 | PDF/文本报告内容 | 未归属/他人 ID 均 404 |
@@ -141,7 +141,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 
 | 路径 | 源码现状 | 实际命中 | 安全结论 |
 |---|---|---|---|
-| `GET /api/audit-logs` | `server/index.js` 保留未注册的旧 handler，正式入口为 `createAuditRouter()` | `createAuditRouter()` | 审计/管理员读边界不变；2026-08-03 审计第一阶段已补充服务端筛选、分页、汇总与拒绝记录 |
+| `GET/POST /api/audit-logs*` | `server/index.js` 保留未注册的旧 handler，正式入口为 `createAuditModuleRouter()` | `createAuditModuleRouter()` → `createAuditRouter()` | 有效 `audit` 模块统一控制列表/导出；Router 内不再用旧 auditor/admin 角色门禁抵消 basic/standard 个人 allow |
 | `/api/data-sources` 列表、创建、编辑、删除、测试 | 直接 handler 和 `createDataSourcesRouter()` 有重复 | 先注册的直接 handler | 读使用安全投影，写/测试为管理员；后续物理清理可合并为单一 Router |
 | `POST /api/data-sources/:id/activate` | 仅 `createDataSourcesRouter()` 提供 | Router handler | 管理员专属 |
 | `/api/files/*` | 前置退役屏障、中部二次屏障和后部文件 handler 并存 | 最前置 410 | 认证中间件和后续 handler 都不再可达 |
@@ -211,7 +211,7 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 | `channels.status/list`、`channel.status/list`、`plugins.list/status` | 拒绝 | 安全只读 | 安全只读 | 全量 | 基础用户仅工作台；标准/审计使用安全投影 |
 | `skills.status/list` | 拒绝 | 安全只读 | 安全只读 | 全量 | 非管理员安全投影 |
 | `config.get` | 拒绝 | 模型选择安全投影 | 拒绝 | 全量 | 标准不获得底层连接/凭据 |
-| `health`、`status` | 只读 | 只读 | 只读 | 全量 | 正式状态页所需 |
+| `health`、`status` | `system` 默认拒绝、allow 后只读 | `system` 默认只读 | `system` 默认只读 | `system` 默认全量 | 正式登记到 `system`；deny 在转发 Gateway 前拒绝；不影响固定工作台 `chat.*`/session 能力 |
 | `system-presence`、`node.list` | 拒绝 | 只读 | 全量只读 | 全量 | 系统监控页面 |
 | `cron.list/status/runs/history` 及现用别名 | 拒绝 | 拒绝 | 全量只读 | 全量 | 审计只读 |
 | `config.patch/apply/set`、频道认证/配对、Skills 安装/更新 | 拒绝 | 拒绝 | 拒绝 | 允许 | 管理写 |

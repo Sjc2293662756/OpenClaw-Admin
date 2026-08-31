@@ -32,9 +32,8 @@ export function createUsersRouter({
     sendOk(res, {
       users: users.map((user) => {
         const projected = publicUser(user)
-        if (req.user?.role !== 'auditor') return projected
-        const { mustChangePassword: _mustChangePassword, ...auditorView } = projected
-        return auditorView
+        const { mustChangePassword: _mustChangePassword, ...safeView } = projected
+        return safeView
       }),
     })
   })

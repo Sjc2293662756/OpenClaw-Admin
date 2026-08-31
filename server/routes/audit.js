@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { sendError } from '../lib/api-response.js'
 import { createAuditExportWorkbook, normalizeExportLocale } from '../lib/audit-export.js'
+import { createModuleAccessMiddleware } from '../lib/module-permissions.js'
 
 const MAX_PAGE_SIZE = 200
 const DEFAULT_MAX_RESULTS = 200
@@ -170,6 +171,13 @@ export function createAuditRouter({ db, auditViewerMiddleware, recordAudit }) {
     }
   })
 
+  return router
+}
+
+export function createAuditModuleRouter({ db, authMiddleware, recordAudit }) {
+  const router = Router()
+  router.use(createModuleAccessMiddleware(authMiddleware, 'audit'))
+  router.use(createAuditRouter({ db, auditViewerMiddleware: authMiddleware, recordAudit }))
   return router
 }
 

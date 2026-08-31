@@ -15,7 +15,7 @@ import { sendError } from '../lib/api-response.js'
 import { createAuthRouter } from './auth.js'
 import { createUsersRouter } from './users.js'
 import { migrateAlertNotificationPreferences } from '../lib/alert-notification-preferences.js'
-import { migrateModulePermissions, resolveEffectiveModulePermissions } from '../lib/module-permissions.js'
+import { createModuleAccessMiddleware, migrateModulePermissions, resolveEffectiveModulePermissions } from '../lib/module-permissions.js'
 
 const PASSWORDS = {
   initial: 'InitialA1!',
@@ -148,6 +148,7 @@ async function createFixture({ loginRateLimiter } = {}) {
     userStatuses: new Set(['active', 'inactive']),
     createId: randomUUID,
     loginFailures,
+    usersViewerMiddleware: createModuleAccessMiddleware(authMiddleware, 'users'),
   }))
   app.get('/api/protected', authMiddleware, (_req, res) => res.json({ ok: true }))
   app.post('/api/rpc', authMiddleware, (_req, res) => res.json({ ok: true }))
@@ -478,6 +479,43 @@ test('auditors can read safe account information while basic users and all audit
       assert.equal(result.response.status, 403)
     }
     assert.equal(fixture.db.prepare('SELECT COUNT(*) AS count FROM users').get().count, 4)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('user list strips password-change state for personal allows and every default viewer role', async () => {
+  const fixture = await createFixture()
+  try {
+    fixture.db.prepare(`INSERT INTO users (
+      id, username, password_hash, role, description, status,
+      is_initial_admin, must_change_password, permission_version, created_at, updated_at
+    ) VALUES ('standard-id', 'standard-user', ?, 'standard', '', 'active', 0, 0, 0, 5, 5)`)
+      .run(hashPassword('Standard6!'))
+    fixture.db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run('initial-id')
+    const allow = fixture.db.prepare(`INSERT INTO user_module_permission_overrides (
+      user_id, module_key, effect, updated_by, created_at, updated_at
+    ) VALUES (?, 'users', 'allow', 'initial-id', 6, 6)`)
+    allow.run('basic-id')
+    allow.run('standard-id')
+
+    const viewers = [
+      await fixture.login('basic-user', PASSWORDS.basic),
+      await fixture.login('standard-user', 'Standard6!'),
+      await fixture.login('auditor-user', PASSWORDS.auditor),
+      await fixture.login('ordinary-admin', PASSWORDS.admin),
+    ]
+    for (const viewer of viewers) {
+      const list = await fixture.request('/api/users', { token: viewer.token })
+      assert.equal(list.response.status, 200)
+      assert.equal(list.body.users.every(user => !Object.hasOwn(user, 'mustChangePassword')), true)
+    }
+
+    fixture.db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run('basic-id')
+    const currentUser = await fixture.login('basic-user', PASSWORDS.basic)
+    assert.equal(currentUser.body.user.mustChangePassword, true)
+    const checked = await fixture.request('/api/auth/check', { token: currentUser.token })
+    assert.equal(checked.body.user.mustChangePassword, true)
   } finally {
     await fixture.close()
   }

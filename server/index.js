@@ -23,7 +23,7 @@ import {
   projectStandardGatewayConfig,
 } from './lib/role-projections.js'
 import { missingStaticAssetMiddleware } from './lib/static-assets.js'
-import { createAuditRouter } from './routes/audit.js'
+import { createAuditModuleRouter } from './routes/audit.js'
 import { createAuthRouter } from './routes/auth.js'
 import { createUsersRouter } from './routes/users.js'
 import { createDataSourcesRouter } from './routes/data-sources.js'
@@ -564,7 +564,6 @@ const channelsModuleMiddleware = moduleAccessMiddleware('channels')
 const systemModuleMiddleware = moduleAccessMiddleware('system')
 const usersModuleMiddleware = moduleAccessMiddleware('users')
 const userAdministrationModuleMiddleware = moduleAccessMiddleware('userAdministration')
-const auditModuleMiddleware = moduleAccessMiddleware('audit')
 const settingsModuleMiddleware = moduleAccessMiddleware('settings')
 const systemConfigurationModuleMiddleware = moduleAccessMiddleware('systemConfiguration')
 const systemUpgradeModuleMiddleware = moduleAccessMiddleware('systemUpgrade')
@@ -798,7 +797,7 @@ app.use('/api/users', createUsersRouter({
   userAdministrationMiddleware: userAdministrationModuleMiddleware,
   notifyPermissionsChanged,
 }))
-app.use('/api/audit-logs', auditModuleMiddleware, createAuditRouter({ db, auditViewerMiddleware, recordAudit }))
+app.use('/api/audit-logs', createAuditModuleRouter({ db, authMiddleware, recordAudit }))
 app.use('/api/data-sources', systemConfigurationModuleMiddleware, createDataSourcesRouter({
   db,
   authMiddleware,
