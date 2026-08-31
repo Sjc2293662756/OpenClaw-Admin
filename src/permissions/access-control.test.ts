@@ -5,6 +5,7 @@ import {
   canAccessInitialAdminRoute,
   canAccessPage,
   canAccessRoute,
+  canModifySession,
   canUseConversation,
   getPageAccess,
   resolveConfigManagementRedirect,
@@ -25,6 +26,7 @@ describe('server-projected page access', () => {
     expect(canAccessPage(effective, 'dashboard')).toBe(false)
     expect(canAccessPage(undefined, 'dashboard')).toBe(false)
     expect(canAccessPage(undefined, 'chat')).toBe(true)
+    expect(Object.prototype.hasOwnProperty.call(PAGE_ACCESS_MATRIX, 'data.allUsers')).toBe(false)
   })
 
   it('applies the same projection to direct and hidden child routes', () => {
@@ -46,6 +48,16 @@ describe('server-projected page access', () => {
     expect(canUseConversation('standard')).toBe(true)
     expect(canUseConversation('admin')).toBe(true)
     expect(canUseConversation('auditor')).toBe(false)
+  })
+
+  it('keeps session writes on the original role and ownership boundary', () => {
+    const ownSession = { ownerUserId: 'user-1' }
+    const otherSession = { ownerUserId: 'user-2' }
+    expect(canModifySession({ id: 'user-1', role: 'basic' }, ownSession)).toBe(true)
+    expect(canModifySession({ id: 'user-1', role: 'standard' }, otherSession)).toBe(false)
+    expect(canModifySession({ id: 'auditor-1', role: 'auditor' }, ownSession)).toBe(false)
+    expect(canModifySession({ id: 'admin-1', role: 'admin' }, otherSession)).toBe(true)
+    expect(canModifySession({ id: 'user-1', role: 'standard' }, { ownerUserId: null })).toBe(false)
   })
 
   it('reserves branding identity in addition to its projected module', () => {

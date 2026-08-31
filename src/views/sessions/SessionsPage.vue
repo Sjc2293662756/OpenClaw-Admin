@@ -37,7 +37,9 @@ import { useRouter } from 'vue-router'
 import { useSessionStore } from '@/stores/session'
 import { useAgentStore } from '@/stores/agent'
 import { useConfigStore } from '@/stores/config'
+import { useAuthStore } from '@/stores/auth'
 import { usePermissions } from '@/composables/usePermissions'
+import { canModifySession } from '@/permissions/access-control'
 import TimeRangePicker from '@/components/common/TimeRangePicker.vue'
 import { formatRelativeTime, parseSessionKey } from '@/utils/format'
 import {
@@ -66,6 +68,7 @@ type SessionRow = Session & {
 const sessionStore = useSessionStore()
 const agentStore = useAgentStore()
 const configStore = useConfigStore()
+const authStore = useAuthStore()
 const router = useRouter()
 const message = useMessage()
 const { t, locale } = useI18n()
@@ -99,23 +102,31 @@ const serverNowReceivedAt = ref(Date.now())
 const timePreset = ref<TimeRangePreset>('last7days')
 const appliedRange = ref<TimeRange>(rangeForPreset('last7days', serverNow.value))
 const timeRangeTouched = ref(false)
-const allSessionKeys = computed(() => filteredSessions.value.map((s) => s.key))
+function canModifySessionRow(session: SessionRow): boolean {
+  return canModifySession(authStore.currentUser, session)
+}
+
+function canContinueSession(session: SessionRow): boolean {
+  return canContinueSessions.value && canModifySessionRow(session)
+}
+
+const deletableSessionKeys = computed(() => filteredSessions.value.filter(canModifySessionRow).map((s) => s.key))
 const isAllSelected = computed(() => {
-  if (allSessionKeys.value.length === 0) return false
-  return allSessionKeys.value.every((key) => allSelectedKeys.value.includes(key))
+  if (deletableSessionKeys.value.length === 0) return false
+  return deletableSessionKeys.value.every((key) => allSelectedKeys.value.includes(key))
 })
 const isPartialSelected = computed(() => {
-  if (allSessionKeys.value.length === 0) return false
-  const selectedCount = allSessionKeys.value.filter((key) =>
+  if (deletableSessionKeys.value.length === 0) return false
+  const selectedCount = deletableSessionKeys.value.filter((key) =>
     allSelectedKeys.value.includes(key)
   ).length
-  return selectedCount > 0 && selectedCount < allSessionKeys.value.length
+  return selectedCount > 0 && selectedCount < deletableSessionKeys.value.length
 })
 
 const currentPageKeys = computed(() => {
   const start = (currentPage.value - 1) * pageSize
   const end = start + pageSize
-  return filteredSessions.value.slice(start, end).map((s) => s.key)
+  return filteredSessions.value.slice(start, end).filter(canModifySessionRow).map((s) => s.key)
 })
 
 function onUpdateCheckedRowKeys(keys: (string | number)[]) {
@@ -454,13 +465,13 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
           },
           {
             icon: () => h(NIcon, { component: ChatbubblesOutline }),
-            default: () => canContinueSessions.value
+            default: () => canContinueSession(row)
               ? t('pages.sessions.list.continueConversation')
               : text('查看历史', 'View history'),
           }
         ),
       ]
-      if (canDeleteSessions.value) {
+      if (canDeleteSessions.value && canModifySessionRow(row)) {
         actions.push(h(
           NPopconfirm,
           { onPositiveClick: () => handleDelete(row) },
@@ -536,7 +547,9 @@ const sessionColumns = computed<DataTableColumns<SessionRow>>(() => {
     },
   },
   ]
-  if (canDeleteSessions.value) columns.unshift({ type: 'selection' })
+  if (deletableSessionKeys.value.length) {
+    columns.unshift({ type: 'selection', disabled: (row) => !canModifySessionRow(row) })
+  }
   return columns
 })
 
@@ -626,7 +639,7 @@ function handleContinueConversation(session: SessionRow) {
 }
 
 async function handleDelete(session: SessionRow) {
-  if (!canDeleteSessions.value) {
+  if (!canDeleteSessions.value || !canModifySessionRow(session)) {
     message.error(text('当前用户仅有查看权限，不能删除会话', 'The current user has read-only access and cannot delete sessions'))
     return
   }
@@ -643,10 +656,11 @@ async function handleBatchDelete() {
     message.error(text('当前用户仅有查看权限，不能删除会话', 'The current user has read-only access and cannot delete sessions'))
     return
   }
-  if (allSelectedKeys.value.length === 0) return
+  const allowedKeys = allSelectedKeys.value.filter((key) => deletableSessionKeys.value.includes(key))
+  if (allowedKeys.length === 0) return
   batchDeleting.value = true
   try {
-    const result = await sessionStore.deleteSessions(allSelectedKeys.value)
+    const result = await sessionStore.deleteSessions(allowedKeys)
     if (result.failedCount > 0) {
       message.warning(t('pages.sessions.list.batchDeletePartial', {
         deleted: result.deletedCount,
@@ -704,7 +718,7 @@ function handleSelectAll() {
   if (isAllSelected.value) {
     allSelectedKeys.value = []
   } else {
-    allSelectedKeys.value = [...allSessionKeys.value]
+    allSelectedKeys.value = [...deletableSessionKeys.value]
   }
 }
 
@@ -748,7 +762,7 @@ async function handleCreateSession() {
       <template #header-extra>
         <NSpace :size="8">
           <NButton
-            v-if="canDeleteSessions && filteredSessions.length > 0"
+            v-if="canDeleteSessions && deletableSessionKeys.length > 0"
             size="small"
             :type="isAllSelected ? 'warning' : 'default'"
             :ghost="!isAllSelected && !isPartialSelected"
@@ -758,7 +772,7 @@ async function handleCreateSession() {
               <NIcon :component="isAllSelected ? RemoveOutline : AddOutline" />
             </template>
             {{ isAllSelected ? t('pages.sessions.list.deselectAll') : t('pages.sessions.list.selectAll') }}
-            ({{ filteredSessions.length }})
+            ({{ deletableSessionKeys.length }})
           </NButton>
           <NPopconfirm
             v-if="canDeleteSessions && allSelectedKeys.length > 0"

@@ -50,9 +50,10 @@ import AuthenticatedMediaImage from '@/components/common/AuthenticatedMediaImage
 import ReportAttachmentList from '@/components/chat/ReportAttachmentList.vue'
 import type { AgentInstance, ChatMessage, ChatMessageContent, SessionsUsageSession, Skill } from '@/api/types'
 
-const props = withDefaults(defineProps<{ workspace?: boolean; initialDraft?: string }>(), {
+const props = withDefaults(defineProps<{ workspace?: boolean; initialDraft?: string; readOnly?: boolean }>(), {
   workspace: false,
   initialDraft: '',
+  readOnly: false,
 })
 const workspaceMode = computed(() => props.workspace)
 
@@ -69,6 +70,7 @@ const {
   canUseFunctions,
   chatReadOnlyHint,
 } = usePermissions()
+const canWriteConversation = computed(() => canUseFunctions.value && !props.readOnly)
 
 const sessionKeyInput = ref('')
 const draft = ref('')
@@ -1007,7 +1009,7 @@ function formatDurationMs(ms: number): string {
 }
 
 async function handleAbort() {
-  if (!canUseFunctions.value) return
+  if (!canWriteConversation.value) return
   if (aborting.value) return
   if (!agentBusy.value) return
 
@@ -2721,7 +2723,7 @@ async function handleRefreshChatData() {
 }
 
 async function handleSend() {
-  if (!canUseFunctions.value) return
+  if (!canWriteConversation.value) return
   const content = draft.value.trim()
   if (!content) return
   if (agentBusy.value) return
@@ -3208,6 +3210,7 @@ async function handleSend() {
                           v-for="prompt in workspacePrompts"
                           :key="prompt"
                           type="button"
+                          :disabled="!canWriteConversation"
                           @click="applyWorkspacePrompt(prompt)"
                         >
                           {{ prompt }}
@@ -3229,10 +3232,10 @@ async function handleSend() {
                 <NInput
                   v-model:value="draft"
                   type="textarea"
-                  :disabled="!canUseFunctions"
-                  :title="!canUseFunctions ? chatReadOnlyHint : undefined"
+                  :disabled="!canWriteConversation"
+                  :title="!canWriteConversation ? chatReadOnlyHint : undefined"
                   :autosize="{ minRows: 3, maxRows: 8 }"
-                  :placeholder="canUseFunctions ? t('pages.chat.input.placeholder') : chatReadOnlyHint"
+                  :placeholder="canWriteConversation ? t('pages.chat.input.placeholder') : chatReadOnlyHint"
                   @keydown="handleDraftKeydown"
                 />
 
@@ -3445,13 +3448,13 @@ async function handleSend() {
                       type="warning"
                       secondary
                       :loading="aborting"
-                      :disabled="aborting"
+                      :disabled="aborting || !canWriteConversation"
                       @click="handleAbort"
                     >
                       <template #icon><NIcon :component="StopCircleOutline" /></template>
                       {{ t('pages.chat.actions.stop') }}
                     </NButton>
-                    <NButton size="small" type="primary" :loading="agentBusy" :disabled="agentBusy || !canUseFunctions" :title="!canUseFunctions ? chatReadOnlyHint : undefined" @click="handleSend">
+                    <NButton size="small" type="primary" :loading="agentBusy" :disabled="agentBusy || !canWriteConversation" :title="!canWriteConversation ? chatReadOnlyHint : undefined" @click="handleSend">
                       <template #icon><NIcon :component="SendOutline" /></template>
                       {{ t('pages.chat.actions.send') }}
                     </NButton>

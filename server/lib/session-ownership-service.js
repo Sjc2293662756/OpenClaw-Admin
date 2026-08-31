@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto'
+import { canAccessEffectiveModule, canViewAllUserData } from './module-permissions.js'
 
 const WEB_SESSION_PREFIX = 'agent:main:main:dm:webchat-'
 const SESSION_LIST_KEYS = ['sessions', 'items', 'list', 'data']
@@ -296,12 +297,28 @@ export function findWorkspaceSession(db, sessionKey) {
   return db.prepare('SELECT session_key, owner_user_id, session_title, status FROM workspace_sessions WHERE session_key = ?').get(key) || null
 }
 
+function canReadAllWorkspaceSessions(user, scopeModuleKey = 'sessions') {
+  return canViewAllUserData(user) && canAccessEffectiveModule(user, scopeModuleKey)
+}
+
 export function canAccessWorkspaceSession(db, user, sessionKey) {
-  if (user?.role === 'admin' || user?.role === 'auditor') return true
+  if (canReadAllWorkspaceSessions(user)) return true
   const ownerUserId = getOwnerPrincipal(user)
   if (!ownerUserId) return false
   const row = findWorkspaceSession(db, sessionKey)
   return !!row && row.status === 'active' && row.owner_user_id === ownerUserId
+}
+
+export function ensureWorkspaceSessionReadAccess(db, user, sessionKey) {
+  const key = normalizeSessionKey(sessionKey)
+  if (!key) return { ok: false, code: 'SESSION_KEY_REQUIRED', message: '缺少会话标识' }
+  if (canReadAllWorkspaceSessions(user)) return { ok: true, key, created: false }
+
+  const ownerUserId = getOwnerPrincipal(user)
+  if (!ownerUserId) return { ok: false, code: 'SESSION_NOT_FOUND', message: '会话不存在或无权访问' }
+  const row = findWorkspaceSession(db, key)
+  if (row?.status === 'active' && row.owner_user_id === ownerUserId) return { ok: true, key, created: false }
+  return { ok: false, code: 'SESSION_NOT_FOUND', message: '会话不存在或无权访问' }
 }
 
 export function ensureWorkspaceSessionAccess(db, user, sessionKey, { allowCreate = false } = {}) {
@@ -332,8 +349,8 @@ export function markWorkspaceSessionDeleted(db, sessionKey, now = Date.now()) {
   `).run(now, now, normalizeSessionKey(sessionKey))
 }
 
-export function listOwnedWorkspaceSessionKeys(db, user) {
-  if (user?.role === 'admin' || user?.role === 'auditor') return null
+export function listOwnedWorkspaceSessionKeys(db, user, { scopeModuleKey = 'sessions' } = {}) {
+  if (canReadAllWorkspaceSessions(user, scopeModuleKey)) return null
   const ownerUserId = getOwnerPrincipal(user)
   if (!ownerUserId) return new Set()
   const rows = db.prepare(`

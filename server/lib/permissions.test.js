@@ -248,7 +248,7 @@ test('basic REST boundary consumes the effective module projection for personal 
 
   const denied = {
     id: 'basic-1', role: 'basic',
-    effectiveModules: { 'alerts.records': false, 'alerts.notifications': false, 'alerts.export': false },
+    effectiveModules: { 'alerts.records': false, 'alerts.notifications': false },
   }
   assert.equal(isBasicWorkspaceApiRequest(denied, 'GET', '/api/alerts'), false)
   assert.equal(isBasicWorkspaceApiRequest(denied, 'GET', '/api/alerts/changes'), false)

@@ -38,11 +38,9 @@ export function createMediaRouter({ authMiddleware, roots, authorizeSession }) {
     }
 
     const sessionKey = String(req.get('x-gaiop-session-key') || '').trim()
-    if (req.user?.role !== 'admin') {
-      const access = authorizeSession(req.user, sessionKey)
-      if (!access?.ok) {
-        return res.status(404).json({ ok: false, code: 'MEDIA_NOT_FOUND', error: { message: '媒体不存在或无权访问' } })
-      }
+    const access = authorizeSession(req.user, sessionKey)
+    if (!access?.ok) {
+      return res.status(404).json({ ok: false, code: 'MEDIA_NOT_FOUND', error: { message: '媒体不存在或无权访问' } })
     }
 
     for (const configuredRoot of roots()) {

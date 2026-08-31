@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, h, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NDataTable, NEmpty, NIcon, NInput, NModal, NSelect, NSpace, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
-import { AddOutline, CreateOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5'
+import { NAlert, NButton, NCard, NDataTable, NDrawer, NDrawerContent, NEmpty, NIcon, NInput, NModal, NSelect, NSpace, NTag, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
+import { AddOutline, CreateOutline, RefreshOutline, SearchOutline, ShieldCheckmarkOutline } from '@vicons/ionicons5'
 import { useAuthStore } from '@/stores/auth'
 import { isValidPassword, passwordPolicyMessage } from '@/utils/password-policy'
 import { localizeApiError } from '@/utils/api-error'
 import type { AppLocale } from '@/i18n/locale'
 import { useI18n } from 'vue-i18n'
+import UserModulePermissionsPanel from '@/components/users/UserModulePermissionsPanel.vue'
 
 type UserRole = 'basic' | 'auditor' | 'standard' | 'admin'
 type UserStatus = 'active' | 'inactive'
@@ -47,11 +48,19 @@ const resetModalVisible = computed({
 const temporaryPassword = ref('')
 const confirmPassword = ref('')
 const resetting = ref(false)
+const permissionDrawerVisible = ref(false)
+const permissionTarget = ref<ManagedUser | null>(null)
+const permissionDirty = ref(false)
+const permissionSaving = ref(false)
 
 const roleText = computed<Record<UserRole, string>>(() => ({ basic: t('pages.gaiop.users.basic'), auditor: t('pages.gaiop.users.auditor'), standard: t('pages.gaiop.users.standard'), admin: t('pages.gaiop.users.admin') }))
 const roleType: Record<UserRole, 'default' | 'info' | 'success' | 'warning'> = { basic: 'default', auditor: 'info', standard: 'success', admin: 'warning' }
 const roleOptions = computed(() => Object.entries(roleText.value).map(([value, label]) => ({ value, label })))
 const statusOptions = computed(() => [{ value: 'active', label: t('pages.gaiop.users.active') }, { value: 'inactive', label: t('pages.gaiop.users.inactive') }])
+const permissionUserOptions = computed(() => users.value.map((user) => ({
+  value: user.id,
+  label: [user.username, roleText.value[user.role], user.status === 'active' ? t('pages.gaiop.users.active') : t('pages.gaiop.users.inactive')].join(' · '),
+})))
 const filteredUsers = computed(() => {
   const query = keyword.value.trim().toLowerCase()
   return users.value.filter(user => {
@@ -116,6 +125,65 @@ function openResetPassword(user: ManagedUser) {
   confirmPassword.value = ''
 }
 
+function openPermissions(user: ManagedUser) {
+  if (!isInitialAdmin.value) return
+  permissionDirty.value = false
+  permissionSaving.value = false
+  permissionTarget.value = user
+  permissionDrawerVisible.value = true
+}
+
+function applyPermissionTarget(userId: string) {
+  const target = users.value.find((user) => user.id === userId)
+  if (!target || target.id === permissionTarget.value?.id) return
+  permissionDirty.value = false
+  permissionSaving.value = false
+  permissionTarget.value = target
+}
+
+function requestPermissionTarget(userId: string | null) {
+  if (!userId || permissionSaving.value || userId === permissionTarget.value?.id) return
+  if (!permissionDirty.value) {
+    applyPermissionTarget(userId)
+    return
+  }
+  dialog.warning({
+    title: text('切换权限配置用户', 'Switch permission target'),
+    content: text('当前用户有尚未保存的权限修改。切换后这些修改将被放弃。', 'The current user has unsaved permission changes. Switching will discard them.'),
+    positiveText: text('放弃修改并切换', 'Discard and switch'),
+    negativeText: t('pages.gaiop.users.cancel'),
+    onPositiveClick: () => applyPermissionTarget(userId),
+  })
+}
+
+function requestPermissionDrawer(show: boolean) {
+  if (show) {
+    permissionDrawerVisible.value = true
+    return
+  }
+  if (permissionSaving.value) return
+  if (!permissionDirty.value) {
+    permissionDrawerVisible.value = false
+    return
+  }
+  dialog.warning({
+    title: text('关闭模块权限配置', 'Close module permissions'),
+    content: text('当前有尚未保存的权限修改，关闭后这些修改将被放弃。', 'There are unsaved permission changes. Closing will discard them.'),
+    positiveText: text('放弃修改并关闭', 'Discard and close'),
+    negativeText: t('pages.gaiop.users.cancel'),
+    onPositiveClick: () => {
+      permissionDirty.value = false
+      permissionDrawerVisible.value = false
+    },
+  })
+}
+
+function clearPermissionDrawer() {
+  permissionTarget.value = null
+  permissionDirty.value = false
+  permissionSaving.value = false
+}
+
 async function submitResetPassword() {
   if (!resetTarget.value) return
   if (!isValidPassword(temporaryPassword.value)) {
@@ -177,8 +245,9 @@ const columns = computed<DataTableColumns<ManagedUser>>(() => {
   ]
   if (!isAdmin.value) return base
   return [...base, {
-    title: t('pages.gaiop.users.actions'), key: 'actions', width: 250, render: row => h(NSpace, { size: 'small' }, { default: () => [
+    title: t('pages.gaiop.users.actions'), key: 'actions', width: isInitialAdmin.value ? 330 : 250, render: row => h(NSpace, { size: 'small' }, { default: () => [
       h(NButton, { size: 'small', disabled: !canEditUser(row), title: managementReason(row, 'edit'), onClick: () => router.push({ name: 'UserEdit', params: { id: row.id } }) }, { icon: () => h(NIcon, null, { default: () => h(CreateOutline) }), default: () => t('pages.gaiop.users.editAction') }),
+      ...(isInitialAdmin.value ? [h(NButton, { size: 'small', secondary: true, type: 'primary', onClick: () => openPermissions(row) }, { icon: () => h(NIcon, null, { default: () => h(ShieldCheckmarkOutline) }), default: () => text('权限', 'Permissions') })] : []),
       h(NButton, { size: 'small', disabled: !canResetUser(row), title: managementReason(row, 'reset'), onClick: () => openResetPassword(row) }, { default: () => t('pages.gaiop.users.resetAction') }),
       h(NButton, { size: 'small', type: 'error', ghost: true, disabled: !canDeleteUser(row), title: managementReason(row, 'delete'), onClick: () => removeUser(row) }, { default: () => t('pages.gaiop.users.deleteAction') }),
     ] }),
@@ -235,6 +304,48 @@ onMounted(loadUsers)
         </template>
       </NCard>
     </NModal>
+    <NDrawer
+      :show="permissionDrawerVisible"
+      placement="right"
+      width="min(920px, 100vw)"
+      display-directive="if"
+      @update:show="requestPermissionDrawer"
+      @after-leave="clearPermissionDrawer"
+    >
+      <NDrawerContent
+        :title="text('模块权限配置', 'Module permissions')"
+        closable
+        body-content-style="padding: 0 24px 20px"
+      >
+        <div v-if="permissionTarget" class="permission-user-switch">
+          <div class="permission-user-switch__select">
+            <span>{{ text('选择用户', 'Select user') }}</span>
+            <NSelect
+              data-testid="permission-user-select"
+              :value="permissionTarget.id"
+              :options="permissionUserOptions"
+              :disabled="permissionSaving"
+              filterable
+              @update:value="requestPermissionTarget"
+            />
+          </div>
+          <div class="permission-user-switch__meta">
+            <NTag :type="roleType[permissionTarget.role]" :bordered="false">{{ roleText[permissionTarget.role] }}</NTag>
+            <NTag :type="permissionTarget.status === 'active' ? 'success' : 'default'" :bordered="false">
+              {{ permissionTarget.status === 'active' ? t('pages.gaiop.users.active') : t('pages.gaiop.users.inactive') }}
+            </NTag>
+            <span>{{ text('当前只覆盖该用户的角色默认模块权限', 'Overrides apply only to this user') }}</span>
+          </div>
+        </div>
+        <UserModulePermissionsPanel
+          v-if="permissionTarget"
+          :key="permissionTarget.id"
+          :user-id="permissionTarget.id"
+          @dirty-change="permissionDirty = $event"
+          @saving-change="permissionSaving = $event"
+        />
+      </NDrawerContent>
+    </NDrawer>
   </div>
 </template>
 
@@ -247,6 +358,13 @@ onMounted(loadUsers)
 .reset-card { width: min(520px, calc(100vw - 32px)); }
 .reset-fields { display: grid; gap: 12px; margin-top: 18px; }
 .password-hint { color: var(--text-secondary); font-size: 13px; }
+.permission-user-switch { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: minmax(300px, 420px) 1fr; align-items: end; gap: 18px; margin: 0 -2px 16px; padding: 14px 2px; border-bottom: 1px solid var(--border-color); background: var(--bg-card, #fff); }
+.permission-user-switch__select { display: grid; gap: 7px; color: var(--text-color-2); font-size: 13px; font-weight: 600; }
+.permission-user-switch__meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; color: var(--text-color-3); font-size: 13px; }
 @media (max-width: 900px) { .user-toolbar { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 680px) {
+  .permission-user-switch { grid-template-columns: 1fr; align-items: stretch; }
+  .permission-user-switch__meta { justify-content: flex-start; }
+}
 @media (max-width: 560px) { .user-toolbar { grid-template-columns: 1fr; } }
 </style>

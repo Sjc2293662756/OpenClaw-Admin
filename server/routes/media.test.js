@@ -23,7 +23,7 @@ test('media REST requires auth, session ownership, and a contained image path', 
   app.use('/api/media', createMediaRouter({
     authMiddleware,
     roots: () => [root],
-    authorizeSession: (user, key) => ({ ok: key === `session-${user.id}` }),
+    authorizeSession: (user, key) => ({ ok: user.role === 'admin' || key === `session-${user.id}` }),
   }))
   const server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')

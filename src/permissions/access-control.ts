@@ -1,10 +1,10 @@
 export type UserRole = 'basic' | 'auditor' | 'standard' | 'admin'
 
 export type ModulePermissionKey =
+  | 'data.allUsers'
   | 'dashboard'
   | 'alerts.records'
   | 'alerts.notifications'
-  | 'alerts.export'
   | 'sessions'
   | 'reports'
   | 'cron'
@@ -24,7 +24,7 @@ export type ModulePermissionKey =
   | 'platformBranding'
 
 export type EffectiveModules = Partial<Record<ModulePermissionKey, boolean>>
-export type PageAccessKey = ModulePermissionKey | 'chat'
+export type PageAccessKey = Exclude<ModulePermissionKey, 'data.allUsers'> | 'chat'
 type PageAccessDefinition = { moduleName: string }
 
 export const ROLE_LABELS: Record<UserRole, string> = {
@@ -42,7 +42,6 @@ export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   dashboard: { moduleName: '仪表盘' },
   'alerts.records': { moduleName: '告警记录' },
   'alerts.notifications': { moduleName: '告警通知/弹窗' },
-  'alerts.export': { moduleName: '告警导出' },
   chat: { moduleName: '对话工作台' },
   sessions: { moduleName: '会话管理' },
   reports: { moduleName: '报告文件管理' },
@@ -55,7 +54,7 @@ export const PAGE_ACCESS_MATRIX: Record<PageAccessKey, PageAccessDefinition> = {
   agents: { moduleName: '多智能体' },
   office: { moduleName: '智能体工坊' },
   users: { moduleName: '账户列表' },
-  userAdministration: { moduleName: '账户与模块权限管理' },
+  userAdministration: { moduleName: '账户管理' },
   audit: { moduleName: '审计信息' },
   settings: { moduleName: '系统设置' },
   systemConfiguration: { moduleName: '高级配置' },
@@ -109,6 +108,16 @@ export function canAccessPage(effectiveModules: EffectiveModules | null | undefi
 
 export function canUseConversation(role: UserRole | null | undefined): boolean {
   return role === 'basic' || role === 'standard' || role === 'admin'
+}
+
+export function canModifySession(
+  user: { id?: string; role?: UserRole } | null | undefined,
+  session: { ownerUserId?: string | null } | null | undefined,
+): boolean {
+  if (user?.role === 'admin') return true
+  if (user?.role !== 'basic' && user?.role !== 'standard') return false
+  const userId = String(user.id || '').trim()
+  return Boolean(userId && session?.ownerUserId === userId)
 }
 
 export function resolveConfigManagementRedirect(

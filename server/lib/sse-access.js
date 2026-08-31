@@ -1,4 +1,4 @@
-import { canAccessEffectiveModule } from './module-permissions.js'
+import { canAccessEffectiveModule, canViewAllUserData } from './module-permissions.js'
 
 export function canReceiveSseData(user, data, {
   extractSessionKey,
@@ -8,7 +8,11 @@ export function canReceiveSseData(user, data, {
   if (data?.type === 'alert' || data?.type === 'alertStreamState') {
     return canAccessEffectiveModule(user, 'alerts.notifications')
   }
-  if (data?.type !== 'event' || user?.role === 'admin') return true
+  if (data?.type !== 'event' || (
+    user?.role === 'admin'
+    && canViewAllUserData(user)
+    && canAccessEffectiveModule(user, 'sessions')
+  )) return true
   const sessionKey = extractSessionKey?.(data.payload)
   return Boolean(sessionKey && canAccessSession?.(user, sessionKey))
 }

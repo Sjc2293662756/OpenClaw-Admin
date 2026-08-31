@@ -26,7 +26,7 @@ import {
   isLegacyDefaultSession,
 } from '@/utils/session-presentation'
 import type { Session } from '@/api/types'
-import { canAccessPage, MANAGEMENT_ACCESS_DENIED_NOTICE } from '@/permissions/access-control'
+import { canAccessPage, canModifySession, MANAGEMENT_ACCESS_DENIED_NOTICE } from '@/permissions/access-control'
 import { useI18n } from 'vue-i18n'
 import { platformBranding, usesDefaultPlatformBranding } from '@/branding/platform'
 import AlertNotificationEntry from '@/components/alerts/AlertNotificationEntry.vue'
@@ -78,6 +78,13 @@ const selectedSession = computed(() => {
   const value = route.query.session
   return typeof value === 'string' ? value : Array.isArray(value) ? value[0] || '' : ''
 })
+
+const selectedSessionEntry = computed(() => (
+  sessionStore.sessions.find((session) => session.key === selectedSession.value) || null
+))
+const selectedSessionReadOnly = computed(() => Boolean(
+  selectedSession.value && !canModifySession(authStore.currentUser, selectedSessionEntry.value)
+))
 
 function clearWorkspacePreviewForNewConversation() {
   if (selectedSession.value) return
@@ -151,6 +158,8 @@ async function startNewConversation() {
 }
 
 async function deleteSession(key: string) {
+  const session = sessionStore.sessions.find((item) => item.key === key)
+  if (!canDeleteSessions.value || !canModifySession(authStore.currentUser, session)) return
   try {
     await sessionStore.deleteSession(key)
     if (selectedSession.value === key) {
@@ -261,7 +270,7 @@ onUnmounted(() => {
               <span>{{ sessionTitle(session) }}</span>
             </button>
             <NPopconfirm
-              v-if="canDeleteSessions"
+              v-if="canDeleteSessions && canModifySession(authStore.currentUser, session)"
               :positive-text="t('pages.gaiop.workspace.delete')"
               :negative-text="t('pages.gaiop.workspace.cancel')"
               @positive-click="deleteSession(session.key)"
@@ -322,7 +331,7 @@ onUnmounted(() => {
       </header>
 
       <div v-if="ready" class="workspace-chat-host">
-        <ChatPage workspace :initial-draft="alertAnalysisDraft" />
+        <ChatPage workspace :initial-draft="alertAnalysisDraft" :read-only="selectedSessionReadOnly" />
       </div>
       <div v-else class="workspace-connecting">
         <NSpin size="medium" />

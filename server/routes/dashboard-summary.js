@@ -42,7 +42,7 @@ export function createDashboardSummaryRouter({ authMiddleware, getGateway, db })
       const sessionsPayload = sessionsResult.status === 'fulfilled'
         ? filterSessionListPayload(
             sessionsResult.value,
-            listOwnedWorkspaceSessionKeys(db, req.user)
+            listOwnedWorkspaceSessionKeys(db, req.user, { scopeModuleKey: 'dashboard' })
           )
         : []
       const sessions = rowsFrom(sessionsPayload, ['sessions', 'items', 'data'])

@@ -8,6 +8,7 @@ import {
   deriveFirstUserMessageTitle,
   enrichSessionPayload,
   ensureWorkspaceSessionAccess,
+  ensureWorkspaceSessionReadAccess,
   extractSessionKeyFromEvent,
   filterHiddenLegacySessions,
   filterSessionListPayload,
@@ -198,6 +199,39 @@ describe('workspace session ownership service', () => {
     })
     expect(ensureWorkspaceSessionAccess(db, admin, unregistered)).toMatchObject({ ok: true })
     expect(ensureWorkspaceSessionAccess(db, auditor, unregistered)).toMatchObject({ ok: true })
+  })
+
+  it('expands session reads only when data scope and the session module are both allowed', () => {
+    const db = createTestDb()
+    const aliceSession = createWorkspaceSession(db, alice, 1)
+    const bobSession = createWorkspaceSession(db, bob, 2)
+    const allUserReader = {
+      ...alice,
+      effectiveModules: { sessions: true, 'data.allUsers': true },
+    }
+
+    expect(canAccessWorkspaceSession(db, allUserReader, bobSession)).toBe(true)
+    expect(ensureWorkspaceSessionReadAccess(db, allUserReader, bobSession)).toMatchObject({ ok: true })
+    expect(listOwnedWorkspaceSessionKeys(db, allUserReader)).toBeNull()
+    expect(ensureWorkspaceSessionAccess(db, allUserReader, bobSession)).toMatchObject({
+      ok: false,
+      code: 'SESSION_NOT_FOUND',
+    })
+
+    const dataScopeWithoutSessionModule = {
+      ...alice,
+      effectiveModules: { sessions: false, 'data.allUsers': true },
+    }
+    expect(canAccessWorkspaceSession(db, dataScopeWithoutSessionModule, bobSession)).toBe(false)
+    expect(ensureWorkspaceSessionReadAccess(db, dataScopeWithoutSessionModule, bobSession)).toMatchObject({ ok: false })
+    expect(listOwnedWorkspaceSessionKeys(db, dataScopeWithoutSessionModule)).toEqual(new Set([aliceSession]))
+
+    const auditorReducedToOwnData = {
+      ...auditor,
+      effectiveModules: { sessions: true, 'data.allUsers': false },
+    }
+    expect(canAccessWorkspaceSession(db, auditorReducedToOwnData, bobSession)).toBe(false)
+    expect(listOwnedWorkspaceSessionKeys(db, auditorReducedToOwnData)).toEqual(new Set())
   })
 
   it('filters session lists and permanently hides a soft-deleted owned session', () => {

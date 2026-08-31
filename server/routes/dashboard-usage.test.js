@@ -128,17 +128,22 @@ test('dashboard usage route validates ranges and returns cache metadata', async 
   const app = express()
   const runtime = {
     async read(params) {
-      assert.equal(params.principal, 'admin:user-1')
+      assert.equal(params.principal, 'standard:user-1')
       assert.equal(params.allowedKeys, null)
       return { usage: projectDashboardUsage(sampleUsage()), cache: 'hit' }
     },
   }
   app.use('/dashboard', createDashboardUsageRouter({
     authMiddleware: (req, _res, next) => {
-      req.user = { id: 'user-1', role: 'admin' }
+      req.user = {
+        id: 'user-1',
+        role: 'standard',
+        effectiveModules: { dashboard: true, 'data.allUsers': true },
+      }
       next()
     },
     runtime,
+    db: { prepare: () => { throw new Error('ownership query must not run for all-user scope') } },
   }))
   const server = app.listen(0, '127.0.0.1')
   await new Promise((resolve) => server.once('listening', resolve))

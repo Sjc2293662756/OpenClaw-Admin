@@ -213,7 +213,16 @@ test('formal report archive imports only a matched audit pair and isolates the o
   process.env.GAIOP_REPORT_ATTRIBUTION_INDEX_PATH = attributionIndex
 
   const server = (await createReportsApp((req) => {
+    if (req.get('x-test-role') === 'auditor-deny') {
+      return { id: 'auditor-1', role: 'auditor', effectiveModules: { 'data.allUsers': false } }
+    }
     if (req.get('x-test-role') === 'auditor') return { id: 'auditor-1', role: 'auditor' }
+    if (req.get('x-test-scope') === 'all-users') {
+      return { id: 'user-b', role: 'basic', effectiveModules: { 'data.allUsers': true } }
+    }
+    if (req.get('x-test-scope') === 'all-without-reports') {
+      return { id: 'user-b', role: 'basic', effectiveModules: { 'data.allUsers': true, reports: false } }
+    }
     return req.get('x-test-user') === 'user-b'
       ? { id: 'user-b', role: 'basic' }
       : { id: 'user a', role: 'basic' }
@@ -251,6 +260,27 @@ test('formal report archive imports only a matched audit pair and isolates the o
     assert.equal(auditorPayload.reports.length, 3)
     assert.equal(auditorPayload.reports.find((report) => report.id === 'legacy-unattributed')?.sourceUserId, 'user a')
 
+    const allUserResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, {
+      headers: { 'x-test-scope': 'all-users' },
+    })
+    const allUserPayload = await allUserResponse.json()
+    assert.equal(allUserResponse.status, 200)
+    assert.equal(allUserPayload.reports.length, 3)
+
+    const scopeWithoutModuleResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, {
+      headers: { 'x-test-scope': 'all-without-reports' },
+    })
+    const scopeWithoutModulePayload = await scopeWithoutModuleResponse.json()
+    assert.equal(scopeWithoutModuleResponse.status, 200)
+    assert.deepEqual(scopeWithoutModulePayload.reports, [])
+
+    const reducedAuditorResponse = await fetch(`http://127.0.0.1:${server.address().port}/reports`, {
+      headers: { 'x-test-role': 'auditor-deny' },
+    })
+    const reducedAuditorPayload = await reducedAuditorResponse.json()
+    assert.equal(reducedAuditorResponse.status, 200)
+    assert.deepEqual(reducedAuditorPayload.reports, [])
+
     const deniedDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
       headers: { 'x-test-user': 'user-b' },
     })
@@ -260,6 +290,17 @@ test('formal report archive imports only a matched audit pair and isolates the o
       headers: { 'x-test-user': 'user-b' },
     })
     assert.equal(deniedPreview.status, 404)
+
+    const allUserDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
+      headers: { 'x-test-scope': 'all-users' },
+    })
+    assert.equal(allUserDownload.status, 200)
+    assert.equal(await allUserDownload.text(), 'report')
+
+    const reducedAuditorDownload = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/download`, {
+      headers: { 'x-test-role': 'auditor-deny' },
+    })
+    assert.equal(reducedAuditorDownload.status, 404)
 
     const ownUnsupportedPreview = await fetch(`http://127.0.0.1:${server.address().port}/reports/report-1/preview`)
     assert.equal(ownUnsupportedPreview.status, 415)

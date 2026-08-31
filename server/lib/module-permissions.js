@@ -1,20 +1,23 @@
 const ROLE_SET = new Set(['basic', 'standard', 'auditor', 'admin'])
 const EFFECT_SET = new Set(['allow', 'deny'])
-const INITIAL_ADMIN_CORE = new Set(['users', 'userAdministration'])
 
 const ALL = ['basic', 'standard', 'auditor', 'admin']
 const NON_BASIC = ['standard', 'auditor', 'admin']
 const STATUS_VIEWERS = ['standard', 'auditor', 'admin']
 const AUDIT_ADMIN = ['auditor', 'admin']
 const ADMIN = ['admin']
+const FIXED_ROLE_MODULES = new Map([
+  ['users', new Set(AUDIT_ADMIN)],
+  ['userAdministration', new Set(ADMIN)],
+])
 
 export const MODULE_PERMISSION_CATALOG = Object.freeze([
-  { moduleKey: 'dashboard', name: '仪表盘', group: '业务管理', risk: 'low', defaultRoles: NON_BASIC, dependencies: [], routes: ['/'], rest: ['GET /api/dashboard/summary', 'GET /api/dashboard/usage'], sse: [], rpc: [], dataScope: '基础/标准用户仅本人会话聚合；审计/管理员全量只读' },
-  { moduleKey: 'alerts.records', name: '告警记录', group: '业务管理', risk: 'medium', defaultRoles: ALL, dependencies: [], routes: ['/alerts'], rest: ['GET /api/alerts', 'GET /api/alerts/time'], sse: [], rpc: [], dataScope: '系统级脱敏告警记录' },
+  { moduleKey: 'data.allUsers', name: '查看所有用户数据', group: '数据范围', risk: 'high', defaultRoles: AUDIT_ADMIN, dependencies: [], routes: [], rest: ['GET /api/dashboard/summary', 'GET /api/dashboard/usage', 'GET /api/reports', 'GET /api/reports/:id/download', 'GET /api/reports/:id/preview', 'GET /api/media'], sse: ['event(session scoped read-only)'], rpc: ['sessions.list', 'session.list', 'sessions.get', 'session.get', 'sessions.history', 'session.history', 'chat.history', 'sessions.usage', 'usage.sessions'], dataScope: '仅在已开放的仪表盘、会话管理和报告文件管理内，将本人只读范围扩大为所有用户；不开放模块或写操作' },
+  { moduleKey: 'dashboard', name: '仪表盘', group: '业务管理', risk: 'low', defaultRoles: NON_BASIC, dependencies: [], routes: ['/'], rest: ['GET /api/dashboard/summary', 'GET /api/dashboard/usage'], sse: [], rpc: [], dataScope: '按“查看所有用户数据”决定本人或全量会话聚合；始终只读' },
+  { moduleKey: 'alerts.records', name: '告警记录', group: '业务管理', risk: 'medium', defaultRoles: ALL, dependencies: [], routes: ['/alerts'], rest: ['GET /api/alerts', 'GET /api/alerts/time', 'POST /api/alerts/export'], sse: [], rpc: [], dataScope: '系统级脱敏告警记录；包含当前页导出' },
   { moduleKey: 'alerts.notifications', name: '告警通知/弹窗', group: '业务管理', risk: 'medium', defaultRoles: ALL, dependencies: [], routes: [], rest: ['GET /api/alerts/changes', 'GET /api/alerts/preferences', 'PUT /api/alerts/preferences'], sse: ['alert', 'alertStreamState'], rpc: [], dataScope: '系统级脱敏告警摘要；偏好仅当前账户' },
-  { moduleKey: 'alerts.export', name: '告警导出', group: '业务管理', risk: 'medium', defaultRoles: ALL, dependencies: ['alerts.records'], routes: ['/alerts'], rest: ['POST /api/alerts/export'], sse: [], rpc: [], dataScope: '当前页六字段，最多100条' },
-  { moduleKey: 'sessions', name: '会话管理', group: '业务管理', risk: 'high', defaultRoles: NON_BASIC, dependencies: [], routes: ['/sessions', '/sessions/:key'], rest: ['/api/session-retention*'], sse: ['event(session scoped)'], rpc: ['sessions.*', 'session.*'], dataScope: '本人/全量/只读范围保持；对话工作台共享能力固定' },
-  { moduleKey: 'reports', name: '报告文件管理', group: '业务管理', risk: 'high', defaultRoles: ALL, dependencies: [], routes: ['/files'], rest: ['/api/reports*'], sse: [], rpc: [], dataScope: '基础/标准仅本人；审计全量只读；管理员全量' },
+  { moduleKey: 'sessions', name: '会话管理', group: '业务管理', risk: 'high', defaultRoles: NON_BASIC, dependencies: [], routes: ['/sessions', '/sessions/:key'], rest: ['/api/session-retention*'], sse: ['event(session scoped)'], rpc: ['sessions.*', 'session.*'], dataScope: '读取按“查看所有用户数据”决定本人或全量；发送、停止、重置、修改和删除仍按原角色与归属' },
+  { moduleKey: 'reports', name: '报告文件管理', group: '业务管理', risk: 'high', defaultRoles: ALL, dependencies: [], routes: ['/files'], rest: ['/api/reports*'], sse: [], rpc: [], dataScope: '读取按“查看所有用户数据”决定本人或全量；删除和留存仍为管理员边界' },
   { moduleKey: 'cron', name: '任务计划', group: '业务管理', risk: 'high', defaultRoles: AUDIT_ADMIN, dependencies: [], routes: ['/cron'], rest: [], sse: [], rpc: ['cron.*', 'crons.*', 'schedule.*', 'schedules.*'], dataScope: '系统级任务；危险写动作保留既有边界' },
   { moduleKey: 'memory', name: '记忆管理', group: '系统运维', risk: 'high', defaultRoles: ADMIN, dependencies: [], routes: ['/memory'], rest: [], sse: [], rpc: ['agents.files.list/get/set', 'agent.files.list/get/set'], dataScope: '正式智能体文件；不开放通用文件接口' },
   { moduleKey: 'models', name: '模型管理', group: '系统运维', risk: 'high', defaultRoles: ADMIN, dependencies: [], routes: ['/models'], rest: [], sse: [], rpc: ['models.list', 'model.list', 'config.get', 'agent.model.set'], dataScope: '非管理员安全投影；模型切换保留既有边界' },
@@ -23,8 +26,6 @@ export const MODULE_PERMISSION_CATALOG = Object.freeze([
   { moduleKey: 'system', name: '系统监视器', group: '系统运维', risk: 'medium', defaultRoles: STATUS_VIEWERS, dependencies: [], routes: ['/system'], rest: ['GET /api/system/metrics', 'GET /api/system/storage-watermarks', 'GET /api/status'], sse: ['gatewayState'], rpc: ['system-presence', 'node.list', 'health', 'status'], dataScope: '安全系统摘要；无主机写入或清理' },
   { moduleKey: 'agents', name: '多智能体', group: '系统运维', risk: 'high', defaultRoles: ADMIN, dependencies: [], routes: ['/agents'], rest: [], sse: [], rpc: ['agents.*', 'agent.*'], dataScope: '正式智能体能力；危险写动作保留既有边界' },
   { moduleKey: 'office', name: '智能体工坊', group: '系统运维', risk: 'high', defaultRoles: ADMIN, dependencies: [], routes: ['/office'], rest: ['/api/wizard/scenarios*', '/api/wizard/tasks*'], sse: ['event(session scoped)'], rpc: [], dataScope: '场景和任务；不开放终端或桌面' },
-  { moduleKey: 'users', name: '账户列表', group: '高级管理', risk: 'high', defaultRoles: AUDIT_ADMIN, dependencies: [], routes: ['/users'], rest: ['GET /api/users'], sse: [], rpc: [], dataScope: '账户安全投影；初始管理员本人锁定允许' },
-  { moduleKey: 'userAdministration', name: '账户与模块权限管理', group: '高级管理', risk: 'critical', defaultRoles: ADMIN, dependencies: ['users'], routes: ['/users/create', '/users/:id/edit'], rest: ['/api/users* write', '/api/users/:id/module-permissions'], sse: ['permissionsChanged(target only)'], rpc: [], dataScope: '保留初始/最后管理员、自身账户和密码规则；初始管理员本人锁定允许' },
   { moduleKey: 'audit', name: '审计信息', group: '高级管理', risk: 'high', defaultRoles: AUDIT_ADMIN, dependencies: [], routes: ['/audit-logs'], rest: ['/api/audit-logs*'], sse: [], rpc: [], dataScope: '全量只读安全投影' },
   { moduleKey: 'settings', name: '系统设置', group: '系统运维', risk: 'medium', defaultRoles: NON_BASIC, dependencies: [], routes: ['/settings'], rest: ['/api/system-settings/sessions', '/api/system-settings/report-storage'], sse: [], rpc: [], dataScope: '各子项继续执行既有查看/管理边界' },
   { moduleKey: 'systemConfiguration', name: '高级配置', group: '高级管理', risk: 'critical', defaultRoles: ADMIN, dependencies: [], routes: ['/system-configuration', '/system-configuration/*'], rest: ['/api/system-config*', '/api/data-sources*'], sse: [], rpc: ['config.get/patch/apply/set'], dataScope: '敏感值只写不回显；独立正式父入口' },
@@ -84,17 +85,22 @@ function readOverrideMap(db, userId) {
 
 function lockFor(user, moduleKey) {
   const initial = Boolean(user?.is_initial_admin ?? user?.isInitialAdmin)
+  if (initial) {
+    return { locked: true, forcedAllowed: true, lockReason: '初始管理员为最高权限账户，模块权限固定允许' }
+  }
   if (moduleKey === 'platformBranding') {
     return {
       locked: true,
-      forcedAllowed: initial,
-      lockReason: initial ? '初始管理员专属能力，不能通过个人覆盖关闭' : '仅初始管理员可使用，个人覆盖不能提升初始管理员身份',
+      forcedAllowed: false,
+      lockReason: '仅初始管理员可使用，个人覆盖不能提升初始管理员身份',
     }
   }
-  if (initial && INITIAL_ADMIN_CORE.has(moduleKey)) {
-    return { locked: true, forcedAllowed: true, lockReason: '初始管理员的账户与权限管理核心能力不可关闭' }
-  }
   return { locked: false, forcedAllowed: null, lockReason: null }
+}
+
+function fixedRoleModuleAllowed(user, moduleKey) {
+  const roles = FIXED_ROLE_MODULES.get(moduleKey)
+  return roles ? roles.has(user?.role) : null
 }
 
 export function resolveEffectiveModulePermissions(db, user, { overrideMap = null, strictDependencies = false } = {}) {
@@ -102,8 +108,8 @@ export function resolveEffectiveModulePermissions(db, user, { overrideMap = null
   const overrides = overrideMap || readOverrideMap(db, user.id)
   const modules = MODULE_PERMISSION_CATALOG.map((entry) => {
     const defaultAllowed = entry.defaultRoles.includes(user.role)
-    const override = overrides.get(entry.moduleKey) || null
     const lock = lockFor(user, entry.moduleKey)
+    const override = lock.locked ? null : overrides.get(entry.moduleKey) || null
     const candidate = override === 'allow' ? true : override === 'deny' ? false : defaultAllowed
     return {
       moduleKey: entry.moduleKey,
@@ -132,10 +138,16 @@ export function resolveEffectiveModulePermissions(db, user, { overrideMap = null
   if (!strictDependencies) {
     for (const conflict of conflicts) byKey.get(conflict.moduleKey).effectiveAllowed = false
   }
+  const fixedEffectiveModules = Object.fromEntries(
+    [...FIXED_ROLE_MODULES.keys()].map((moduleKey) => [moduleKey, fixedRoleModuleAllowed(user, moduleKey)]),
+  )
   return {
     permissionVersion: Number(user.permission_version ?? user.permissionVersion ?? 0),
     modules,
-    effectiveModules: Object.fromEntries(modules.map((entry) => [entry.moduleKey, entry.effectiveAllowed])),
+    effectiveModules: {
+      ...Object.fromEntries(modules.map((entry) => [entry.moduleKey, entry.effectiveAllowed])),
+      ...fixedEffectiveModules,
+    },
     moduleOverrides: Object.fromEntries(modules.filter((entry) => entry.override).map((entry) => [entry.moduleKey, entry.override])),
     dependencyConflicts: conflicts,
   }
@@ -304,6 +316,8 @@ export function replaceUserModulePermissionOverrides(db, {
 }
 
 export function canAccessEffectiveModule(user, moduleKey) {
+  const fixedAllowed = fixedRoleModuleAllowed(user, moduleKey)
+  if (fixedAllowed !== null) return fixedAllowed
   if (Object.hasOwn(user?.effectiveModules || {}, moduleKey)) {
     return user.effectiveModules[moduleKey] === true
   }
@@ -313,8 +327,14 @@ export function canAccessEffectiveModule(user, moduleKey) {
   return lock.locked ? lock.forcedAllowed : entry.defaultRoles.includes(user.role)
 }
 
+export function canViewAllUserData(user) {
+  return canAccessEffectiveModule(user, 'data.allUsers')
+}
+
 export function createModuleAccessMiddleware(authMiddleware, moduleKey, message = '当前账户无权访问此模块') {
-  if (!CATALOG_BY_KEY.has(moduleKey)) throw new Error(`Unknown module permission key: ${moduleKey}`)
+  if (!CATALOG_BY_KEY.has(moduleKey) && !FIXED_ROLE_MODULES.has(moduleKey)) {
+    throw new Error(`Unknown module permission key: ${moduleKey}`)
+  }
   return (req, res, next) => {
     authMiddleware(req, res, () => {
       if (canAccessEffectiveModule(req.user, moduleKey)) return next()
@@ -327,7 +347,7 @@ export function restModuleKeyFor(method, originalUrl) {
   const verb = String(method || 'GET').toUpperCase()
   const path = String(originalUrl || '').split('?')[0]
   if (path.startsWith('/api/dashboard/')) return 'dashboard'
-  if (path === '/api/alerts/export' && verb === 'POST') return 'alerts.export'
+  if (path === '/api/alerts/export' && verb === 'POST') return 'alerts.records'
   if (path === '/api/alerts/changes' || path === '/api/alerts/preferences') return 'alerts.notifications'
   if (path === '/api/alerts' || path === '/api/alerts/time') return 'alerts.records'
   if (path.startsWith('/api/session-retention')) return 'sessions'
@@ -340,7 +360,9 @@ export function restModuleKeyFor(method, originalUrl) {
   if (path.startsWith('/api/system-config') || path.startsWith('/api/data-sources')) return 'systemConfiguration'
   if (path.startsWith('/api/system-settings/')) return 'settings'
   if (path.startsWith('/api/wizard/')) return 'office'
-  if (/^\/api\/users\/[^/]+\/module-permissions$/u.test(path)) return 'userAdministration'
+  // Per-user module configuration is protected by the initial-admin identity
+  // middleware and is deliberately not delegable through a module override.
+  if (/^\/api\/users\/[^/]+\/module-permissions$/u.test(path)) return null
   if (path === '/api/users' && verb === 'GET') return 'users'
   if (path.startsWith('/api/users')) return 'userAdministration'
   return null
@@ -385,4 +407,4 @@ export function hasAnyEffectiveModule(user, moduleKeys) {
   return moduleKeys.some((moduleKey) => canAccessEffectiveModule(user, moduleKey))
 }
 
-export const __test__ = { CATALOG_BY_KEY, INITIAL_ADMIN_CORE, lockFor, changeSummary, auditDiffChunks, RPC_MODULE_KEYS }
+export const __test__ = { CATALOG_BY_KEY, FIXED_ROLE_MODULES, lockFor, changeSummary, auditDiffChunks, RPC_MODULE_KEYS }

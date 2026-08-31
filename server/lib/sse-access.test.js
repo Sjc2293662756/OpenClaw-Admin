@@ -47,6 +47,27 @@ test('keeps existing Gateway event session isolation and non-event broadcasts', 
     type: 'event',
     payload: {},
   }, dependencies), true)
+  assert.equal(canReceiveSseData({
+    role: 'admin',
+    effectiveModules: { 'data.allUsers': false },
+  }, {
+    type: 'event',
+    payload: {},
+  }, dependencies), false)
+  assert.equal(canReceiveSseData({
+    role: 'admin',
+    effectiveModules: { 'data.allUsers': true, sessions: false },
+  }, {
+    type: 'event',
+    payload: {},
+  }, dependencies), false)
+  assert.equal(canReceiveSseData({
+    role: 'admin',
+    effectiveModules: { 'data.allUsers': true, sessions: true },
+  }, {
+    type: 'event',
+    payload: {},
+  }, dependencies), true)
 
   for (const type of ['gatewayState', 'backupProgress', 'connected']) {
     assert.equal(canReceiveSseData({ role: 'basic' }, { type }, dependencies), true)

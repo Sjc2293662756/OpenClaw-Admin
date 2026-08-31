@@ -2,6 +2,7 @@ import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, sta
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'path'
 import { Router } from 'express'
 import { sendError, sendOk } from '../lib/api-response.js'
+import { canAccessEffectiveModule, canViewAllUserData } from '../lib/module-permissions.js'
 import { readReportAttributionIndex, resolveReportAttribution, resolveReportAttributionByAudit } from '../lib/report-attribution-index.js'
 import { getReportRecoveryRoot, getReportStorageRoot } from '../lib/report-storage-path.js'
 import { ReportRetentionService } from '../report-retention-service.js'
@@ -117,9 +118,13 @@ function archiveDirectorySegment(value, fallback) {
   return segment.replace(/[^\p{L}\p{N}._-]/gu, '_').slice(0, 160) || fallback
 }
 
+function canReadAllReports(user) {
+  return canViewAllUserData(user) && canAccessEffectiveModule(user, 'reports')
+}
+
 function canReadReport(user, row) {
-  if (!user || user.role === 'admin' || user.role === 'auditor') return true
-  const userId = safeText(user.id)
+  if (canReadAllReports(user)) return true
+  const userId = safeText(user?.id)
   return Boolean(userId && row.source_user_id && row.source_user_id === userId)
 }
 
@@ -478,7 +483,7 @@ export function createReportsRouter({ db, authMiddleware, moduleMiddleware = aut
           )
         )
       )`)
-      if (req.user?.role !== 'admin' && req.user?.role !== 'auditor') {
+      if (!canReadAllReports(req.user)) {
         const userId = safeText(req.user?.id)
         if (!userId) {
           conditions.push('1 = 0')
@@ -595,6 +600,7 @@ export function createReportsRouter({ db, authMiddleware, moduleMiddleware = aut
 
 export const __test__ = {
   archiveDirectorySegment,
+  canReadAllReports,
   canReadReport,
   inferMimeType,
   publicReportName,

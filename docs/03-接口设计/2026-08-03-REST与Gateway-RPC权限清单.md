@@ -150,15 +150,17 @@ Express 以“先注册先匹配”执行，本次不以文本中是否还能搜
 
 ### 2.2 业务数据范围执行点
 
+以下角色列表示默认值。`data.allUsers` 与 `dashboard`、`sessions`、`reports` 对应模块分别取交集后，才把该模块从“本人”扩大为“所有用户”：basic/standard 默认本人、auditor/admin 默认全量，普通账户可由初始管理员个人 allow/deny，初始管理员固定全量。该范围键不影响告警、审计或任何写操作。
+
 | 数据类型 | 基础/标准 | 审计 | 管理员 | 服务端执行点 |
 |---|---|---|---|---|
-| WebChat 会话列表、历史、用量 | 仅 `workspace_sessions.owner_user_id` 归属的 active 会话 | 全量只读 | 全量 | `listOwnedWorkspaceSessionKeys`、`ensureWorkspaceSessionAccess`、`filterSessionListPayload` |
+| WebChat 会话列表、历史、用量 | 默认仅 `workspace_sessions.owner_user_id` 归属的 active 会话；有效全量范围时只读全部 | 默认全量只读；可个人 deny 回到本人 | 默认全量；普通管理员可个人 deny 回到本人，初始管理员固定全量 | `listOwnedWorkspaceSessionKeys`、`ensureWorkspaceSessionReadAccess`、`filterSessionListPayload` |
 | WebChat 会话删除/发送/停止 | 基础和标准均可在本人会话中执行工作台对话、停止和删除 | 全部拒绝 | 允许 | `/api/rpc` 在转发 Gateway 前先解析 sessionKey 并查归属 |
 | 会话留存状态与附件登记 | 基础/标准拒绝 | 全量安全摘要只读 | 管理 | `createSessionRetentionRouter`；取消、长期保留和附件登记使用管理员中间件 |
-| Usage | 先过滤本人会话，再重算消息、Token、趋势、模型、工具和分组聚合 | 全量只读 | 全量 | `filterSessionUsagePayload`；不是全局数据透传，也不是简单清零 |
-| 报告列表、预览、下载 | 仅 `source_user_id` 匹配本人 | 全量只读 | 全量 | 基础 REST 边界 + `resolveReportOrError`和报告列表 SQL 条件 |
-| 实时 SSE 会话事件 | 仅能接收可访问 sessionKey 的事件 | 全量只读 | 全量 | `extractSessionKeyFromEvent` + `canAccessWorkspaceSession` |
-| 聊天媒体 | 必须携带并通过 `X-GAIOP-Session-Key` 归属 | 携带会话标识后全量只读 | 管理访问 | `createMediaRouter` 先认证/会话授权，再读文件 |
+| Usage | 默认先过滤本人会话，再重算消息、Token、趋势、模型、工具和分组聚合；有效全量范围时重算全部 | 默认全量只读；可个人 deny 回到本人 | 默认全量；普通管理员可个人 deny 回到本人，初始管理员固定全量 | `filterSessionUsagePayload`；仪表盘聚合额外要求 `dashboard`，会话 Usage 额外要求 `sessions` |
+| 报告列表、预览、下载 | 默认仅 `source_user_id` 匹配本人；有效全量范围时只读全部 | 默认全量只读；可个人 deny 回到本人 | 默认全量；普通管理员可个人 deny 回到本人，初始管理员固定全量 | `canReadAllReports` + `resolveReportOrError` 和报告列表 SQL 条件 |
+| 实时 SSE 会话事件 | 默认仅能接收可访问 sessionKey 的事件；有效会话全量范围时只读全部 | 默认全量只读；可个人 deny 回到本人 | 默认全量；普通管理员可个人 deny 回到本人，初始管理员固定全量 | `extractSessionKeyFromEvent` + `canAccessWorkspaceSession` |
+| 聊天媒体 | 默认必须携带并通过 `X-GAIOP-Session-Key` 归属；有效会话全量范围时可读全部 | 携带会话标识后默认全量只读；可个人 deny 回到本人 | 默认管理访问；普通管理员可个人 deny 收窄读取，初始管理员固定全量 | `createMediaRouter` + `ensureWorkspaceSessionReadAccess`，授权通过后才读文件 |
 | 用户账户 | 无权列表 | 只读安全字段 | 管理 | `accountViewerMiddleware` + `publicUser` |
 | 频道、插件、Skills、标准配置 | 基础拒绝；标准仅页面需要的安全状态/模型选择投影 | 相应安全只读投影 | 完整管理数据 | 基础 REST/RPC 边界 + `projectSafe*Payload`、`projectStandardGatewayConfig` |
 

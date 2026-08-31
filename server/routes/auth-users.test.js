@@ -484,7 +484,7 @@ test('auditors can read safe account information while basic users and all audit
   }
 })
 
-test('user list strips password-change state for personal allows and every default viewer role', async () => {
+test('user list keeps fixed role access despite legacy personal allows and strips password-change state', async () => {
   const fixture = await createFixture()
   try {
     fixture.db.prepare(`INSERT INTO users (
@@ -500,15 +500,17 @@ test('user list strips password-change state for personal allows and every defau
     allow.run('standard-id')
 
     const viewers = [
-      await fixture.login('basic-user', PASSWORDS.basic),
-      await fixture.login('standard-user', 'Standard6!'),
-      await fixture.login('auditor-user', PASSWORDS.auditor),
-      await fixture.login('ordinary-admin', PASSWORDS.admin),
+      { login: await fixture.login('basic-user', PASSWORDS.basic), expectedStatus: 403 },
+      { login: await fixture.login('standard-user', 'Standard6!'), expectedStatus: 403 },
+      { login: await fixture.login('auditor-user', PASSWORDS.auditor), expectedStatus: 200 },
+      { login: await fixture.login('ordinary-admin', PASSWORDS.admin), expectedStatus: 200 },
     ]
     for (const viewer of viewers) {
-      const list = await fixture.request('/api/users', { token: viewer.token })
-      assert.equal(list.response.status, 200)
-      assert.equal(list.body.users.every(user => !Object.hasOwn(user, 'mustChangePassword')), true)
+      const list = await fixture.request('/api/users', { token: viewer.login.token })
+      assert.equal(list.response.status, viewer.expectedStatus)
+      if (viewer.expectedStatus === 200) {
+        assert.equal(list.body.users.every(user => !Object.hasOwn(user, 'mustChangePassword')), true)
+      }
     }
 
     fixture.db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run('basic-id')

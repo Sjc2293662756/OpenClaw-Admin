@@ -32,7 +32,7 @@ type AlertReturnState = {
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
-const canExportAlerts = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.export'))
+const canExportAlerts = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.records'))
 const alertRealtimeStore = useAlertRealtimeStore()
 const { canUseFunctions, readOnlyHint } = usePermissions()
 const message = useMessage()

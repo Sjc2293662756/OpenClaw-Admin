@@ -56,3 +56,36 @@ test('dashboard summary exposes aggregates only and filters basic sessions by ow
     await new Promise((resolve) => server.close(resolve))
   }
 })
+
+test('dashboard summary uses the all-user data scope only with dashboard access', async () => {
+  const payloads = {
+    'sessions.list': { sessions: [{ key: 'owned-session' }, { key: 'other-session' }] },
+    'cron.list': { jobs: [] },
+    'models.list': { models: [] },
+    'skills.status': { skills: [] },
+  }
+  const app = express()
+  app.use('/summary', createDashboardSummaryRouter({
+    authMiddleware(req, _res, next) {
+      req.user = {
+        id: 'standard-1',
+        role: 'standard',
+        effectiveModules: { dashboard: true, 'data.allUsers': true },
+      }
+      next()
+    },
+    getGateway: () => ({ isConnected: true, call: async (method) => payloads[method] }),
+    db: { prepare: () => { throw new Error('ownership query must not run for all-user scope') } },
+  }))
+  const server = app.listen(0, '127.0.0.1')
+  await new Promise((resolve) => server.once('listening', resolve))
+  const { port } = server.address()
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/summary`)
+    const body = await response.json()
+    assert.equal(response.status, 200)
+    assert.equal(body.summary.sessionCount, 2)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})

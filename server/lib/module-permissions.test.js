@@ -4,12 +4,23 @@ import Database from 'better-sqlite3'
 import {
   MODULE_PERMISSION_CATALOG,
   ModulePermissionError,
+  canViewAllUserData,
   getUserModulePermissionProjection,
   migrateModulePermissions,
   replaceUserModulePermissionOverrides,
+  restModuleKeyFor,
   resolveEffectiveModulePermissions,
   validateModulePermissionOverrides,
 } from './module-permissions.js'
+
+test('alert exports follow the alert-record module boundary', () => {
+  assert.equal(restModuleKeyFor('POST', '/api/alerts/export'), 'alerts.records')
+})
+
+test('module-permission administration is identity-gated rather than delegable', () => {
+  assert.equal(restModuleKeyFor('GET', '/api/users/target/module-permissions'), null)
+  assert.equal(restModuleKeyFor('PUT', '/api/users/target/module-permissions'), null)
+})
 
 function createDb() {
   const db = new Database(':memory:')
@@ -60,7 +71,50 @@ test('no overrides match the approved four-role matrix for every catalog key', (
     }
   }
   const initial = resolveEffectiveModulePermissions(db, row(db, 'initial'))
-  assert.equal(byKey(initial, 'platformBranding').effectiveAllowed, true)
+  for (const entry of initial.modules) {
+    assert.equal(entry.effectiveAllowed, true, entry.moduleKey)
+    assert.equal(entry.locked, true, entry.moduleKey)
+  }
+  assert.equal(resolveEffectiveModulePermissions(db, row(db, 'basic')).effectiveModules.users, false)
+  assert.equal(resolveEffectiveModulePermissions(db, row(db, 'standard-a')).effectiveModules.userAdministration, false)
+  assert.equal(resolveEffectiveModulePermissions(db, row(db, 'auditor')).effectiveModules.users, true)
+  assert.equal(resolveEffectiveModulePermissions(db, row(db, 'auditor')).effectiveModules.userAdministration, false)
+  assert.equal(resolveEffectiveModulePermissions(db, row(db, 'admin')).effectiveModules.users, true)
+  assert.equal(resolveEffectiveModulePermissions(db, row(db, 'admin')).effectiveModules.userAdministration, true)
+})
+
+test('account governance is role-fixed and ignores projected or legacy personal values', () => {
+  const db = createDb()
+  db.prepare(`INSERT INTO user_module_permission_overrides (
+    user_id, module_key, effect, updated_by, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('basic', 'users', 'allow', 'initial', 1, 1)
+  const basic = resolveEffectiveModulePermissions(db, row(db, 'basic'))
+  assert.equal(basic.modules.some((entry) => entry.moduleKey === 'users' || entry.moduleKey === 'userAdministration'), false)
+  assert.equal(basic.effectiveModules.users, false)
+  assert.equal(basic.effectiveModules.userAdministration, false)
+})
+
+test('all-user data scope follows role defaults and personal overrides', () => {
+  const db = createDb()
+  assert.equal(canViewAllUserData(row(db, 'basic')), false)
+  assert.equal(canViewAllUserData(row(db, 'standard-a')), false)
+  assert.equal(canViewAllUserData(row(db, 'auditor')), true)
+  assert.equal(canViewAllUserData(row(db, 'admin')), true)
+
+  const allowed = replaceUserModulePermissionOverrides(db, {
+    actor: { id: 'initial' }, userId: 'standard-a', expectedVersion: 0,
+    overrides: [{ moduleKey: 'data.allUsers', effect: 'allow' }], recordAudit: () => true,
+  })
+  assert.equal(allowed.effectiveModules['data.allUsers'], true)
+  assert.equal(canViewAllUserData(allowed), true)
+
+  const denied = replaceUserModulePermissionOverrides(db, {
+    actor: { id: 'initial' }, userId: 'auditor', expectedVersion: 0,
+    overrides: [{ moduleKey: 'data.allUsers', effect: 'deny' }], recordAudit: () => true,
+  })
+  assert.equal(denied.effectiveModules['data.allUsers'], false)
+  assert.equal(canViewAllUserData(denied), false)
 })
 
 test('allow, deny, delete and same-role isolation use optimistic versions', () => {
@@ -108,7 +162,7 @@ test('role changes recompute defaults while retaining personal overrides', () =>
   assert.equal(byKey(projection, 'cron').effectiveAllowed, true)
 })
 
-test('rejects unknown keys, invalid effects, duplicates, locked items and dependency conflicts', () => {
+test('rejects unknown keys, fixed account governance keys, invalid effects, duplicates and locked items', () => {
   const db = createDb()
   const standard = row(db, 'standard-a')
   const cases = [
@@ -116,21 +170,28 @@ test('rejects unknown keys, invalid effects, duplicates, locked items and depend
     [[{ moduleKey: 'cron', effect: 'inherit' }], 'INVALID_MODULE_PERMISSION_EFFECT'],
     [[{ moduleKey: 'cron', effect: 'allow' }, { moduleKey: 'cron', effect: 'deny' }], 'DUPLICATE_MODULE_PERMISSION_KEY'],
     [[{ moduleKey: 'platformBranding', effect: 'allow' }], 'MODULE_PERMISSION_LOCKED'],
+    [[{ moduleKey: 'users', effect: 'allow' }], 'UNKNOWN_MODULE_PERMISSION_KEY'],
+    [[{ moduleKey: 'userAdministration', effect: 'allow' }], 'UNKNOWN_MODULE_PERMISSION_KEY'],
   ]
   for (const [input, code] of cases) {
     assert.throws(() => validateModulePermissionOverrides(standard, input), (error) => error instanceof ModulePermissionError && error.code === code)
   }
-  assert.throws(() => replaceUserModulePermissionOverrides(db, {
-    actor: { id: 'initial' }, userId: 'standard-a', expectedVersion: 0,
-    overrides: [{ moduleKey: 'alerts.records', effect: 'deny' }], recordAudit: () => true,
-  }), (error) => error.code === 'MODULE_PERMISSION_DEPENDENCY_CONFLICT')
 })
 
-test('initial administrator core permissions are locked and version conflicts are stable', () => {
+test('all initial-administrator permissions are locked and version conflicts are stable', () => {
   const db = createDb()
-  assert.throws(() => validateModulePermissionOverrides(row(db, 'initial'), [
-    { moduleKey: 'users', effect: 'deny' },
-  ]), (error) => error.code === 'MODULE_PERMISSION_LOCKED')
+  db.prepare(`INSERT INTO user_module_permission_overrides (
+    user_id, module_key, effect, updated_by, created_at, updated_at
+  ) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run('initial', 'dashboard', 'deny', 'initial', 1, 1)
+  const projection = resolveEffectiveModulePermissions(db, row(db, 'initial'))
+  assert.equal(byKey(projection, 'dashboard').override, null)
+  assert.equal(byKey(projection, 'dashboard').effectiveAllowed, true)
+  for (const entry of MODULE_PERMISSION_CATALOG) {
+    assert.throws(() => validateModulePermissionOverrides(row(db, 'initial'), [
+      { moduleKey: entry.moduleKey, effect: 'deny' },
+    ]), (error) => error.code === 'MODULE_PERMISSION_LOCKED')
+  }
   assert.throws(() => replaceUserModulePermissionOverrides(db, {
     actor: { id: 'initial' }, userId: 'basic', expectedVersion: 9,
     overrides: [], recordAudit: () => true,

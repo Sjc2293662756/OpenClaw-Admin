@@ -56,7 +56,7 @@ export function createDashboardUsageRouter({
         startDate,
         endDate,
         force: req.query.force === '1',
-        allowedKeys: db ? listOwnedWorkspaceSessionKeys(db, req.user) : null,
+        allowedKeys: db ? listOwnedWorkspaceSessionKeys(db, req.user, { scopeModuleKey: 'dashboard' }) : null,
       })
       res.setHeader('Cache-Control', 'private, no-store')
       return sendOk(res, result)

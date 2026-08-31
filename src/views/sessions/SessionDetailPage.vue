@@ -16,6 +16,9 @@ import {
 import { ArrowBackOutline, RefreshOutline, TrashOutline, DownloadOutline } from '@vicons/ionicons5'
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from '@/stores/session'
+import { useAuthStore } from '@/stores/auth'
+import { usePermissions } from '@/composables/usePermissions'
+import { canModifySession } from '@/permissions/access-control'
 import { formatDate, parseSessionKey, downloadJSON } from '@/utils/format'
 import {
   formatSessionChannelLabel,
@@ -26,6 +29,8 @@ import {
 const route = useRoute()
 const router = useRouter()
 const sessionStore = useSessionStore()
+const authStore = useAuthStore()
+const { canDeleteSessions } = usePermissions()
 const message = useMessage()
 const { t, locale } = useI18n()
 const text = (zhCN: string, enUS: string) => locale.value === 'zh-CN' ? zhCN : enUS
@@ -57,12 +62,21 @@ const sourceChannelUser = computed(() =>
 const displaySessionTitle = computed(() => {
   return formatSessionConversationTitle(presentationSession.value)
 })
+const canDeleteCurrentSession = computed(() => (
+  sessionStore.currentSession?.key === sessionKey.value
+  && canDeleteSessions.value
+  && canModifySession(authStore.currentUser, sessionStore.currentSession)
+))
+const canResetCurrentSession = computed(() => (
+  canDeleteCurrentSession.value && authStore.currentUser?.role !== 'basic'
+))
 
 onMounted(() => {
   sessionStore.fetchSession(sessionKey.value)
 })
 
 async function handleReset() {
+  if (!canResetCurrentSession.value) return
   try {
     await sessionStore.resetSession(sessionKey.value)
     message.success(t('pages.sessions.detail.resetSuccess'))
@@ -73,6 +87,7 @@ async function handleReset() {
 }
 
 async function handleDelete() {
+  if (!canDeleteCurrentSession.value) return
   try {
     await sessionStore.deleteSession(sessionKey.value)
     message.success(t('pages.sessions.detail.deleteSuccess'))
@@ -146,7 +161,7 @@ function roleLabel(role: string): string {
               <template #icon><NIcon :component="DownloadOutline" /></template>
               {{ t('common.export') }}
             </NButton>
-            <NPopconfirm @positive-click="handleReset">
+            <NPopconfirm v-if="canResetCurrentSession" @positive-click="handleReset">
               <template #trigger>
                 <NButton size="small" class="app-toolbar-btn app-toolbar-btn--refresh">
                   <template #icon><NIcon :component="RefreshOutline" /></template>
@@ -155,7 +170,7 @@ function roleLabel(role: string): string {
               </template>
               {{ t('pages.sessions.detail.confirmReset') }}
             </NPopconfirm>
-            <NPopconfirm @positive-click="handleDelete">
+            <NPopconfirm v-if="canDeleteCurrentSession" @positive-click="handleDelete">
               <template #trigger>
                 <NButton size="small" type="error" class="app-toolbar-btn">
                   <template #icon><NIcon :component="TrashOutline" /></template>

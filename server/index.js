@@ -65,6 +65,7 @@ import {
   canAccessWorkspaceSession,
   enrichSessionPayload,
   ensureWorkspaceSessionAccess,
+  ensureWorkspaceSessionReadAccess,
   extractSessionKeyFromEvent,
   filterHiddenLegacySessions,
   filterSessionListPayload,
@@ -557,7 +558,6 @@ const moduleAccessMiddleware = (moduleKey, message) => createModuleAccessMiddlew
 const dashboardModuleMiddleware = moduleAccessMiddleware('dashboard')
 const alertRecordsModuleMiddleware = moduleAccessMiddleware('alerts.records')
 const alertNotificationsModuleMiddleware = moduleAccessMiddleware('alerts.notifications')
-const alertExportModuleMiddleware = moduleAccessMiddleware('alerts.export')
 const sessionsModuleMiddleware = moduleAccessMiddleware('sessions')
 const reportsModuleMiddleware = moduleAccessMiddleware('reports')
 const channelsModuleMiddleware = moduleAccessMiddleware('channels')
@@ -681,7 +681,7 @@ app.use('/api/alerts', createAlertsRouter({
   authMiddleware,
   recordsMiddleware: alertRecordsModuleMiddleware,
   notificationsMiddleware: alertNotificationsModuleMiddleware,
-  exportMiddleware: alertExportModuleMiddleware,
+  exportMiddleware: alertRecordsModuleMiddleware,
   recordAudit,
 }))
 app.use('/api/wizard', officeModuleMiddleware)
@@ -838,7 +838,7 @@ app.use('/api/media', createMediaRouter({
     }
     return [...new Set(candidates.filter(Boolean))]
   },
-  authorizeSession: (user, sessionKey) => ensureWorkspaceSessionAccess(db, user, sessionKey),
+  authorizeSession: (user, sessionKey) => ensureWorkspaceSessionReadAccess(db, user, sessionKey),
 }))
 
 // 报告文件管理已替代旧的通用工作区文件浏览器。保留旧实现代码便于回归，
@@ -1713,7 +1713,9 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
     if (isLegacySessionHidden(db, sessionKey)) {
       return sendError(res, { status: 404, code: 'SESSION_NOT_FOUND', message: '会话不存在或无权访问' })
     }
-    const access = ensureWorkspaceSessionAccess(db, req.user, sessionKey)
+    const access = SESSION_SCOPED_READ_METHODS.has(method)
+      ? ensureWorkspaceSessionReadAccess(db, req.user, sessionKey)
+      : ensureWorkspaceSessionAccess(db, req.user, sessionKey)
     if (!access.ok) {
       return sendError(res, { status: 404, code: access.code, message: access.message })
     }

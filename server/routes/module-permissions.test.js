@@ -140,13 +140,18 @@ test('catalog and target projections expose the fixed server directory without r
   try {
     const catalog = await context.request('/api/module-permissions/catalog', 'target')
     assert.equal(catalog.response.status, 200)
-    assert.equal(catalog.body.modules.length, 21)
-    assert.equal(catalog.body.modules.some((row) => row.moduleKey === 'alerts.export'), true)
+    assert.equal(catalog.body.modules.length, 19)
+    assert.equal(catalog.body.modules.find((row) => row.moduleKey === 'data.allUsers')?.group, '数据范围')
+    assert.equal(catalog.body.modules.some((row) => row.moduleKey === 'users' || row.moduleKey === 'userAdministration'), false)
+    assert.equal(catalog.body.modules.some((row) => row.moduleKey === 'alerts.export'), false)
+    assert.equal(catalog.body.modules.find((row) => row.moduleKey === 'alerts.records').rest.includes('POST /api/alerts/export'), true)
     assert.equal((await context.request('/api/users/target/module-permissions', 'admin')).response.status, 403)
     const projection = await context.request('/api/users/target/module-permissions', 'initial')
     assert.equal(projection.response.status, 200)
     assert.equal(projection.body.permissionVersion, 0)
     assert.equal(projection.body.effectiveModules['alerts.records'], true)
+    assert.equal(projection.body.effectiveModules.users, false)
+    assert.equal(projection.body.effectiveModules.userAdministration, false)
   } finally {
     await context.close()
   }
@@ -162,7 +167,6 @@ test('initial administrator atomically replaces overrides, audits the diff and n
         overrides: [
           { moduleKey: 'dashboard', effect: 'allow' },
           { moduleKey: 'alerts.records', effect: 'deny' },
-          { moduleKey: 'alerts.export', effect: 'deny' },
         ],
       }),
     })
@@ -172,12 +176,12 @@ test('initial administrator atomically replaces overrides, audits the diff and n
     assert.equal(updated.body.effectiveModules['alerts.records'], false)
     assert.deepEqual(context.notifications, [{ userId: 'target', version: 1 }])
     const rows = context.db.prepare('SELECT module_key, effect, updated_by FROM user_module_permission_overrides ORDER BY module_key').all()
-    assert.equal(rows.length, 3)
+    assert.equal(rows.length, 2)
     assert.equal(rows.every((row) => row.updated_by === 'initial'), true)
     const audits = context.db.prepare('SELECT * FROM audit_logs ORDER BY created_at, id').all()
     assert.equal(audits.every((audit) => audit.actor_user_id === 'initial'), true)
     assert.match(audits[0].detail, /"beforeVersion":0/)
-    assert.match(audits[0].detail, /"deniedCount":2/)
+    assert.match(audits[0].detail, /"deniedCount":1/)
     assert.equal(audits.some((audit) => /dashboard:i>a:0>1/.test(audit.detail)), true)
 
     const conflict = await context.request('/api/users/target/module-permissions', 'initial', {

@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
   
   const backendPort = env.PORT || '3000'
   const frontendPort = env.DEV_PORT || '3001'
+  const stripProxyOrigin = env.DEV_PROXY_STRIP_ORIGIN === 'true'
   
   return {
     plugins: [
@@ -42,6 +43,9 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           // SSE 流式响应需要禁用缓冲
           configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq) => {
+              if (stripProxyOrigin) proxyReq.removeHeader('origin')
+            })
             proxy.on('proxyRes', (proxyRes) => {
               // 对于 SSE 响应，禁用代理缓冲
               if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
