@@ -34,7 +34,8 @@ test('production reconciliation runtime has no database or filesystem mutation c
   assert.match(core, /query_only = ON/)
   assert.match(core, /SELECT total_changes\(\) AS value/)
   assert.match(core, /'sessions', 'cleanup', '--agent', 'main', '--dry-run', '--fix-missing'/)
-  assert.match(core, /'--timeout',\s*'20000'/)
+  assert.match(core, /'--timeout',\s*'60000'/)
+  assert.match(core, /timeout:\s*75_000/)
   assert.match(core, /JSON\.stringify\(\{ limit: MAX_OPENCLAW_ROWS \}\)/)
   assert.match(core, /XDG_RUNTIME_DIR: xdgRuntimeDirectory/)
   assert.doesNotMatch(core, /DBUS_SESSION_BUS_ADDRESS/)
@@ -78,9 +79,9 @@ test('runtime preflight uses a dynamic XDG directory and emits only structural s
   assert.match(remote, /XDG_RUNTIME_DIR="\$runtime_dir"/)
   assert.doesNotMatch(remote, /\/run\/user\/1000/)
   assert.doesNotMatch(remote, /DBUS_SESSION_BUS_ADDRESS=/)
-  assert.match(remote, /gateway call sessions\.list --json --params '\{"limit":100000\}' --timeout 20000/)
-  assert.match(remote, /timeout --signal=TERM 35 runuser -u netinside -- env/)
-  assert.doesNotMatch(remote, /timeout --signal=TERM 35 run_openclaw/)
+  assert.match(remote, /gateway call sessions\.list --json --params '\{"limit":100000\}' --timeout 60000/)
+  assert.match(remote, /timeout --signal=TERM 75 runuser -u netinside -- env/)
+  assert.doesNotMatch(remote, /timeout --signal=TERM 75 run_openclaw/)
   assert.match(remote, /rpc_reason=RPC_COMMAND_UNAVAILABLE/)
   assert.doesNotMatch(runtimePreflight, /process\.argv/)
   assert.doesNotMatch(runtimePreflight, /101\.254\.114\.238|--enforce|sessions\.(?:delete|patch|reset)/)
@@ -115,6 +116,12 @@ test('runtime preflight parser keeps raw session values out of its result', () =
   assert.equal(parsed.completed, true)
   assert.equal(parsed.rpc.summary.sessionCount, 2)
   assert.equal(JSON.stringify(parsed).includes('agent:main:'), false)
+})
+
+test('controlled runner gives two serial snapshots enough fixed outer timeout', () => {
+  assert.match(runner, /timeout --signal=TERM 360/)
+  assert.match(runner, /systemd-run --quiet --wait --collect --pipe/)
+  assert.doesNotMatch(runner, /timeout --signal=TERM 180/)
 })
 
 test('controlled runner rejects an ok-shaped result without complete zero-write evidence', () => {

@@ -16,6 +16,7 @@ import {
   parseMissingTranscriptDryRun,
   parseOpenClawIndex,
   parseOpenClawRuntime,
+  readOpenClawSnapshot,
   runFixedOpenClawCommand,
   runSessionReconciliation,
 } from './session-reconciliation.js'
@@ -267,6 +268,58 @@ test('maps the OpenClaw truncated cleanup token without reading transcripts', ()
   assert.deepEqual([...parsed.missing], [key])
 })
 
+test('runs the three OpenClaw probes strictly serially in index, missing, runtime order', async () => {
+  const rows = baseOpenClawRows()
+  const events = []
+  let active = 0
+  let maxActive = 0
+  const runner = async (kind) => {
+    active += 1
+    maxActive = Math.max(maxActive, active)
+    events.push(`start:${kind}`)
+    await new Promise((resolve) => queueMicrotask(resolve))
+    events.push(`end:${kind}`)
+    active -= 1
+    if (kind === 'index') return indexOutput(rows.index)
+    if (kind === 'missing') return missingOutput(rows.missing)
+    return runtimeOutput(rows.runtime)
+  }
+
+  const snapshot = await readOpenClawSnapshot(runner)
+
+  assert.equal(snapshot.index.totalCount, rows.index.length)
+  assert.equal(maxActive, 1)
+  assert.deepEqual(events, [
+    'start:index', 'end:index',
+    'start:missing', 'end:missing',
+    'start:runtime', 'end:runtime',
+  ])
+})
+
+test('completes and compares both full serial OpenClaw snapshots before returning ok', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  const calls = []
+  const runner = async (kind) => {
+    calls.push(kind)
+    if (kind === 'index') return indexOutput(rows.index)
+    if (kind === 'missing') return missingOutput(rows.missing)
+    return runtimeOutput(rows.runtime)
+  }
+
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: runner,
+  })
+
+  assert.equal(result.status, 'ok')
+  assert.equal(result.safety.openclawSnapshotStable, true)
+  assert.deepEqual(calls, [
+    'index', 'missing', 'runtime',
+    'index', 'missing', 'runtime',
+  ])
+}))
+
 test('returns unknown when OpenClaw metadata drifts between the two snapshots', () => withFixture(async ({ databasePath }) => {
   const rows = baseOpenClawRows()
   let indexCalls = 0
@@ -411,8 +464,9 @@ test('uses only the fixed OpenClaw executable and fixed read-only command defini
     return { stdout: runtimeOutput([]) }
   }, { XDG_RUNTIME_DIR: '/run/user/4242' })
   assert.deepEqual(calls[1].args, [
-    'gateway', 'call', 'sessions.list', '--json', '--params', '{"limit":100000}', '--timeout', '20000',
+    'gateway', 'call', 'sessions.list', '--json', '--params', '{"limit":100000}', '--timeout', '60000',
   ])
+  assert.equal(calls[0].options.timeout, 75_000)
   await assert.rejects(
     () => runFixedOpenClawCommand('arbitrary', async () => ({ stdout: '' }), { XDG_RUNTIME_DIR: '/run/user/4242' }),
     (error) => error?.code === 'OPENCLAW_COMMAND_NOT_ALLOWED',

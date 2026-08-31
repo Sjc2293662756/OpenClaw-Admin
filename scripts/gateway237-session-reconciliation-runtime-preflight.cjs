@@ -54,7 +54,7 @@ if printf '%s' "$call_help" | grep -q -- '--params'; then supports_params=true; 
 if printf '%s' "$call_help" | grep -q -- '--timeout'; then supports_timeout=true; else supports_timeout=false; fi
 
 set +e
-rpc_output=$(timeout --signal=TERM 35 runuser -u netinside -- env \
+rpc_output=$(timeout --signal=TERM 75 runuser -u netinside -- env \
   HOME="$openclaw_home" \
   USER=netinside \
   LOGNAME=netinside \
@@ -62,7 +62,7 @@ rpc_output=$(timeout --signal=TERM 35 runuser -u netinside -- env \
   LC_ALL=C.UTF-8 \
   PATH=/home/netinside/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
   XDG_RUNTIME_DIR="$runtime_dir" \
-  "$openclaw_path" gateway call sessions.list --json --params '{"limit":100000}' --timeout 20000 2>&1)
+  "$openclaw_path" gateway call sessions.list --json --params '{"limit":100000}' --timeout 60000 2>&1)
 rpc_exit=$?
 set -e
 

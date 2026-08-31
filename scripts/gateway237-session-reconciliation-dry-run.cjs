@@ -95,7 +95,7 @@ database_before=$(database_state)
 index_before=$(index_state)
 
 set +e
-unit_output=$(printf '%s' "$bundle_b64" | base64 -d | timeout --signal=TERM 180 \
+unit_output=$(printf '%s' "$bundle_b64" | base64 -d | timeout --signal=TERM 360 \
   systemd-run --quiet --wait --collect --pipe --service-type=exec \
   --unit="$unit_name" \
   --property=User=netinside \

@@ -21,7 +21,7 @@ const OPENCLAW_COMMANDS = Object.freeze({
     '--params',
     JSON.stringify({ limit: MAX_OPENCLAW_ROWS }),
     '--timeout',
-    '20000',
+    '60000',
   ]),
   missing: Object.freeze(['sessions', 'cleanup', '--agent', 'main', '--dry-run', '--fix-missing']),
 })
@@ -339,7 +339,7 @@ export async function runFixedOpenClawCommand(
   try {
     const result = await executor(OPENCLAW_EXECUTABLE, [...args], {
       cwd: '/opt/gaiop/admin',
-      timeout: 60_000,
+      timeout: 75_000,
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
       env: {
@@ -359,14 +359,14 @@ export async function runFixedOpenClawCommand(
 }
 
 export async function readOpenClawSnapshot(commandRunner = runFixedOpenClawCommand) {
-  const [indexRaw, runtimeRaw, missingRaw] = await Promise.all([
-    commandRunner('index'),
-    commandRunner('runtime'),
-    commandRunner('missing'),
-  ])
+  // The Gateway can serialize sessions.list with the index/cleanup probes;
+  // keep every OpenClaw CLI invocation strictly single-flight.
+  const indexRaw = await commandRunner('index')
   const index = parseOpenClawIndex(indexRaw)
-  const runtime = parseOpenClawRuntime(runtimeRaw)
+  const missingRaw = await commandRunner('missing')
   const missing = parseMissingTranscriptDryRun(missingRaw, index.sessions)
+  const runtimeRaw = await commandRunner('runtime')
+  const runtime = parseOpenClawRuntime(runtimeRaw)
   return {
     index,
     runtime,
