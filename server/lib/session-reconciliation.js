@@ -19,15 +19,7 @@ const OPENCLAW_COMMANDS = Object.freeze({
     'sessions.list',
     '--json',
     '--params',
-    JSON.stringify({
-      limit: MAX_OPENCLAW_ROWS,
-      activeMinutes: undefined,
-      includeGlobal: true,
-      includeUnknown: true,
-      includeDerivedTitles: false,
-      includeLastMessage: false,
-      agentId: 'main',
-    }),
+    JSON.stringify({ limit: MAX_OPENCLAW_ROWS }),
     '--timeout',
     '20000',
   ]),
@@ -72,6 +64,24 @@ const REQUIRED_COLUMNS = Object.freeze({
     'updated_at',
   ]),
   tasks: Object.freeze(['status', 'created_at', 'updated_at']),
+})
+
+const BFF_FINGERPRINT_FIELDS = Object.freeze({
+  sessions: Object.freeze([
+    'session_key', 'owner_user_id', 'status', 'created_at', 'updated_at', 'deleted_at',
+    'registered_owner_id', 'owner_status',
+  ]),
+  reports: Object.freeze(['id', 'source_session_id', 'source_user_id', 'status', 'created_at', 'updated_at']),
+  deliveries: Object.freeze(['report_id', 'status', 'created_at', 'updated_at']),
+  attachments: Object.freeze([
+    'session_key', 'retention_class', 'ownership_state', 'lifecycle_state',
+    'registered_at', 'expires_at', 'updated_at',
+  ]),
+  retention: Object.freeze([
+    'session_key', 'retention_mode', 'lifecycle_state', 'owner_kind', 'owner_ref',
+    'last_activity_at', 'updated_at',
+  ]),
+  taskStatuses: Object.freeze(['status', 'count', 'first_created_at', 'last_updated_at']),
 })
 
 export class ReconciliationError extends Error {
@@ -128,6 +138,24 @@ export function sessionDigest(sessionKey) {
 
 function stableFingerprint(namespace, values) {
   return sha256(`${namespace}\0${[...values].sort().join('\n')}`)
+}
+
+export function fingerprintBffMetadata(metadata) {
+  const values = []
+  for (const [collection, fields] of Object.entries(BFF_FINGERPRINT_FIELDS)) {
+    const rows = metadata?.[collection]
+    if (!Array.isArray(rows)) fail('BFF_METADATA_INVALID')
+    for (const row of rows) {
+      const normalized = fields.map((field) => {
+        const value = row?.[field]
+        if (value === null || value === undefined) return null
+        if (['string', 'number', 'boolean'].includes(typeof value)) return value
+        return String(value)
+      })
+      values.push(`${collection}\0${JSON.stringify(normalized)}`)
+    }
+  }
+  return stableFingerprint('bff-session-metadata-v1', values)
 }
 
 function safeCode(error) {
@@ -208,8 +236,8 @@ export function parseOpenClawIndex(raw) {
 
 export function parseOpenClawRuntime(raw) {
   const payload = unwrapSessionsPayload(
-    parseJsonOutput(raw, 'OPENCLAW_RUNTIME_INVALID'),
-    'OPENCLAW_RUNTIME_INVALID',
+    parseJsonOutput(raw, 'OPENCLAW_RUNTIME_JSON_INVALID'),
+    'OPENCLAW_RUNTIME_SCHEMA_INVALID',
   )
   assertCompleteList(payload, payload.sessions, 'OPENCLAW_RUNTIME_INCOMPLETE')
 
@@ -217,7 +245,7 @@ export function parseOpenClawRuntime(raw) {
   for (const row of payload.sessions) {
     const key = text(row?.key)
     if (!key || sessions.has(key) || typeof row?.hasActiveRun !== 'boolean') {
-      fail('OPENCLAW_RUNTIME_INVALID')
+      fail('OPENCLAW_RUNTIME_SCHEMA_INVALID')
     }
     sessions.set(key, {
       key,
@@ -278,9 +306,36 @@ async function defaultOpenClawExecutor(executable, args, options) {
   return execFileAsync(executable, args, options)
 }
 
-export async function runFixedOpenClawCommand(kind, executor = defaultOpenClawExecutor) {
+function runtimeDirectory(environment) {
+  const value = text(environment?.XDG_RUNTIME_DIR)
+  if (!/^\/run\/user\/\d+$/.test(value)) fail('OPENCLAW_RUNTIME_DIRECTORY_MISSING')
+  return value
+}
+
+function classifyOpenClawCommandFailure(kind, error) {
+  if (error instanceof ReconciliationError) return error.code
+  if (kind !== 'runtime') return `OPENCLAW_${kind.toUpperCase()}_FAILED`
+  const stderr = String(error?.stderr || '')
+  const message = String(error?.message || '')
+  const diagnostic = `${stderr}\n${message}`
+  if (error?.code === 'ETIMEDOUT' || error?.killed === true || error?.signal === 'SIGTERM'
+    || /timed?\s*out|timeout/i.test(diagnostic)) return 'OPENCLAW_RUNTIME_TIMEOUT'
+  if (/connection\s+refused|ECONNREFUSED|gateway\s+(?:is\s+)?not\s+running|gateway\s+unavailable/i.test(diagnostic)) {
+    return 'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE'
+  }
+  if (error?.code === 'ENOENT') return 'OPENCLAW_RUNTIME_EXECUTABLE_UNAVAILABLE'
+  if (Number.isInteger(error?.code)) return 'OPENCLAW_RUNTIME_NONZERO_EXIT'
+  return 'OPENCLAW_RUNTIME_EXECUTION_FAILED'
+}
+
+export async function runFixedOpenClawCommand(
+  kind,
+  executor = defaultOpenClawExecutor,
+  environment = process.env,
+) {
   const args = OPENCLAW_COMMANDS[kind]
   if (!args) fail('OPENCLAW_COMMAND_NOT_ALLOWED')
+  const xdgRuntimeDirectory = runtimeDirectory(environment)
   try {
     const result = await executor(OPENCLAW_EXECUTABLE, [...args], {
       cwd: '/opt/gaiop/admin',
@@ -294,11 +349,12 @@ export async function runFixedOpenClawCommand(kind, executor = defaultOpenClawEx
         LANG: 'C.UTF-8',
         LC_ALL: 'C.UTF-8',
         PATH: '/home/netinside/.npm-global/bin:/usr/local/bin:/usr/bin:/bin',
+        XDG_RUNTIME_DIR: xdgRuntimeDirectory,
       },
     })
     return String(result?.stdout || '')
-  } catch {
-    fail(`OPENCLAW_${kind.toUpperCase()}_FAILED`)
+  } catch (error) {
+    fail(classifyOpenClawCommandFailure(kind, error))
   }
 }
 
@@ -766,6 +822,8 @@ function unknownResult(reasonCode, safety = {}) {
       sqliteQueryOnly: safety.sqliteQueryOnly === true,
       sqliteTotalChanges: nonNegativeInteger(safety.sqliteTotalChanges),
       sqliteDataVersionStable: safety.sqliteDataVersionStable === true,
+      sqliteExternalActivityObserved: safety.sqliteExternalActivityObserved === true,
+      bffMetadataStable: safety.bffMetadataStable === true,
       openclawSnapshotStable: safety.openclawSnapshotStable === true,
       fixedOpenClawInterfaces: true,
     },
@@ -784,6 +842,8 @@ export async function runSessionReconciliation({
     sqliteQueryOnly: false,
     sqliteTotalChanges: null,
     sqliteDataVersionStable: false,
+    sqliteExternalActivityObserved: false,
+    bffMetadataStable: false,
     openclawSnapshotStable: false,
   }
   try {
@@ -792,27 +852,36 @@ export async function runSessionReconciliation({
     safety.sqliteQueryOnly = Number(db.pragma('query_only', { simple: true })) === 1
     const versionBefore = readSqliteDataVersion(db)
     const changesBefore = readSqliteTotalChanges(db)
-    const bff = readBffMetadata(db)
+    const bffBefore = readBffMetadata(db)
+    const bffFingerprintBefore = fingerprintBffMetadata(bffBefore)
     const openclawBefore = await readOpenClawSnapshot(commandRunner)
     const openclawAfter = await readOpenClawSnapshot(commandRunner)
+    const bffAfter = readBffMetadata(db)
+    const bffFingerprintAfter = fingerprintBffMetadata(bffAfter)
     const versionAfter = readSqliteDataVersion(db)
     const changesAfter = readSqliteTotalChanges(db)
     safety.sqliteTotalChanges = changesAfter
     safety.sqliteDataVersionStable = versionBefore === versionAfter
+    safety.sqliteExternalActivityObserved = versionBefore !== versionAfter
+    safety.bffMetadataStable = bffFingerprintBefore === bffFingerprintAfter
     safety.openclawSnapshotStable = openclawBefore.fingerprint === openclawAfter.fingerprint
 
     if (changesBefore !== 0 || changesAfter !== 0) return unknownResult('SQLITE_WRITE_DETECTED', safety)
-    if (!safety.sqliteDataVersionStable || !safety.openclawSnapshotStable) {
+    if (!safety.bffMetadataStable || !safety.openclawSnapshotStable) {
       return unknownResult('DATA_DRIFT', safety)
     }
 
-    const result = reconcileSessionMetadata(bff, openclawAfter)
+    const result = reconcileSessionMetadata(bffAfter, openclawAfter)
     result.safety = {
       sqliteReadonly: true,
       sqliteQueryOnly: true,
       sqliteTotalChanges: changesAfter,
-      sqliteDataVersionStable: true,
+      sqliteDataVersionStable: safety.sqliteDataVersionStable,
+      sqliteExternalActivityObserved: safety.sqliteExternalActivityObserved,
+      bffMetadataStable: true,
       openclawSnapshotStable: true,
+      bffMetadataFingerprint: bffFingerprintAfter,
+      openclawSnapshotFingerprint: openclawAfter.fingerprint,
       fixedOpenClawInterfaces: true,
       mutationActionsAvailable: false,
     }

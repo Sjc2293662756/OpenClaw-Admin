@@ -15,6 +15,7 @@ import {
   ReconciliationError,
   parseMissingTranscriptDryRun,
   parseOpenClawIndex,
+  parseOpenClawRuntime,
   runFixedOpenClawCommand,
   runSessionReconciliation,
 } from './session-reconciliation.js'
@@ -80,6 +81,10 @@ function createFixtureDatabase(databasePath) {
       created_at INTEGER,
       updated_at INTEGER
     );
+    CREATE TABLE unrelated_runtime_events (
+      id INTEGER PRIMARY KEY,
+      value TEXT
+    );
   `)
 
   db.prepare('INSERT INTO users (id, status) VALUES (?, ?)').run('user-active', 'active')
@@ -121,6 +126,7 @@ function createFixtureDatabase(databasePath) {
   `).run('session-referenced', 'standard', 'active', 'workspace_user', 'user-active', now, now)
   db.prepare('INSERT INTO tasks (status, created_at, updated_at) VALUES (?, ?, ?)').run('pending', now, now)
   db.prepare('INSERT INTO tasks (status, created_at, updated_at) VALUES (?, ?, ?)').run('completed', now, now)
+  db.prepare('INSERT INTO unrelated_runtime_events (id, value) VALUES (?, ?)').run(1, 'before')
   db.close()
 }
 
@@ -241,6 +247,7 @@ test('reconciles normal, one-sided, missing, referenced, unknown ownership and a
   assert.equal(result.references.activeTasks.adminSessionRelationStatus, 'unknown')
   assert.equal(result.changeAssessment.priorMissingTranscriptCause, 'unknown')
   assert.equal(result.safety.sqliteTotalChanges, 0)
+  assert.equal(result.safety.bffMetadataStable, true)
   assert.equal(result.safety.mutationActionsAvailable, false)
 
   const serialized = JSON.stringify(result)
@@ -285,7 +292,7 @@ test('returns unknown when OpenClaw metadata drifts between the two snapshots', 
   assert.equal('totals' in result, false)
 }))
 
-test('returns unknown when SQLite data_version changes through an external writer', () => withFixture(async ({ databasePath }) => {
+test('returns unknown when relevant BFF metadata changes through an external writer', () => withFixture(async ({ databasePath }) => {
   const rows = baseOpenClawRows()
   let mutated = false
   const runner = async (kind) => {
@@ -308,6 +315,34 @@ test('returns unknown when SQLite data_version changes through an external write
   assert.equal(result.status, 'unknown')
   assert.deepEqual(result.reasonCodes, ['DATA_DRIFT'])
   assert.equal(result.safety.sqliteDataVersionStable, false)
+  assert.equal(result.safety.sqliteExternalActivityObserved, true)
+  assert.equal(result.safety.bffMetadataStable, false)
+  assert.equal(result.safety.sqliteTotalChanges, 0)
+}))
+
+test('keeps an ok result and zero connection writes when unrelated SQLite data changes externally', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  let mutated = false
+  const runner = async (kind) => {
+    if (!mutated) {
+      mutated = true
+      const writer = new Database(databasePath)
+      writer.prepare('UPDATE unrelated_runtime_events SET value = ? WHERE id = 1').run('after')
+      writer.close()
+    }
+    if (kind === 'index') return indexOutput(rows.index)
+    if (kind === 'runtime') return runtimeOutput(rows.runtime)
+    return missingOutput(rows.missing)
+  }
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: runner,
+  })
+  assert.equal(result.status, 'ok')
+  assert.equal(result.safety.sqliteDataVersionStable, false)
+  assert.equal(result.safety.sqliteExternalActivityObserved, true)
+  assert.equal(result.safety.bffMetadataStable, true)
   assert.equal(result.safety.sqliteTotalChanges, 0)
 }))
 
@@ -325,6 +360,23 @@ test('returns unknown instead of historical data when an OpenClaw interface fail
   assert.equal(result.status, 'unknown')
   assert.deepEqual(result.reasonCodes, ['OPENCLAW_RUNTIME_FAILED'])
   assert.equal('categories' in result, false)
+}))
+
+test('returns a sanitized unknown code for invalid OpenClaw runtime JSON', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: async (kind) => {
+      if (kind === 'runtime') return 'credential=secret session=agent:main:sensitive'
+      if (kind === 'index') return indexOutput(rows.index)
+      return missingOutput(rows.missing)
+    },
+  })
+  assert.equal(result.status, 'unknown')
+  assert.deepEqual(result.reasonCodes, ['OPENCLAW_RUNTIME_JSON_INVALID'])
+  assert.equal(JSON.stringify(result).includes('credential=secret'), false)
+  assert.equal(JSON.stringify(result).includes('agent:main:sensitive'), false)
 }))
 
 test('keeps the SQLite database byte-for-byte unchanged with zero connection writes', () => withFixture(async ({ databasePath }) => {
@@ -348,12 +400,49 @@ test('uses only the fixed OpenClaw executable and fixed read-only command defini
   await runFixedOpenClawCommand('index', async (executable, args, options) => {
     calls.push({ executable, args, options })
     return { stdout: indexOutput([]) }
-  })
+  }, { XDG_RUNTIME_DIR: '/run/user/4242' })
   assert.equal(calls[0].executable, OPENCLAW_EXECUTABLE)
   assert.deepEqual(calls[0].args, ['sessions', '--agent', 'main', '--json', '--limit', 'all'])
   assert.equal(calls[0].options.cwd, '/opt/gaiop/admin')
+  assert.equal(calls[0].options.env.XDG_RUNTIME_DIR, '/run/user/4242')
+  assert.equal('DBUS_SESSION_BUS_ADDRESS' in calls[0].options.env, false)
+  await runFixedOpenClawCommand('runtime', async (executable, args) => {
+    calls.push({ executable, args })
+    return { stdout: runtimeOutput([]) }
+  }, { XDG_RUNTIME_DIR: '/run/user/4242' })
+  assert.deepEqual(calls[1].args, [
+    'gateway', 'call', 'sessions.list', '--json', '--params', '{"limit":100000}', '--timeout', '20000',
+  ])
   await assert.rejects(
-    () => runFixedOpenClawCommand('arbitrary', async () => ({ stdout: '' })),
+    () => runFixedOpenClawCommand('arbitrary', async () => ({ stdout: '' }), { XDG_RUNTIME_DIR: '/run/user/4242' }),
     (error) => error?.code === 'OPENCLAW_COMMAND_NOT_ALLOWED',
+  )
+})
+
+test('classifies runtime environment and command failures without exposing raw diagnostics', async () => {
+  let executed = false
+  await assert.rejects(
+    () => runFixedOpenClawCommand('runtime', async () => { executed = true }, {}),
+    (error) => error?.code === 'OPENCLAW_RUNTIME_DIRECTORY_MISSING',
+  )
+  assert.equal(executed, false)
+
+  const cases = [
+    [{ code: 'ETIMEDOUT', stderr: 'token=secret' }, 'OPENCLAW_RUNTIME_TIMEOUT'],
+    [{ code: 7, stderr: 'connection refused token=secret' }, 'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE'],
+    [{ code: 9, stderr: 'credential=secret' }, 'OPENCLAW_RUNTIME_NONZERO_EXIT'],
+  ]
+  for (const [failure, expected] of cases) {
+    await assert.rejects(
+      () => runFixedOpenClawCommand('runtime', async () => { throw Object.assign(new Error('raw failure'), failure) }, {
+        XDG_RUNTIME_DIR: '/run/user/4242',
+      }),
+      (error) => error?.code === expected && !error.message.includes('secret'),
+    )
+  }
+
+  assert.throws(
+    () => parseOpenClawRuntime('not-json token=secret'),
+    (error) => error?.code === 'OPENCLAW_RUNTIME_JSON_INVALID' && !error.message.includes('secret'),
   )
 })

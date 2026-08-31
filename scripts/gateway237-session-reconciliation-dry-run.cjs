@@ -59,6 +59,11 @@ session_index='/home/netinside/.openclaw/agents/main/sessions/sessions.json'
 unit_name='gaiop-session-reconciliation-dry-run'
 expected_bundle_sha='${bundle.sha256}'
 bundle_b64='${encoded}'
+netinside_uid=$(id -u netinside)
+case "$netinside_uid" in
+  ''|*[!0-9]*) exit 41 ;;
+esac
+runtime_dir="/run/user/$netinside_uid"
 
 test -x "$node_path"
 test -x "$openclaw_path"
@@ -66,7 +71,7 @@ test -f "$admin_root/package.json"
 test -d "$admin_root/node_modules/better-sqlite3"
 test -r "$database_file"
 test -r "$session_index"
-id netinside >/dev/null 2>&1
+test -d "$runtime_dir"
 getent group gaiop >/dev/null 2>&1
 
 actual_bundle_sha=$(printf '%s' "$bundle_b64" | base64 -d | sha256sum | cut -d' ' -f1)
@@ -103,12 +108,13 @@ unit_output=$(printf '%s' "$bundle_b64" | base64 -d | timeout --signal=TERM 180 
   --property=Environment=LANG=C.UTF-8 \
   --property=Environment=LC_ALL=C.UTF-8 \
   --property=Environment=PATH=/home/netinside/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
+  --property="Environment=XDG_RUNTIME_DIR=$runtime_dir" \
   --property=NoNewPrivileges=yes \
   --property=PrivateTmp=yes \
   --property=PrivateDevices=yes \
   --property=ProtectSystem=strict \
   --property=ProtectHome=read-only \
-  --property='ReadOnlyPaths=/opt/gaiop/admin /var/lib/gaiop/admin /home/netinside/.openclaw' \
+  --property="ReadOnlyPaths=/opt/gaiop/admin /var/lib/gaiop/admin /home/netinside/.openclaw $runtime_dir" \
   --property=InaccessiblePaths=/etc/gaiop \
   --property='RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6' \
   --property=ProtectKernelTunables=yes \
@@ -143,6 +149,8 @@ printf 'OPENCLAW_INDEX_UNCHANGED=%s\n' "$index_unchanged"
 printf 'PROTECT_SYSTEM_STRICT=true\n'
 printf 'PROTECT_HOME_READ_ONLY=true\n'
 printf 'BUSINESS_PATHS_READ_ONLY=true\n'
+printf 'XDG_RUNTIME_DYNAMIC=true\n'
+printf 'DBUS_EXPLICITLY_SET=false\n'
 printf 'TRANSIENT_SERVICE_COLLECTED=true\n'
 printf 'TIMER_CREATED=false\n'
 printf 'BUNDLE_SHA256=%s\n' "$expected_bundle_sha"
@@ -220,38 +228,42 @@ function parseRemoteOutput(output) {
   const databaseUnchanged = markerBoolean(markers, 'DATABASE_UNCHANGED')
   const openclawIndexUnchanged = markerBoolean(markers, 'OPENCLAW_INDEX_UNCHANGED')
   const timerStateConfirmed = markers.get('TIMER_CREATED') === 'false'
+  const dbusStateConfirmed = markers.get('DBUS_EXPLICITLY_SET') === 'false'
   const runtimeGuards = {
     protectSystemStrict: markerBoolean(markers, 'PROTECT_SYSTEM_STRICT'),
     protectHomeReadOnly: markerBoolean(markers, 'PROTECT_HOME_READ_ONLY'),
     businessPathsReadOnly: markerBoolean(markers, 'BUSINESS_PATHS_READ_ONLY'),
+    xdgRuntimeDynamic: markerBoolean(markers, 'XDG_RUNTIME_DYNAMIC'),
+    dbusExplicitlySet: markerBoolean(markers, 'DBUS_EXPLICITLY_SET'),
     transientServiceCollected: markerBoolean(markers, 'TRANSIENT_SERVICE_COLLECTED'),
     timerCreated: markerBoolean(markers, 'TIMER_CREATED'),
   }
   let reconciliation = decodeReconciliation(markers.get('RESULT_B64'))
-  if (reconciliation?.status === 'ok' && (!databaseUnchanged || !openclawIndexUnchanged)) {
+  if (reconciliation?.status === 'ok' && !openclawIndexUnchanged) {
     reconciliation = {
       schema: 'gaiop.session-reconciliation.v1',
       status: 'unknown',
-      reasonCodes: ['REMOTE_STATE_CHANGED_DURING_RUN'],
+      reasonCodes: ['REMOTE_OPENCLAW_INDEX_CHANGED_DURING_RUN'],
     }
   }
   const runExit = markerInteger(markers, 'RUN_EXIT')
   const reconciliationSafetyConfirmed = reconciliation?.safety?.sqliteReadonly === true
     && reconciliation?.safety?.sqliteQueryOnly === true
     && reconciliation?.safety?.sqliteTotalChanges === 0
-    && reconciliation?.safety?.sqliteDataVersionStable === true
+    && reconciliation?.safety?.bffMetadataStable === true
     && reconciliation?.safety?.openclawSnapshotStable === true
     && reconciliation?.safety?.fixedOpenClawInterfaces === true
     && reconciliation?.safety?.mutationActionsAvailable === false
   const guardsConfirmed = runtimeGuards.protectSystemStrict
     && runtimeGuards.protectHomeReadOnly
     && runtimeGuards.businessPathsReadOnly
+    && runtimeGuards.xdgRuntimeDynamic
+    && dbusStateConfirmed
     && runtimeGuards.transientServiceCollected
     && timerStateConfirmed
   const executed = markerBoolean(markers, 'EXECUTED') && reconciliation !== null
   const completed = executed
     && runExit === 0
-    && databaseUnchanged
     && openclawIndexUnchanged
     && guardsConfirmed
     && reconciliation?.status === 'ok'
@@ -264,7 +276,8 @@ function parseRemoteOutput(output) {
     sourceBundleSha256: /^[0-9a-f]{64}$/.test(String(markers.get('BUNDLE_SHA256') || ''))
       ? markers.get('BUNDLE_SHA256')
       : null,
-    databaseUnchanged,
+    databaseFileGroupStable: databaseUnchanged,
+    databaseExternalActivityObserved: !databaseUnchanged,
     openclawIndexUnchanged,
     runtimeGuards,
     reconciliationSafetyConfirmed,
@@ -340,4 +353,6 @@ module.exports = {
   decodeReconciliation,
   parseRemoteOutput,
   safeErrorCode,
+  connect,
+  execute,
 }
