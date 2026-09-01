@@ -23,7 +23,7 @@ const OPENCLAW_COMMANDS = Object.freeze({
     '--timeout',
     '60000',
   ]),
-  missing: Object.freeze(['sessions', 'cleanup', '--agent', 'main', '--dry-run', '--fix-missing']),
+  missing: Object.freeze(['sessions', 'cleanup', '--agent', 'main', '--dry-run', '--json']),
 })
 
 const REQUIRED_COLUMNS = Object.freeze({
@@ -264,16 +264,74 @@ export function parseOpenClawRuntime(raw) {
   }
 }
 
-function cleanupTokenMatches(token, key) {
-  if (token === key) return true
-  if (!token.includes('...')) return false
-  const [prefix, suffix, ...rest] = token.split('...')
-  return rest.length === 0 && prefix.length === 16 && suffix.length === 6
-    && key.startsWith(prefix) && key.endsWith(suffix)
+function cleanupTokenMatches(token, identifier) {
+  if (token === identifier) return true
+  const match = token.match(/^(.{16})\.\.\.(.{6})$/)
+  return Boolean(match && identifier.startsWith(match[1]) && identifier.endsWith(match[2]))
+}
+
+function cleanupCandidates(token, indexSessions) {
+  const canonical = new Set()
+  for (const [key, row] of indexSessions) {
+    const sessionId = optionalText(row?.sessionId)
+    if (cleanupTokenMatches(token, key) || (sessionId && cleanupTokenMatches(token, sessionId))) {
+      canonical.add(key)
+    }
+  }
+  return canonical
+}
+
+function missingTranscriptSnapshot({
+  reportedCount,
+  identityResolved,
+  identityUnresolvedCount,
+  fingerprintValues,
+  identityMode,
+}) {
+  if (!Number.isSafeInteger(reportedCount) || reportedCount < 0
+    || !Number.isSafeInteger(identityUnresolvedCount) || identityUnresolvedCount < 0
+    || identityResolved.size + identityUnresolvedCount !== reportedCount) {
+    fail('OPENCLAW_MISSING_DRY_RUN_CONTRADICTORY')
+  }
+  return {
+    missing: identityResolved,
+    reportedCount,
+    identityResolvedCount: identityResolved.size,
+    identityUnresolvedCount,
+    identityMode,
+    fingerprint: stableFingerprint('openclaw-missing-v2', fingerprintValues),
+  }
+}
+
+function stableJson(value) {
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (!value || typeof value !== 'object') fail('OPENCLAW_MISSING_DRY_RUN_INVALID')
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+}
+
+function parseMissingTranscriptJson(raw) {
+  const payload = parseJsonOutput(raw, 'OPENCLAW_MISSING_DRY_RUN_INVALID')
+  const stores = Array.isArray(payload?.stores) ? payload.stores : null
+  const namedStores = stores?.filter((candidate) => text(candidate?.agentId) === 'main') || []
+  const store = stores
+    ? (namedStores.length === 1 ? namedStores[0] : (stores.length === 1 ? stores[0] : null))
+    : payload
+  if (!store) fail('OPENCLAW_MISSING_DRY_RUN_INVALID')
+  const reportedCount = nonNegativeInteger(store?.missing)
+  if (reportedCount === null) fail('OPENCLAW_MISSING_DRY_RUN_INVALID')
+  return missingTranscriptSnapshot({
+    reportedCount,
+    identityResolved: new Set(),
+    identityUnresolvedCount: reportedCount,
+    identityMode: 'aggregate_only',
+    fingerprintValues: [stableJson(payload)],
+  })
 }
 
 export function parseMissingTranscriptDryRun(raw, indexSessions) {
   const output = stripAnsi(raw)
+  if (output.startsWith('{')) return parseMissingTranscriptJson(output)
   const countMatch = output.match(/Would prune missing transcripts:\s*(\d+)/i)
   if (!countMatch) fail('OPENCLAW_MISSING_DRY_RUN_INVALID')
   const reportedCount = Number(countMatch[1])
@@ -286,20 +344,28 @@ export function parseMissingTranscriptDryRun(raw, indexSessions) {
     const match = line.trim().match(/^prune-missing\s+(\S+)/i)
     if (match) tokens.push(match[1])
   }
-  if (tokens.length !== reportedCount) fail('OPENCLAW_MISSING_DRY_RUN_INVALID')
+  if (tokens.length !== reportedCount) fail('OPENCLAW_MISSING_DRY_RUN_CONTRADICTORY')
 
   const missing = new Set()
+  let identityUnresolvedCount = 0
   for (const token of tokens) {
-    const matches = Array.from(indexSessions.keys()).filter((key) => cleanupTokenMatches(token, key))
-    if (matches.length !== 1 || missing.has(matches[0])) fail('OPENCLAW_MISSING_KEY_AMBIGUOUS')
-    missing.add(matches[0])
+    const matches = cleanupCandidates(token, indexSessions)
+    if (matches.size !== 1) {
+      identityUnresolvedCount += 1
+      continue
+    }
+    const [key] = matches
+    if (missing.has(key)) fail('OPENCLAW_MISSING_DRY_RUN_CONTRADICTORY')
+    missing.add(key)
   }
 
-  return {
-    missing,
-    count: missing.size,
-    fingerprint: stableFingerprint('openclaw-missing-v1', missing),
-  }
+  return missingTranscriptSnapshot({
+    reportedCount,
+    identityResolved: missing,
+    identityUnresolvedCount,
+    identityMode: 'token_mapped',
+    fingerprintValues: [String(reportedCount), ...tokens],
+  })
 }
 
 async function defaultOpenClawExecutor(executable, args, options) {
@@ -607,6 +673,7 @@ export function reconcileSessionMetadata(bff, openclaw) {
     ...deliveriesBySession.keys(),
   ])
 
+  const unresolvedMissingIdentities = openclaw.missing.identityUnresolvedCount > 0
   const records = []
   for (const key of allKeys) {
     const bffRow = bffSessions.get(key)
@@ -616,7 +683,9 @@ export function reconcileSessionMetadata(bff, openclaw) {
     const bffStatus = bffRow ? normalizeBffStatus(bffRow.status) : 'absent'
     const retentionStatus = retentionRow ? normalizeRetentionStatus(retentionRow.lifecycle_state) : 'absent'
     const transcriptState = indexRow
-      ? (openclaw.missing.missing.has(key) ? 'missing' : (indexRow.sessionId ? 'present' : 'unknown'))
+      ? (openclaw.missing.missing.has(key)
+        ? 'missing'
+        : (unresolvedMissingIdentities ? 'unknown' : (indexRow.sessionId ? 'present' : 'unknown')))
       : 'not_indexed'
     const reports = reportsBySession.get(key) || 0
     const attachments = attachmentsBySession.get(key) || 0
@@ -631,6 +700,7 @@ export function reconcileSessionMetadata(bff, openclaw) {
 
     if (transcriptState === 'missing') reasons.add('TRANSCRIPT_MISSING')
     else if (transcriptState === 'unknown') reasons.add('TRANSCRIPT_STATUS_UNKNOWN')
+    if (indexRow && unresolvedMissingIdentities) reasons.add('TRANSCRIPT_IDENTITY_UNRESOLVED')
     if (reports > 0) reasons.add('REPORT_REFERENCE')
     if (attachments > 0) reasons.add('ATTACHMENT_REFERENCE')
     if (deliveries > 0) reasons.add('DELIVERY_REFERENCE')
@@ -737,10 +807,20 @@ export function reconcileSessionMetadata(bff, openclaw) {
     const key = text(row?.source_session_id)
     return key && !openclaw.index.sessions.has(key) && !bffSessions.has(key)
   }).length
-  const missingTranscriptReportSources = transcriptMissing.reduce(
+  const resolvedMissingTranscriptReportSources = transcriptMissing.reduce(
     (total, record) => total + record.references.reports,
     0,
   )
+  const unresolvedMissingSummary = {
+    count: openclaw.missing.identityUnresolvedCount,
+    fingerprint: stableFingerprint('transcript-identity-unresolved-v1', [openclaw.missing.fingerprint]),
+    reasonCounts: openclaw.missing.identityUnresolvedCount > 0
+      ? { TRANSCRIPT_IDENTITY_UNRESOLVED: openclaw.missing.identityUnresolvedCount }
+      : {},
+    detailsIncluded: 0,
+    detailsTruncated: false,
+    items: [],
+  }
 
   return {
     schema: RECONCILIATION_SCHEMA,
@@ -753,13 +833,16 @@ export function reconcileSessionMetadata(bff, openclaw) {
       bffWorkspaceSessionsActive: [...bffSessions.values()].filter((row) => normalizeBffStatus(row.status) === 'active').length,
       bffWorkspaceSessionsDeleted: [...bffSessions.values()].filter((row) => normalizeBffStatus(row.status) === 'deleted').length,
       overlap: records.filter((record) => record.reasons.has('BOTH_PRESENT')).length,
-      indexedTranscriptMissing: transcriptMissing.length,
+      indexedTranscriptMissing: openclaw.missing.reportedCount,
+      identityResolvedMissingTranscripts: openclaw.missing.identityResolvedCount,
+      identityUnresolvedMissingTranscripts: openclaw.missing.identityUnresolvedCount,
     },
     categories: {
       both_present_normal: summarizeCategory('both-present-normal', bothPresentNormal, false),
       openclaw_present_bff_unregistered: summarizeCategory('openclaw-only', openclawOnly),
       bff_present_openclaw_absent: summarizeCategory('bff-only', bffOnly),
       indexed_transcript_missing: summarizeCategory('transcript-missing', transcriptMissing),
+      indexed_transcript_identity_unresolved: unresolvedMissingSummary,
       referenced: summarizeCategory('referenced', referenced),
       ownership_or_status_unknown: summarizeCategory('ownership-or-status-unknown', ownershipOrStatusUnknown),
       reference_or_retention_only: summarizeCategory('reference-or-retention-only', referenceOnly),
@@ -772,7 +855,9 @@ export function reconcileSessionMetadata(bff, openclaw) {
         uniqueSourceSessions: reportsBySession.size,
         sourceRowsOutsideCurrentOpenClawIndex: reportSourcesOutsideIndex,
         sourceRowsOutsideBothIndexes: reportSourcesOutsideBoth,
-        sourceRowsForCurrentMissingTranscripts: missingTranscriptReportSources,
+        sourceRowsForResolvedMissingTranscripts: resolvedMissingTranscriptReportSources,
+        sourceRowsForIdentityUnresolvedMissingTranscripts: unresolvedMissingIdentities ? 'unknown' : 0,
+        missingTranscriptReferenceStatus: unresolvedMissingIdentities ? 'unknown' : 'confirmed',
       },
       attachments: {
         totalRows: bff.attachments.length,
@@ -800,6 +885,13 @@ export function reconcileSessionMetadata(bff, openclaw) {
       priorReportReferenceChangeCause: 'unknown',
       reasonCodes: ['PRIOR_SNAPSHOT_IDENTITIES_AND_EVENTS_UNAVAILABLE'],
     },
+    missingTranscriptAssessment: {
+      reportedMissingCount: openclaw.missing.reportedCount,
+      identityResolvedCount: openclaw.missing.identityResolvedCount,
+      identityUnresolvedCount: openclaw.missing.identityUnresolvedCount,
+      identityMode: openclaw.missing.identityMode,
+      referenceRelationStatus: unresolvedMissingIdentities ? 'unknown' : 'confirmed',
+    },
     limitations: [
       'NO_SESSION_BODY_READ',
       'NO_REPORT_BODY_READ',
@@ -812,11 +904,13 @@ export function reconcileSessionMetadata(bff, openclaw) {
 }
 
 function unknownResult(reasonCode, safety = {}) {
+  const reasonCodes = [...new Set((Array.isArray(reasonCode) ? reasonCode : [reasonCode])
+    .filter((code) => /^[A-Z][A-Z0-9_]{0,95}$/.test(code)))]
   return {
     schema: RECONCILIATION_SCHEMA,
     status: 'unknown',
     generatedAt: new Date().toISOString(),
-    reasonCodes: [reasonCode],
+    reasonCodes: reasonCodes.length > 0 ? reasonCodes : ['RECONCILIATION_FAILED'],
     safety: {
       sqliteReadonly: safety.sqliteReadonly === true,
       sqliteQueryOnly: safety.sqliteQueryOnly === true,
@@ -825,6 +919,7 @@ function unknownResult(reasonCode, safety = {}) {
       sqliteExternalActivityObserved: safety.sqliteExternalActivityObserved === true,
       bffMetadataStable: safety.bffMetadataStable === true,
       openclawSnapshotStable: safety.openclawSnapshotStable === true,
+      sqlitePostcheckComplete: safety.sqlitePostcheckComplete === true,
       fixedOpenClawInterfaces: true,
     },
   }
@@ -845,28 +940,74 @@ export async function runSessionReconciliation({
     sqliteExternalActivityObserved: false,
     bffMetadataStable: false,
     openclawSnapshotStable: false,
+    sqlitePostcheckComplete: false,
   }
+  let versionBefore = null
+  let changesBefore = null
+  let bffFingerprintBefore = null
+  let bffAfter = null
+  let bffFingerprintAfter = null
+  let openclawBefore = null
+  let openclawAfter = null
+  let primaryFailureCode = null
+  const postcheckFailureCodes = []
   try {
-    db = openReadonlyDatabase(databasePath, DatabaseClass)
-    safety.sqliteReadonly = true
-    safety.sqliteQueryOnly = Number(db.pragma('query_only', { simple: true })) === 1
-    const versionBefore = readSqliteDataVersion(db)
-    const changesBefore = readSqliteTotalChanges(db)
-    const bffBefore = readBffMetadata(db)
-    const bffFingerprintBefore = fingerprintBffMetadata(bffBefore)
-    const openclawBefore = await readOpenClawSnapshot(commandRunner)
-    const openclawAfter = await readOpenClawSnapshot(commandRunner)
-    const bffAfter = readBffMetadata(db)
-    const bffFingerprintAfter = fingerprintBffMetadata(bffAfter)
-    const versionAfter = readSqliteDataVersion(db)
-    const changesAfter = readSqliteTotalChanges(db)
-    safety.sqliteTotalChanges = changesAfter
-    safety.sqliteDataVersionStable = versionBefore === versionAfter
-    safety.sqliteExternalActivityObserved = versionBefore !== versionAfter
-    safety.bffMetadataStable = bffFingerprintBefore === bffFingerprintAfter
-    safety.openclawSnapshotStable = openclawBefore.fingerprint === openclawAfter.fingerprint
+    try {
+      db = openReadonlyDatabase(databasePath, DatabaseClass)
+      safety.sqliteReadonly = true
+      safety.sqliteQueryOnly = Number(db.pragma('query_only', { simple: true })) === 1
+      if (!safety.sqliteQueryOnly) fail('SQLITE_QUERY_ONLY_UNCONFIRMED')
+      versionBefore = readSqliteDataVersion(db)
+      changesBefore = readSqliteTotalChanges(db)
+      const bffBefore = readBffMetadata(db)
+      bffFingerprintBefore = fingerprintBffMetadata(bffBefore)
+      openclawBefore = await readOpenClawSnapshot(commandRunner)
+      openclawAfter = await readOpenClawSnapshot(commandRunner)
+    } catch (error) {
+      primaryFailureCode = safeCode(error)
+    }
 
-    if (changesBefore !== 0 || changesAfter !== 0) return unknownResult('SQLITE_WRITE_DETECTED', safety)
+    if (db) {
+      try {
+        safety.sqliteQueryOnly = Number(db.pragma('query_only', { simple: true })) === 1
+        if (!safety.sqliteQueryOnly) postcheckFailureCodes.push('SQLITE_QUERY_ONLY_UNCONFIRMED')
+      } catch {
+        postcheckFailureCodes.push('SQLITE_POSTCHECK_FAILED')
+      }
+      try {
+        bffAfter = readBffMetadata(db)
+        bffFingerprintAfter = fingerprintBffMetadata(bffAfter)
+        safety.bffMetadataStable = Boolean(bffFingerprintBefore)
+          && bffFingerprintBefore === bffFingerprintAfter
+      } catch {
+        postcheckFailureCodes.push('BFF_POSTCHECK_FAILED')
+      }
+      try {
+        const versionAfter = readSqliteDataVersion(db)
+        safety.sqliteDataVersionStable = versionBefore !== null && versionBefore === versionAfter
+        safety.sqliteExternalActivityObserved = versionBefore !== null && versionBefore !== versionAfter
+      } catch {
+        postcheckFailureCodes.push('SQLITE_POSTCHECK_FAILED')
+      }
+      try {
+        const changesAfter = readSqliteTotalChanges(db)
+        safety.sqliteTotalChanges = changesAfter
+        if (changesBefore === null || changesBefore !== 0 || changesAfter !== 0) {
+          postcheckFailureCodes.push('SQLITE_WRITE_DETECTED')
+        }
+      } catch {
+        postcheckFailureCodes.push('SQLITE_POSTCHECK_FAILED')
+      }
+      safety.sqlitePostcheckComplete = postcheckFailureCodes.length === 0
+        && bffFingerprintAfter !== null
+        && safety.sqliteQueryOnly
+        && safety.sqliteTotalChanges === 0
+    }
+
+    if (primaryFailureCode || postcheckFailureCodes.length > 0) {
+      return unknownResult([primaryFailureCode, ...postcheckFailureCodes], safety)
+    }
+    safety.openclawSnapshotStable = openclawBefore?.fingerprint === openclawAfter?.fingerprint
     if (!safety.bffMetadataStable || !safety.openclawSnapshotStable) {
       return unknownResult('DATA_DRIFT', safety)
     }
@@ -875,19 +1016,18 @@ export async function runSessionReconciliation({
     result.safety = {
       sqliteReadonly: true,
       sqliteQueryOnly: true,
-      sqliteTotalChanges: changesAfter,
+      sqliteTotalChanges: safety.sqliteTotalChanges,
       sqliteDataVersionStable: safety.sqliteDataVersionStable,
       sqliteExternalActivityObserved: safety.sqliteExternalActivityObserved,
       bffMetadataStable: true,
       openclawSnapshotStable: true,
+      sqlitePostcheckComplete: true,
       bffMetadataFingerprint: bffFingerprintAfter,
       openclawSnapshotFingerprint: openclawAfter.fingerprint,
       fixedOpenClawInterfaces: true,
       mutationActionsAvailable: false,
     }
     return result
-  } catch (error) {
-    return unknownResult(safeCode(error), safety)
   } finally {
     try {
       db?.close()

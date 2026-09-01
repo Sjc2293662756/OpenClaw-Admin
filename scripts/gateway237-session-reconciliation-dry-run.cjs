@@ -250,6 +250,7 @@ function parseRemoteOutput(output) {
   const reconciliationSafetyConfirmed = reconciliation?.safety?.sqliteReadonly === true
     && reconciliation?.safety?.sqliteQueryOnly === true
     && reconciliation?.safety?.sqliteTotalChanges === 0
+    && reconciliation?.safety?.sqlitePostcheckComplete === true
     && reconciliation?.safety?.bffMetadataStable === true
     && reconciliation?.safety?.openclawSnapshotStable === true
     && reconciliation?.safety?.fixedOpenClawInterfaces === true

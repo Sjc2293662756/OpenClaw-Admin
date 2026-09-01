@@ -164,6 +164,14 @@ function missingOutput(keys) {
   ].filter(Boolean).join('\n')
 }
 
+function missingJsonOutput(missing) {
+  return JSON.stringify({
+    dryRun: true,
+    agentId: 'main',
+    missing,
+  })
+}
+
 function baseOpenClawRows() {
   const keys = [
     'session-normal',
@@ -227,6 +235,8 @@ test('reconciles normal, one-sided, missing, referenced, unknown ownership and a
     bffWorkspaceSessionsDeleted: 1,
     overlap: 5,
     indexedTranscriptMissing: 1,
+    identityResolvedMissingTranscripts: 1,
+    identityUnresolvedMissingTranscripts: 0,
   })
   assert.equal(result.categories.both_present_normal.count, 2)
   assert.equal(result.categories.openclaw_present_bff_unregistered.count, 1)
@@ -239,7 +249,9 @@ test('reconciles normal, one-sided, missing, referenced, unknown ownership and a
   assert.equal(result.references.reports.withSourceSession, 3)
   assert.equal(result.references.reports.sourceRowsOutsideCurrentOpenClawIndex, 1)
   assert.equal(result.references.reports.sourceRowsOutsideBothIndexes, 1)
-  assert.equal(result.references.reports.sourceRowsForCurrentMissingTranscripts, 1)
+  assert.equal(result.references.reports.sourceRowsForResolvedMissingTranscripts, 1)
+  assert.equal(result.references.reports.sourceRowsForIdentityUnresolvedMissingTranscripts, 0)
+  assert.equal(result.references.reports.missingTranscriptReferenceStatus, 'confirmed')
   assert.equal(result.references.attachments.totalRows, 1)
   assert.equal(result.references.channelDeliveries.rowsLinkedThroughReportSource, 1)
   assert.equal(result.references.channelDeliveries.rowsWithoutSessionSource, 1)
@@ -266,6 +278,60 @@ test('maps the OpenClaw truncated cleanup token without reading transcripts', ()
   const index = parseOpenClawIndex(indexOutput([{ key, sessionId: 'opaque', updatedAt: 1 }]))
   const parsed = parseMissingTranscriptDryRun(missingOutput([key]), index.sessions)
   assert.deepEqual([...parsed.missing], [key])
+  assert.equal(parsed.reportedCount, 1)
+  assert.equal(parsed.identityResolvedCount, 1)
+  assert.equal(parsed.identityUnresolvedCount, 0)
+})
+
+test('maps cleanup identities through either key or sessionId and treats the same canonical session as one match', () => {
+  const key = 'abcdefghijklmnop-key-middle-uvwxyz'
+  const sessionId = 'abcdefghijklmnop-session-middle-uvwxyz'
+  const index = parseOpenClawIndex(indexOutput([{ key, sessionId, updatedAt: 1 }]))
+  const token = `${key.slice(0, 16)}...${key.slice(-6)}`
+  const parsed = parseMissingTranscriptDryRun(missingOutput([token]), index.sessions)
+  assert.deepEqual([...parsed.missing], [key])
+  assert.equal(parsed.identityResolvedCount, 1)
+  assert.equal(parsed.identityUnresolvedCount, 0)
+})
+
+test('maps an exact or truncated sessionId when its canonical key is different', () => {
+  const key = 'canonical-session-key'
+  const sessionId = 'abcdefghijklmnop-runtime-middle-uvwxyz'
+  const index = parseOpenClawIndex(indexOutput([{ key, sessionId, updatedAt: 1 }]))
+  const truncated = `${sessionId.slice(0, 16)}...${sessionId.slice(-6)}`
+  for (const token of [sessionId, truncated]) {
+    const parsed = parseMissingTranscriptDryRun(missingOutput([token]), index.sessions)
+    assert.deepEqual([...parsed.missing], [key])
+    assert.equal(parsed.identityResolvedCount, 1)
+  }
+})
+
+test('keeps zero or multiple cleanup identity matches unresolved instead of failing or guessing', () => {
+  const prefix = 'agent:main:chan:'
+  const suffix = 'abcdef'
+  const index = parseOpenClawIndex(indexOutput([
+    { key: `${prefix}first-1234567890${suffix}`, sessionId: 'runtime-one', updatedAt: 1 },
+    { key: `${prefix}second-1234567890${suffix}`, sessionId: 'runtime-two', updatedAt: 2 },
+  ]))
+  const multi = parseMissingTranscriptDryRun(missingOutput([`${prefix}...${suffix}`]), index.sessions)
+  const zero = parseMissingTranscriptDryRun(missingOutput(['not-a-real-cleanup-token-1234567890abcdef']), index.sessions)
+  assert.equal(multi.reportedCount, 1)
+  assert.equal(multi.identityResolvedCount, 0)
+  assert.equal(multi.identityUnresolvedCount, 1)
+  assert.equal(zero.identityUnresolvedCount, 1)
+})
+
+test('rejects contradictory cleanup totals but permits aggregate-only native JSON as unresolved', () => {
+  const index = parseOpenClawIndex(indexOutput([]))
+  assert.throws(
+    () => parseMissingTranscriptDryRun('Would prune missing transcripts: 2\nprune-missing only-one-token', index.sessions),
+    (error) => error?.code === 'OPENCLAW_MISSING_DRY_RUN_CONTRADICTORY',
+  )
+  const aggregate = parseMissingTranscriptDryRun(missingJsonOutput(3), index.sessions)
+  assert.equal(aggregate.identityMode, 'aggregate_only')
+  assert.equal(aggregate.reportedCount, 3)
+  assert.equal(aggregate.identityResolvedCount, 0)
+  assert.equal(aggregate.identityUnresolvedCount, 3)
 })
 
 test('runs the three OpenClaw probes strictly serially in index, missing, runtime order', async () => {
@@ -320,6 +386,25 @@ test('completes and compares both full serial OpenClaw snapshots before returnin
   ])
 }))
 
+test('does not treat a token ordering change alone as OpenClaw content drift', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  let missingCalls = 0
+  const runner = async (kind) => {
+    if (kind === 'index') return indexOutput(rows.index)
+    if (kind === 'runtime') return runtimeOutput(rows.runtime)
+    missingCalls += 1
+    const keys = ['session-missing', 'session-normal']
+    return missingOutput(missingCalls === 1 ? keys : [...keys].reverse())
+  }
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: runner,
+  })
+  assert.equal(result.status, 'ok')
+  assert.equal(result.safety.openclawSnapshotStable, true)
+}))
+
 test('returns unknown when OpenClaw metadata drifts between the two snapshots', () => withFixture(async ({ databasePath }) => {
   const rows = baseOpenClawRows()
   let indexCalls = 0
@@ -343,6 +428,25 @@ test('returns unknown when OpenClaw metadata drifts between the two snapshots', 
   assert.deepEqual(result.reasonCodes, ['DATA_DRIFT'])
   assert.equal(result.safety.openclawSnapshotStable, false)
   assert.equal('totals' in result, false)
+}))
+
+test('treats changed cleanup identity content as OpenClaw data drift even when its count is unchanged', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  let missingCalls = 0
+  const runner = async (kind) => {
+    if (kind === 'index') return indexOutput(rows.index)
+    if (kind === 'runtime') return runtimeOutput(rows.runtime)
+    missingCalls += 1
+    return missingOutput([missingCalls === 1 ? 'session-missing' : 'session-normal'])
+  }
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: runner,
+  })
+  assert.equal(result.status, 'unknown')
+  assert.deepEqual(result.reasonCodes, ['DATA_DRIFT'])
+  assert.equal(result.safety.openclawSnapshotStable, false)
 }))
 
 test('returns unknown when relevant BFF metadata changes through an external writer', () => withFixture(async ({ databasePath }) => {
@@ -412,7 +516,35 @@ test('returns unknown instead of historical data when an OpenClaw interface fail
   })
   assert.equal(result.status, 'unknown')
   assert.deepEqual(result.reasonCodes, ['OPENCLAW_RUNTIME_FAILED'])
+  assert.equal(result.safety.sqliteReadonly, true)
+  assert.equal(result.safety.sqliteQueryOnly, true)
+  assert.equal(result.safety.sqliteTotalChanges, 0)
+  assert.equal(result.safety.sqlitePostcheckComplete, true)
+  assert.equal(result.safety.bffMetadataStable, true)
   assert.equal('categories' in result, false)
+}))
+
+test('makes report references unknown when native missing totals have no resolvable identity', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  const runner = async (kind) => {
+    if (kind === 'index') return indexOutput(rows.index)
+    if (kind === 'runtime') return runtimeOutput(rows.runtime)
+    return missingJsonOutput(1)
+  }
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: runner,
+  })
+  assert.equal(result.status, 'ok')
+  assert.equal(result.totals.indexedTranscriptMissing, 1)
+  assert.equal(result.totals.identityResolvedMissingTranscripts, 0)
+  assert.equal(result.totals.identityUnresolvedMissingTranscripts, 1)
+  assert.equal(result.categories.indexed_transcript_missing.count, 0)
+  assert.equal(result.categories.indexed_transcript_identity_unresolved.count, 1)
+  assert.equal(result.references.reports.missingTranscriptReferenceStatus, 'unknown')
+  assert.equal(result.references.reports.sourceRowsForIdentityUnresolvedMissingTranscripts, 'unknown')
+  assert.equal(JSON.stringify(result).includes('session-missing'), false)
 }))
 
 test('returns a sanitized unknown code for invalid OpenClaw runtime JSON', () => withFixture(async ({ databasePath }) => {
@@ -467,6 +599,12 @@ test('uses only the fixed OpenClaw executable and fixed read-only command defini
     'gateway', 'call', 'sessions.list', '--json', '--params', '{"limit":100000}', '--timeout', '60000',
   ])
   assert.equal(calls[0].options.timeout, 75_000)
+  await runFixedOpenClawCommand('missing', async (executable, args, options) => {
+    calls.push({ executable, args, options })
+    return { stdout: missingJsonOutput(0) }
+  }, { XDG_RUNTIME_DIR: '/run/user/4242' })
+  assert.deepEqual(calls[2].args, ['sessions', 'cleanup', '--agent', 'main', '--dry-run', '--json'])
+  assert.equal(calls[2].options.timeout, 75_000)
   await assert.rejects(
     () => runFixedOpenClawCommand('arbitrary', async () => ({ stdout: '' }), { XDG_RUNTIME_DIR: '/run/user/4242' }),
     (error) => error?.code === 'OPENCLAW_COMMAND_NOT_ALLOWED',

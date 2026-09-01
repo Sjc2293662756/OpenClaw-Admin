@@ -28,12 +28,13 @@ test('production reconciliation runtime has no database or filesystem mutation c
   assert.doesNotMatch(productionRuntime, /\b(?:unlink|rmSync|rm|rename|writeFile|appendFile|copyFile|createWriteStream|mkdir)\b/)
   assert.doesNotMatch(productionRuntime, /sessions\.delete|sessions\.patch|sessions\.reset/)
   assert.doesNotMatch(productionRuntime, /--enforce/)
+  assert.doesNotMatch(productionRuntime, /--fix-missing/)
   assert.doesNotMatch(productionRuntime, /(?:conversation_history|execution_history|session_title|original_name|attachment_ref)/)
   assert.doesNotMatch(productionRuntime, /from ['"].*database\.js['"]/)
   assert.match(core, /new DatabaseClass\(databasePath, \{ readonly: true, fileMustExist: true \}\)/)
   assert.match(core, /query_only = ON/)
   assert.match(core, /SELECT total_changes\(\) AS value/)
-  assert.match(core, /'sessions', 'cleanup', '--agent', 'main', '--dry-run', '--fix-missing'/)
+  assert.match(core, /'sessions', 'cleanup', '--agent', 'main', '--dry-run', '--json'/)
   assert.match(core, /'--timeout',\s*'60000'/)
   assert.match(core, /timeout:\s*75_000/)
   assert.match(core, /JSON\.stringify\(\{ limit: MAX_OPENCLAW_ROWS \}\)/)
@@ -80,6 +81,8 @@ test('runtime preflight uses a dynamic XDG directory and emits only structural s
   assert.doesNotMatch(remote, /\/run\/user\/1000/)
   assert.doesNotMatch(remote, /DBUS_SESSION_BUS_ADDRESS=/)
   assert.match(remote, /gateway call sessions\.list --json --params '\{"limit":100000\}' --timeout 60000/)
+  assert.match(remote, /sessions cleanup --agent main --dry-run --json/)
+  assert.doesNotMatch(remote, /sessions cleanup[^\n]*--fix-missing/)
   assert.match(remote, /timeout --signal=TERM 75 runuser -u netinside -- env/)
   assert.doesNotMatch(remote, /timeout --signal=TERM 75 run_openclaw/)
   assert.match(remote, /rpc_reason=RPC_COMMAND_UNAVAILABLE/)
@@ -96,6 +99,13 @@ test('runtime preflight parser keeps raw session values out of its result', () =
     hasMore: null,
     fields: { keyString: 2, hasActiveRunBoolean: 0 },
   }
+  const cleanupSummary = {
+    format: 'json_aggregate',
+    reportedMissingCount: 1,
+    identityResolvedCount: 0,
+    identityUnresolvedCount: 1,
+    candidateMatchSummary: { exactKey: 0, sessionId: 0, bothSameCanonical: 0, zero: 1, multiple: 0 },
+  }
   const output = [
     'PREFLIGHT_COMPLETE=true',
     'UID_RESOLVED=true',
@@ -107,14 +117,22 @@ test('runtime preflight parser keeps raw session values out of its result', () =
     'SUPPORTS_JSON=true',
     'SUPPORTS_PARAMS=true',
     'SUPPORTS_TIMEOUT=true',
+    'SUPPORTS_CLEANUP_JSON=true',
+    'SUPPORTS_CLEANUP_DRY_RUN=true',
     'RPC_STATUS=ok',
     'RPC_REASON=NONE',
     'RPC_EXIT=0',
     `RPC_SUMMARY_B64=${Buffer.from(JSON.stringify(summary)).toString('base64')}`,
+    'CLEANUP_STATUS=ok',
+    'CLEANUP_REASON=NONE',
+    'CLEANUP_EXIT=0',
+    `CLEANUP_SUMMARY_B64=${Buffer.from(JSON.stringify(cleanupSummary)).toString('base64')}`,
   ].join('\n')
   const parsed = controlledRuntimePreflight.parseRemoteOutput(output)
   assert.equal(parsed.completed, true)
   assert.equal(parsed.rpc.summary.sessionCount, 2)
+  assert.equal(parsed.cleanup.summary.reportedMissingCount, 1)
+  assert.equal(parsed.cleanup.summary.identityUnresolvedCount, 1)
   assert.equal(JSON.stringify(parsed).includes('agent:main:'), false)
 })
 
@@ -168,6 +186,7 @@ test('controlled runner treats unrelated SQLite file activity as an observation 
       sqliteReadonly: true,
       sqliteQueryOnly: true,
       sqliteTotalChanges: 0,
+      sqlitePostcheckComplete: true,
       sqliteDataVersionStable: false,
       sqliteExternalActivityObserved: true,
       bffMetadataStable: true,

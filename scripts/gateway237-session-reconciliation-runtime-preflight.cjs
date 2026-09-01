@@ -53,6 +53,10 @@ if printf '%s' "$call_help" | grep -q -- '--json'; then supports_json=true; else
 if printf '%s' "$call_help" | grep -q -- '--params'; then supports_params=true; else supports_params=false; fi
 if printf '%s' "$call_help" | grep -q -- '--timeout'; then supports_timeout=true; else supports_timeout=false; fi
 
+cleanup_help=$(run_openclaw "$openclaw_path" sessions cleanup --help 2>/dev/null || true)
+if printf '%s' "$cleanup_help" | grep -q -- '--json'; then supports_cleanup_json=true; else supports_cleanup_json=false; fi
+if printf '%s' "$cleanup_help" | grep -q -- '--dry-run'; then supports_cleanup_dry_run=true; else supports_cleanup_dry_run=false; fi
+
 set +e
 rpc_output=$(timeout --signal=TERM 75 runuser -u netinside -- env \
   HOME="$openclaw_home" \
@@ -141,6 +145,74 @@ process.stdin.on("end", () => {
   fi
 fi
 
+set +e
+cleanup_output=$(timeout --signal=TERM 75 runuser -u netinside -- env \
+  HOME="$openclaw_home" \
+  USER=netinside \
+  LOGNAME=netinside \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  PATH=/home/netinside/.npm-global/bin:/usr/local/bin:/usr/bin:/bin \
+  XDG_RUNTIME_DIR="$runtime_dir" \
+  "$openclaw_path" sessions cleanup --agent main --dry-run --json 2>&1)
+cleanup_exit=$?
+set -e
+
+cleanup_status=failed
+cleanup_reason=CLEANUP_NONZERO_EXIT
+cleanup_summary_b64=''
+if [ "$cleanup_exit" -eq 124 ]; then
+  cleanup_reason=CLEANUP_PROCESS_TIMEOUT
+elif [ "$cleanup_exit" -eq 127 ]; then
+  cleanup_reason=CLEANUP_COMMAND_UNAVAILABLE
+elif [ "$cleanup_exit" -ne 0 ]; then
+  case "$cleanup_output" in
+    *[Tt]imed\ out*|*[Tt]imeout*) cleanup_reason=CLEANUP_TIMEOUT ;;
+    *[Uu]nknown\ option*|*[Uu]nrecognized\ option*) cleanup_reason=CLEANUP_ARGUMENT_UNSUPPORTED ;;
+    *) cleanup_reason=CLEANUP_NONZERO_EXIT ;;
+  esac
+else
+  set +e
+  cleanup_summary=$(printf '%s' "$cleanup_output" | "$node_path" -e '
+let input = ""
+process.stdin.setEncoding("utf8")
+process.stdin.on("data", (chunk) => { input += chunk })
+process.stdin.on("end", () => {
+  const raw = input.replace(/\u001b\[[0-9;]*m/g, "").trim()
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    const first = raw.indexOf("{")
+    const last = raw.lastIndexOf("}")
+    if (first < 0 || last <= first) process.exit(2)
+    try { parsed = JSON.parse(raw.slice(first, last + 1)) } catch { process.exit(2) }
+  }
+  const stores = Array.isArray(parsed?.stores) ? parsed.stores : null
+  const named = stores?.filter((store) => store?.agentId === "main") || []
+  const store = stores ? (named.length === 1 ? named[0] : (stores.length === 1 ? stores[0] : null)) : parsed
+  const missing = Number.isSafeInteger(store?.missing) && store.missing >= 0 ? store.missing : null
+  if (!store || missing === null) process.exit(3)
+  process.stdout.write(JSON.stringify({
+    format: "json_aggregate",
+    reportedMissingCount: missing,
+    identityResolvedCount: 0,
+    identityUnresolvedCount: missing,
+    candidateMatchSummary: { exactKey: 0, sessionId: 0, bothSameCanonical: 0, zero: missing, multiple: 0 },
+  }))
+})
+' 2>/dev/null)
+  cleanup_summary_exit=$?
+  set -e
+  if [ "$cleanup_summary_exit" -eq 0 ]; then
+    cleanup_status=ok
+    cleanup_reason=NONE
+    cleanup_summary_b64=$(printf '%s' "$cleanup_summary" | base64 -w0)
+  else
+    cleanup_reason=CLEANUP_JSON_INVALID
+  fi
+fi
+
 printf 'PREFLIGHT_COMPLETE=true\n'
 printf 'UID_RESOLVED=true\n'
 printf 'XDG_RUNTIME_PRESENT=%s\n' "$runtime_present"
@@ -151,10 +223,16 @@ printf 'CLI_VERSION=%s\n' "$cli_version"
 printf 'SUPPORTS_JSON=%s\n' "$supports_json"
 printf 'SUPPORTS_PARAMS=%s\n' "$supports_params"
 printf 'SUPPORTS_TIMEOUT=%s\n' "$supports_timeout"
+printf 'SUPPORTS_CLEANUP_JSON=%s\n' "$supports_cleanup_json"
+printf 'SUPPORTS_CLEANUP_DRY_RUN=%s\n' "$supports_cleanup_dry_run"
 printf 'RPC_STATUS=%s\n' "$rpc_status"
 printf 'RPC_REASON=%s\n' "$rpc_reason"
 printf 'RPC_EXIT=%s\n' "$rpc_exit"
 printf 'RPC_SUMMARY_B64=%s\n' "$rpc_summary_b64"
+printf 'CLEANUP_STATUS=%s\n' "$cleanup_status"
+printf 'CLEANUP_REASON=%s\n' "$cleanup_reason"
+printf 'CLEANUP_EXIT=%s\n' "$cleanup_exit"
+printf 'CLEANUP_SUMMARY_B64=%s\n' "$cleanup_summary_b64"
 `
 }
 
@@ -186,6 +264,39 @@ function decodeSummary(value) {
   }
 }
 
+function decodeCleanupSummary(value) {
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value || ''), 'base64').toString('utf8'))
+    const count = (field) => Number.isSafeInteger(parsed?.[field]) && parsed[field] >= 0
+      ? parsed[field]
+      : null
+    const reportedMissingCount = count('reportedMissingCount')
+    const identityResolvedCount = count('identityResolvedCount')
+    const identityUnresolvedCount = count('identityUnresolvedCount')
+    const candidates = parsed?.candidateMatchSummary
+    if (parsed?.format !== 'json_aggregate' || reportedMissingCount === null
+      || identityResolvedCount === null || identityUnresolvedCount === null
+      || identityResolvedCount + identityUnresolvedCount !== reportedMissingCount
+      || !candidates || ['exactKey', 'sessionId', 'bothSameCanonical', 'zero', 'multiple']
+        .some((field) => !Number.isSafeInteger(candidates[field]) || candidates[field] < 0)) return null
+    return {
+      format: 'json_aggregate',
+      reportedMissingCount,
+      identityResolvedCount,
+      identityUnresolvedCount,
+      candidateMatchSummary: {
+        exactKey: candidates.exactKey,
+        sessionId: candidates.sessionId,
+        bothSameCanonical: candidates.bothSameCanonical,
+        zero: candidates.zero,
+        multiple: candidates.multiple,
+      },
+    }
+  } catch {
+    return null
+  }
+}
+
 function parseRemoteOutput(output) {
   const markers = markerMap(output)
   const rpcStatus = markers.get('RPC_STATUS') === 'ok' ? 'ok' : 'failed'
@@ -193,9 +304,19 @@ function parseRemoteOutput(output) {
     ? markers.get('RPC_REASON')
     : 'PREFLIGHT_OUTPUT_INVALID'
   const summary = rpcStatus === 'ok' ? decodeSummary(markers.get('RPC_SUMMARY_B64')) : null
+  const cleanupStatus = markers.get('CLEANUP_STATUS') === 'ok' ? 'ok' : 'failed'
+  const cleanupReasonCode = /^[A-Z][A-Z0-9_]{0,95}$/.test(String(markers.get('CLEANUP_REASON') || ''))
+    ? markers.get('CLEANUP_REASON')
+    : 'PREFLIGHT_OUTPUT_INVALID'
+  const cleanupSummary = cleanupStatus === 'ok' ? decodeCleanupSummary(markers.get('CLEANUP_SUMMARY_B64')) : null
   const completed = markerBoolean(markers, 'PREFLIGHT_COMPLETE')
     && markerBoolean(markers, 'UID_RESOLVED')
-    && (rpcStatus !== 'ok' || summary !== null)
+    && rpcStatus === 'ok'
+    && summary !== null
+    && cleanupStatus === 'ok'
+    && cleanupSummary !== null
+    && markerBoolean(markers, 'SUPPORTS_CLEANUP_JSON')
+    && markerBoolean(markers, 'SUPPORTS_CLEANUP_DRY_RUN')
   return {
     completed,
     environment: {
@@ -214,12 +335,20 @@ function parseRemoteOutput(output) {
       supportsJson: markerBoolean(markers, 'SUPPORTS_JSON'),
       supportsParams: markerBoolean(markers, 'SUPPORTS_PARAMS'),
       supportsTimeout: markerBoolean(markers, 'SUPPORTS_TIMEOUT'),
+      supportsCleanupJson: markerBoolean(markers, 'SUPPORTS_CLEANUP_JSON'),
+      supportsCleanupDryRun: markerBoolean(markers, 'SUPPORTS_CLEANUP_DRY_RUN'),
     },
     rpc: {
       status: rpcStatus,
       reasonCode,
       exitCode: markerInteger(markers, 'RPC_EXIT'),
       summary,
+    },
+    cleanup: {
+      status: cleanupStatus,
+      reasonCode: cleanupReasonCode,
+      exitCode: markerInteger(markers, 'CLEANUP_EXIT'),
+      summary: cleanupSummary,
     },
   }
 }
@@ -251,4 +380,5 @@ module.exports = {
   buildRemoteScript,
   parseRemoteOutput,
   decodeSummary,
+  decodeCleanupSummary,
 }
