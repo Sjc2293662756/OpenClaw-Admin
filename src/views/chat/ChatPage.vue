@@ -38,6 +38,7 @@ import { renderSimpleMarkdown } from '@/utils/markdown'
 import { loadSelectedSessionWithBackgroundList } from '@/utils/session-loading'
 import { selectWorkspacePromptTexts } from '@/utils/workspace-prompts'
 import { stripInternalDocxMediaPaths } from '@/utils/report-media'
+import { isLiveChatProcessForSession } from '@/utils/chat-live-process'
 import { interleaveReportTranscriptItems } from '@/utils/chat-report-attachments'
 import {
   isConversationTranscriptRole,
@@ -892,15 +893,15 @@ const currentToolProgress = computed(() => {
 })
 
 const agentBusy = computed(() => {
-  const phase = currentAgentStatus.value.phase
-  return (
-    phase === 'sending' ||
-    phase === 'waiting' ||
-    phase === 'thinking' ||
-    phase === 'tool' ||
-    phase === 'replying' ||
-    phase === 'aborting'
-  )
+  return isLiveChatProcessForSession(currentAgentStatus.value, normalizedSessionKey.value)
+})
+
+const showLiveThinkingProcess = computed(() => (
+  chatDisplayPreferences.preferences.showThinkingProcess && agentBusy.value
+))
+
+watch(showLiveThinkingProcess, (visible, wasVisible) => {
+  if (visible && !wasVisible) showAgentDetails.value = true
 })
 
 const agentBusyToolName = computed(() => {
@@ -3364,7 +3365,7 @@ async function handleSend() {
                   </div>
                 </div>
 
-                <div v-if="chatDisplayPreferences.preferences.showThinkingProcess" class="chat-compose-status-line">
+                <div v-if="showLiveThinkingProcess" class="chat-compose-status-line" role="status" aria-live="polite">
                   <NSpace align="center" justify="space-between" style="width: 100%;">
                     <NTag
                       size="small"
@@ -3386,7 +3387,7 @@ async function handleSend() {
                   </NSpace>
                 </div>
 
-                <div v-if="chatDisplayPreferences.preferences.showThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
+                <div v-if="showLiveThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
                   <NSpace vertical :size="6">
                     <NText depth="3" style="font-size: 12px;">
                       {{ t('pages.chat.agentDetails.phaseDuration', { duration: formatDurationMs(nowMs - currentAgentStatus.sinceMs) }) }}

@@ -42,6 +42,7 @@ import { useChatReportAttachments } from '@/composables/useChatReportAttachments
 import { useProgressiveChatPresentation } from '@/composables/useProgressiveChatPresentation'
 import { formatDate, formatRelativeTime, truncate } from '@/utils/format'
 import { renderSimpleMarkdown } from '@/utils/markdown'
+import { isLiveChatProcessForSession } from '@/utils/chat-live-process'
 import {
   isConversationTranscriptRole,
   projectConversationStructuredMessage,
@@ -1665,7 +1666,7 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
 })
 
 const currentAgentId = computed(() => {
-  const sessionKey = chatStore.sessionKey
+  const sessionKey = selectedSessionKey.value
   if (!sessionKey) return 'default'
   const match = sessionKey.match(/^agent:([^:]+):/)
   if (match && match[1]) {
@@ -1692,15 +1693,15 @@ const visibleTranscriptEntries = computed(() =>
 )
 
 const agentBusy = computed(() => {
-  const phase = currentAgentStatus.value.phase
-  return (
-    phase === 'sending' ||
-    phase === 'waiting' ||
-    phase === 'thinking' ||
-    phase === 'tool' ||
-    phase === 'replying' ||
-    phase === 'aborting'
-  )
+  return isLiveChatProcessForSession(currentAgentStatus.value, selectedSessionKey.value)
+})
+
+const showLiveThinkingProcess = computed(() => (
+  chatDisplayPreferences.preferences.showThinkingProcess && agentBusy.value
+))
+
+watch(showLiveThinkingProcess, (visible, wasVisible) => {
+  if (visible && !wasVisible) showAgentDetails.value = true
 })
 
 const currentToolProgress = computed(() => {
@@ -2513,7 +2514,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
               <NText depth="3" style="font-size: 12px;">{{ t('pages.chat.slash.noMatch') }}</NText>
             </div>
           </div>
-          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess" class="chat-compose-status-line">
+          <div v-if="showLiveThinkingProcess" class="chat-compose-status-line" role="status" aria-live="polite">
             <NTag
               size="small"
               :type="agentStatusTagType"
@@ -2533,7 +2534,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
             </NButton>
           </div>
 
-          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
+          <div v-if="showLiveThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
             <NSpace vertical :size="6">
               <NText depth="3" style="font-size: 12px;">
                 {{ t('pages.chat.agentDetails.phaseDuration', { duration: formatDurationMs(nowMs - currentAgentStatus.sinceMs) }) }}
@@ -2909,7 +2910,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
               <NText depth="3" style="font-size: 12px;">{{ t('pages.chat.slash.noMatch') }}</NText>
             </div>
           </div>
-          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess" class="chat-compose-status-line">
+          <div v-if="showLiveThinkingProcess" class="chat-compose-status-line" role="status" aria-live="polite">
             <NTag
               size="small"
               :type="agentStatusTagType"
@@ -2929,7 +2930,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
             </NButton>
           </div>
 
-          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
+          <div v-if="showLiveThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
             <NSpace vertical :size="6">
               <NText depth="3" style="font-size: 12px;">
                 {{ t('pages.chat.agentDetails.phaseDuration', { duration: formatDurationMs(nowMs - currentAgentStatus.sinceMs) }) }}

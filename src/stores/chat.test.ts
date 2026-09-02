@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '@/api/types'
+import { isLiveChatProcessForSession } from '@/utils/chat-live-process'
 import { useChatStore } from './chat'
 
 const mocks = vi.hoisted(() => ({
@@ -215,6 +216,38 @@ describe('realtime event routing', () => {
       phase: 'update',
       partialPreview: expect.stringContaining('collected'),
     }))
+  })
+
+  it('drives the current session live process through lifecycle, tool, and terminal events', () => {
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-live-process'
+    store.setSessionKey(sessionKey)
+
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-live-process',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'start' },
+    })
+    expect(isLiveChatProcessForSession(store.getOrCreateAgentStatus('main'), sessionKey)).toBe(true)
+
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-live-process',
+      sessionKey,
+      stream: 'tool',
+      data: { phase: 'start', name: 'napm-skill-query', toolCallId: 'call-live-process' },
+    })
+    expect(store.getOrCreateAgentStatus('main').phase).toBe('tool')
+    expect(isLiveChatProcessForSession(store.getOrCreateAgentStatus('main'), sessionKey)).toBe(true)
+
+    store.handleAgentStatusEvent('agent', {
+      runId: 'run-live-process',
+      sessionKey,
+      stream: 'lifecycle',
+      data: { phase: 'end' },
+    })
+    expect(isLiveChatProcessForSession(store.getOrCreateAgentStatus('main'), sessionKey)).toBe(false)
+    store.clearTimers()
   })
 
   it('uses only the canonical chat snapshot for the visible transcript', () => {

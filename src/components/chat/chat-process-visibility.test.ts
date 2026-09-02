@@ -5,23 +5,26 @@ import hermesClientSource from '@/api/hermes/client.ts?raw'
 import chatWorkspaceSource from '@/views/workspace/ChatWorkspace.vue?raw'
 import settingsPageSource from '@/views/settings/SettingsPage.vue?raw'
 
-const visibilityGuard = 'v-if="chatDisplayPreferences.preferences.showThinkingProcess" class="chat-compose-status-line"'
-const detailsGuard = 'v-if="chatDisplayPreferences.preferences.showThinkingProcess && showAgentDetails && hasAgentDetails"'
+const visibilityGuard = 'v-if="showLiveThinkingProcess" class="chat-compose-status-line"'
+const detailsGuard = 'v-if="showLiveThinkingProcess && showAgentDetails && hasAgentDetails"'
 
 describe('chat process visibility integration', () => {
-  it('controls the WebChat status and details without controlling report cards or stop actions', () => {
+  it('controls only the current live WebChat process without controlling report cards or stop actions', () => {
     expect(chatPageSource).toContain(visibilityGuard)
     expect(chatPageSource).toContain(detailsGuard)
+    expect(chatPageSource).toContain('isLiveChatProcessForSession(currentAgentStatus.value, normalizedSessionKey.value)')
+    expect(chatPageSource).toContain('watch(showLiveThinkingProcess')
     expect(chatPageSource).toContain('<ReportAttachmentList')
     expect(chatPageSource).toContain('v-if="agentBusy"')
     expect(chatPageSource).toContain(':component="StopCircleOutline"')
   })
 
-  it('controls both normal and expanded Office chat status regions without removing results or stop actions', () => {
+  it('controls both normal and expanded Office chat status regions for the selected session', () => {
     expect(agentChatPanelSource.split(visibilityGuard)).toHaveLength(3)
     expect(agentChatPanelSource.split(detailsGuard)).toHaveLength(3)
     expect(agentChatPanelSource.split('<ReportAttachmentList')).toHaveLength(3)
     expect(agentChatPanelSource.split('v-if="agentBusy"')).toHaveLength(3)
+    expect(agentChatPanelSource).toContain('isLiveChatProcessForSession(currentAgentStatus.value, selectedSessionKey.value)')
   })
 
   it('keeps the Hermes response transport permanently streaming', () => {
