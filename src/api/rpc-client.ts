@@ -966,6 +966,9 @@ export class RPCClient {
 
   private normalizeChatMessageItem(value: unknown): ChatMessage {
     const row = this.asRecord(value)
+    const openclawMetadata = this.asRecord(row.__openclaw)
+    const gatewaySequence = this.resolveCountNumber(row.seq ?? openclawMetadata.seq)
+    const processRow = this.asRecord(row.gaiopProcess)
     const roleRaw = this.asString(row.role || row.type, 'assistant')
     const role: ChatMessage['role'] =
       roleRaw === 'user' ||
@@ -983,7 +986,14 @@ export class RPCClient {
     if (Array.isArray(rawContent)) {
       rawContentArray = rawContent.map((item) => {
         const itemRow = this.asRecord(item) || {}
-        const itemType = this.asString(itemRow.type) as ChatMessageContent['type'] || 'text'
+        const rawItemType = this.asString(itemRow.type)
+        const itemType = (
+          rawItemType === 'toolCall'
+            ? 'tool_call'
+            : rawItemType === 'toolResult'
+              ? 'tool_result'
+              : rawItemType || 'text'
+        ) as ChatMessageContent['type']
         const baseContent = {
           type: itemType,
           text: this.asString(itemRow.text),
@@ -1046,7 +1056,7 @@ export class RPCClient {
     }
 
     return {
-      id: this.asString(row.id || row.messageId || row.seq) || undefined,
+      id: this.asString(row.id || row.messageId || openclawMetadata.id || (row.seq ?? openclawMetadata.seq)) || undefined,
       role,
       content: contentText,
       timestamp: this.asString(row.timestamp || row.createdAt || row.time) || undefined,
@@ -1058,6 +1068,20 @@ export class RPCClient {
       toolName: this.asString(row.toolName || row.tool_name) || undefined,
       isError: row.isError === true,
       rawContent: rawContentArray,
+      gatewaySequence,
+      process: processRow.kind === 'user_visible_process'
+        ? {
+            kind: 'user_visible_process',
+            sessionKey: this.asString(processRow.sessionKey),
+            runId: this.asString(processRow.runId),
+            stepId: this.asString(processRow.stepId),
+            sequence: this.asNumber(processRow.sequence, 0),
+            publicText: this.asString(processRow.publicText),
+            status: processRow.status === 'completed' ? 'completed' : 'in_progress',
+            visible: processRow.visible === true,
+            safe: processRow.safe === true,
+          }
+        : undefined,
     }
   }
 

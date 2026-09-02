@@ -2,7 +2,7 @@ import { ref } from 'vue'
 import { defineStore } from 'pinia'
 import { useWebSocketStore } from './websocket'
 import { shouldApplyRealtimeEvent } from '@/utils/session-presentation'
-import type { ChatMessage } from '@/api/types'
+import type { ChatMessage, ChatMessageContent } from '@/api/types'
 import { byLocale, getActiveLocale } from '@/i18n/text'
 
 type AgentPhase =
@@ -26,6 +26,7 @@ interface AgentStatus {
   sessionKey: string | null
   lastMessage: string | null
   finishedAtMs: number | null
+  showProcess: boolean | null
 }
 
 interface AgentStep {
@@ -118,6 +119,7 @@ export const useChatStore = defineStore('chat', () => {
         sessionKey: null,
         lastMessage: null,
         finishedAtMs: null,
+        showProcess: null,
       })
     }
     return agentStatuses.value.get(agentId)!  
@@ -267,7 +269,7 @@ export const useChatStore = defineStore('chat', () => {
     lastToolPreviewUpdateAtMs = 0
   }
 
-  function setAgentStatusPhase(agentId: string, phase: AgentPhase, patch?: { runId?: string | null; detail?: string | null; sessionKey?: string | null; lastMessage?: string | null }) {
+  function setAgentStatusPhase(agentId: string, phase: AgentPhase, patch?: { runId?: string | null; detail?: string | null; sessionKey?: string | null; lastMessage?: string | null; showProcess?: boolean | null }) {
     const now = Date.now()
     const prev = getOrCreateAgentStatus(agentId)
     
@@ -281,6 +283,7 @@ export const useChatStore = defineStore('chat', () => {
       detail: patch?.detail === undefined ? prev.detail : patch.detail,
       sessionKey: patch?.sessionKey === undefined ? prev.sessionKey : patch.sessionKey,
       lastMessage: patch?.lastMessage === undefined ? prev.lastMessage : patch.lastMessage,
+      showProcess: patch?.showProcess === undefined ? prev.showProcess : patch.showProcess,
       updatedAtMs: now,
       sinceMs: prev.phase === phase ? prev.sinceMs : now,
       finishedAtMs: isTerminalPhase && wasActivePhase ? now : prev.finishedAtMs,
@@ -291,7 +294,8 @@ export const useChatStore = defineStore('chat', () => {
       prev.runId === next.runId &&
       prev.detail === next.detail &&
       prev.sessionKey === next.sessionKey &&
-      prev.lastMessage === next.lastMessage
+      prev.lastMessage === next.lastMessage &&
+      prev.showProcess === next.showProcess
     if (unchanged) return
 
     agentStatuses.value.set(agentId, next)
@@ -375,6 +379,7 @@ export const useChatStore = defineStore('chat', () => {
       sessionKey: null,
       lastMessage: null,
       finishedAtMs: null,
+      showProcess: null,
     })
   }
 
@@ -687,6 +692,29 @@ export const useChatStore = defineStore('chat', () => {
             : undefined
     const name =
       typeof row.name === 'string' ? row.name : typeof row.model === 'string' ? row.model : undefined
+    const rawContent: ChatMessageContent[] | undefined = Array.isArray(row.content)
+      ? row.content.map((value) => {
+          const part = asRecord(value) || {}
+          const rawType = asString(part.type).trim()
+          const type = (
+            rawType === 'toolCall'
+              ? 'tool_call'
+              : rawType === 'toolResult'
+                ? 'tool_result'
+                : rawType || 'text'
+          ) as ChatMessageContent['type']
+          return {
+            type,
+            text: asString(part.text) || undefined,
+            thinking: asString(part.thinking) || undefined,
+            id: asString(part.id || part.toolCallId || part.tool_call_id) || undefined,
+            name: asString(part.name || part.toolName || part.tool_name) || undefined,
+            arguments: asRecord(part.arguments) || undefined,
+            content: part.content,
+            isError: part.isError === true,
+          }
+        })
+      : undefined
 
     return {
       id,
@@ -694,6 +722,7 @@ export const useChatStore = defineStore('chat', () => {
       content,
       timestamp,
       name,
+      rawContent,
     }
   }
 
@@ -790,7 +819,9 @@ export const useChatStore = defineStore('chat', () => {
         current.stopReason !== next.stopReason ||
         current.toolCallId !== next.toolCallId ||
         current.toolName !== next.toolName ||
-        current.isError !== next.isError
+        current.isError !== next.isError ||
+        current.gatewaySequence !== next.gatewaySequence ||
+        JSON.stringify(current.process ?? null) !== JSON.stringify(next.process ?? null)
       ) {
         return false
       }
@@ -1257,6 +1288,7 @@ export const useChatStore = defineStore('chat', () => {
                 detail: toolName || null,
               })
             }
+            if (toolPhase === 'start') schedulePostSendRefreshes()
             return
           }
           if (toolPhase === 'result') {
@@ -1264,6 +1296,7 @@ export const useChatStore = defineStore('chat', () => {
             if (agentStatus.phase === 'tool') {
               setAgentStatusPhase(agentId, 'thinking', { runId: runIdInEvent || activeRunId || null, detail: toolName ? toolCompletedDetail(toolName) : null })
             }
+            schedulePostSendRefreshes()
             return
           }
         }
@@ -1328,10 +1361,12 @@ export const useChatStore = defineStore('chat', () => {
         const data = asRecord(payloadRow?.payload ?? payloadRow) || {}
         const toolName = asString(data.name || data.tool || data.toolName).trim() || null
         setAgentStatusPhase(agentId, 'tool', { runId: activeRunId || runIdInEvent || null, detail: toolName })
+        schedulePostSendRefreshes()
         return
       }
       if (normalizedEvent === 'tool.result') {
         setAgentStatusPhase(agentId, 'thinking', { runId: activeRunId || runIdInEvent || null, detail: null })
+        schedulePostSendRefreshes()
         return
       }
       return
@@ -1346,7 +1381,7 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  async function sendMessage(content: string, model?: string) {
+  async function sendMessage(content: string, model?: string, options?: { showProcess?: boolean }) {
     const text = content.trim()
     if (!text) return
     if (!sessionKey.value.trim()) {
@@ -1370,6 +1405,7 @@ export const useChatStore = defineStore('chat', () => {
       runId: idempotencyKey,
       detail: null,
       sessionKey: sessionKey.value.trim(),
+      showProcess: options?.showProcess ?? null,
     })
     const localMessage: ChatMessage = {
       id: idempotencyKey,
@@ -1417,7 +1453,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function adoptCreatedSessionMessage(
     content: string,
-    options: { idempotencyKey: string; runId?: string },
+    options: { idempotencyKey: string; runId?: string; showProcess?: boolean },
   ) {
     const text = content.trim()
     if (!text || !sessionKey.value.trim()) return
@@ -1433,6 +1469,7 @@ export const useChatStore = defineStore('chat', () => {
       runId,
       detail: null,
       sessionKey: sessionKey.value.trim(),
+      showProcess: options.showProcess ?? null,
     })
     const alreadyVisible = messages.value.some((item) => item.role === 'user' && item.content === text)
     if (!alreadyVisible) {

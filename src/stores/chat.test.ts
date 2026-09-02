@@ -805,6 +805,34 @@ describe('post-send history fallback', () => {
     await request
   })
 
+  it('restarts persisted process refreshes when a long run reaches a tool boundary', async () => {
+    vi.useFakeTimers()
+    const sessionKey = 'agent:main:main:dm:webchat-long-process'
+    mocks.sendChatMessage.mockResolvedValue(undefined)
+    mocks.listChatHistory.mockResolvedValue([])
+
+    const store = useChatStore()
+    store.setSessionKey(sessionKey)
+    await store.sendMessage('生成最近七天的综述报告')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(mocks.listChatHistory).toHaveBeenCalledTimes(3)
+
+    store.handleAgentStatusEvent('agent', {
+      sessionKey,
+      stream: 'tool',
+      data: {
+        phase: 'result',
+        name: 'report-generator',
+        toolCallId: 'tool-call-1',
+      },
+    })
+    await vi.advanceTimersByTimeAsync(1_400)
+
+    expect(mocks.listChatHistory).toHaveBeenCalledTimes(4)
+    expect(mocks.listChatHistory).toHaveBeenLastCalledWith(sessionKey)
+    store.clearTimers()
+  })
+
   it('keeps a realtime report reply while Gateway history is still user-only', async () => {
     vi.useFakeTimers()
     const flush = stubAnimationFrames()

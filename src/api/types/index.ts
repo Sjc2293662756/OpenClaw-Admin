@@ -140,6 +140,18 @@ export interface ChatMessageContent {
   mediaPath?: string
 }
 
+export interface ChatProcessMetadata {
+  kind: 'user_visible_process'
+  sessionKey: string
+  runId: string
+  stepId: string
+  sequence: number
+  publicText: string
+  status: 'in_progress' | 'completed'
+  visible: boolean
+  safe: boolean
+}
+
 export interface ChatMessage {
   id?: string
   role: 'user' | 'assistant' | 'tool' | 'system'
@@ -153,6 +165,8 @@ export interface ChatMessage {
   toolName?: string
   isError?: boolean
   rawContent?: ChatMessageContent[]
+  gatewaySequence?: number
+  process?: ChatProcessMetadata
 }
 
 export interface ChatSendParams {

@@ -11,6 +11,7 @@ import { migrateStorageWatermarkTables } from './lib/storage-watermark-service.j
 import { migrateAlertStreamState } from './lib/alert-stream-state.js'
 import { migrateAlertNotificationPreferences } from './lib/alert-notification-preferences.js'
 import { migrateChatDisplayPreferences } from './lib/chat-display-preferences.js'
+import { migrateChatProcessProjection } from './lib/chat-process-projection.js'
 import { migrateModulePermissions } from './lib/module-permissions.js'
 import { migrateAlertNotificationStore } from './lib/alert-notification-store.js'
 
@@ -250,6 +251,7 @@ migrateStorageWatermarkTables(db)
 migrateAlertStreamState(db)
 migrateAlertNotificationPreferences(db)
 migrateChatDisplayPreferences(db)
+migrateChatProcessProjection(db)
 migrateModulePermissions(db)
 migrateAlertNotificationStore(db)
 

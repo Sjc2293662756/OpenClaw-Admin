@@ -41,7 +41,7 @@ import { stripInternalDocxMediaPaths } from '@/utils/report-media'
 import { isLiveChatProcessForSession } from '@/utils/chat-live-process'
 import { interleaveReportTranscriptItems } from '@/utils/chat-report-attachments'
 import {
-  isConversationTranscriptRole,
+  isConversationTranscriptMessage,
   projectConversationStructuredMessage,
 } from '@/utils/chat-transcript-projection'
 import { useEdgeTTS } from '@/composables/useEdgeTTS'
@@ -625,6 +625,15 @@ function prepareMessageRender(item: ChatMessage): CachedMessageRender {
   const cached = messageRenderCache.get(item)
   if (cached !== undefined) return cached
 
+  if (item.process?.kind === 'user_visible_process') {
+    const prepared = {
+      structured: null,
+      html: renderChatMarkdown(item.process.publicText, item.role),
+    }
+    messageRenderCache.set(item, prepared)
+    return prepared
+  }
+
   let structured: StructuredMessageView | null = null
   if (item.rawContent && Array.isArray(item.rawContent)) {
     const parsed = parseRawContent(item.rawContent)
@@ -668,7 +677,7 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
   for (let idx = 0; idx < list.length; idx += 1) {
     const item = list[idx]
     if (!item) continue
-    if (!isConversationTranscriptRole(item.role)) continue
+    if (!isConversationTranscriptMessage(item)) continue
     const prepared = prepareMessageRender(item)
     if (!prepared) continue
     rendered.push({
@@ -897,7 +906,7 @@ const agentBusy = computed(() => {
 })
 
 const showLiveThinkingProcess = computed(() => (
-  chatDisplayPreferences.preferences.showThinkingProcess && agentBusy.value
+  (currentAgentStatus.value.showProcess ?? chatDisplayPreferences.preferences.showThinkingProcess) && agentBusy.value
 ))
 
 const agentBusyToolName = computed(() => {
@@ -2734,6 +2743,7 @@ async function handleSend() {
   if (!content) return
   if (agentBusy.value) return
 
+  const showProcessForRun = chatDisplayPreferences.preferences.showThinkingProcess
   try {
     let createdWorkspaceSession = false
     let createdRun: { idempotencyKey: string; runId?: string } | null = null
@@ -2752,10 +2762,10 @@ async function handleSend() {
     const key = ensureSessionKey()
     chatStore.setSessionKey(key)
     if (createdRun) {
-      chatStore.adoptCreatedSessionMessage(content, createdRun)
+      chatStore.adoptCreatedSessionMessage(content, { ...createdRun, showProcess: showProcessForRun })
       await chatStore.fetchHistory(key, { silent: true, clearError: false })
     } else {
-      await chatStore.sendMessage(content)
+      await chatStore.sendMessage(content, undefined, { showProcess: showProcessForRun })
     }
     if (workspaceMode.value) {
       if (createdWorkspaceSession) {

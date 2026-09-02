@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomUUID } from 'crypto'
 import { sendError, sendOk } from '../lib/api-response.js'
 import {
   createWorkspaceSession,
@@ -6,6 +7,11 @@ import {
   setWorkspaceSessionTitleIfEmpty,
 } from '../lib/session-ownership-service.js'
 import { attachReportProvenance } from '../report-provenance-service.js'
+import { readChatDisplayPreferences } from '../lib/chat-display-preferences.js'
+import {
+  beginChatProcessRun,
+  setChatProcessGatewayRunId,
+} from '../lib/chat-process-projection.js'
 
 function cleanText(value, maxLength = 200_000) {
   return typeof value === 'string' ? value.trim().slice(0, maxLength) : ''
@@ -36,6 +42,9 @@ export function createWorkspaceSessionsRouter({
   gateway,
   reportProvenanceOptions = {},
   attachProvenance = attachReportProvenance,
+  readDisplayPreferences = readChatDisplayPreferences,
+  beginProcessRun = beginChatProcessRun,
+  setProcessGatewayRunId = setChatProcessGatewayRunId,
 }) {
   const router = Router()
 
@@ -52,7 +61,7 @@ export function createWorkspaceSessionsRouter({
         throw new Error('Gateway unavailable')
       }
 
-      const idempotencyKey = cleanText(req.body?.idempotencyKey, 160)
+      const idempotencyKey = cleanText(req.body?.idempotencyKey, 160) || `web-${randomUUID()}`
       const activeDataSource = db.prepare('SELECT id FROM data_sources WHERE is_active = 1 LIMIT 1').get()
       const provenance = attachProvenance({ sessionKey, message, idempotencyKey }, req.user, {
         ...reportProvenanceOptions,
@@ -62,6 +71,14 @@ export function createWorkspaceSessionsRouter({
       if (reportProvenanceOptions.enabled === true && provenance?.stored !== true) {
         throw new Error('Web report provenance was not persisted')
       }
+      beginProcessRun({
+        db,
+        userId: req.user.id,
+        sessionKey,
+        clientRunId: idempotencyKey,
+        showProcess: readDisplayPreferences(db, req.user.id).showThinkingProcess,
+        historyPayload: [],
+      })
       const result = await gateway.call('sessions.create', {
         key: sessionKey,
         message,
@@ -70,6 +87,7 @@ export function createWorkspaceSessionsRouter({
       if (createdKey !== sessionKey || result?.ok === false || result?.runStarted !== true || result?.runError) {
         throw new Error('Gateway did not atomically create the requested conversation')
       }
+      setProcessGatewayRunId(db, req.user.id, sessionKey, idempotencyKey, result?.runId || result?.run_id)
 
       // The Gateway conversation is already authoritative at this point. A
       // best-effort title update must not hide a successfully created session.

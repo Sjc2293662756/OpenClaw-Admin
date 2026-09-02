@@ -44,7 +44,7 @@ import { formatDate, formatRelativeTime, truncate } from '@/utils/format'
 import { renderSimpleMarkdown } from '@/utils/markdown'
 import { isLiveChatProcessForSession } from '@/utils/chat-live-process'
 import {
-  isConversationTranscriptRole,
+  isConversationTranscriptMessage,
   projectConversationStructuredMessage,
 } from '@/utils/chat-transcript-projection'
 import { interleaveReportTranscriptItems } from '@/utils/chat-report-attachments'
@@ -1633,7 +1633,16 @@ const visibleMessageEntries = computed<RenderMessage[]>(() => {
   for (let idx = 0; idx < list.length; idx += 1) {
     const item = list[idx]
     if (!item) continue
-    if (!isConversationTranscriptRole(item.role)) continue
+    if (!isConversationTranscriptMessage(item)) continue
+    if (item.process?.kind === 'user_visible_process') {
+      rendered.push({
+        key: item.id || `${item.role}-${idx}`,
+        messageIndex: idx,
+        item: { ...item, content: item.process.publicText, rawContent: undefined },
+        structured: null,
+      })
+      continue
+    }
     
     if (item.rawContent && Array.isArray(item.rawContent)) {
       const parsed = parseRawContent(item.rawContent)
@@ -1697,7 +1706,7 @@ const agentBusy = computed(() => {
 })
 
 const showLiveThinkingProcess = computed(() => (
-  chatDisplayPreferences.preferences.showThinkingProcess && agentBusy.value
+  (currentAgentStatus.value.showProcess ?? chatDisplayPreferences.preferences.showThinkingProcess) && agentBusy.value
 ))
 
 const currentToolProgress = computed(() => {
@@ -1948,7 +1957,9 @@ async function handleSend() {
   try {
     const sessionKey = selectedSessionKey.value || (selectedAgent.value ? `${selectedAgent.value.id}:main` : 'main')
     chatStore.setSessionKey(sessionKey)
-    await chatStore.sendMessage(content)
+    await chatStore.sendMessage(content, undefined, {
+      showProcess: chatDisplayPreferences.preferences.showThinkingProcess,
+    })
     void fetchSessionTokenUsage(sessionKey)
     draft.value = ''
     await nextTick()

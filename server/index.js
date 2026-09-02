@@ -47,6 +47,12 @@ import { createMediaRouter } from './routes/media.js'
 import { createStorageWatermarkRouter } from './routes/storage-watermark.js'
 import { createModulePermissionsRouter } from './routes/module-permissions.js'
 import { createChatPreferencesRouter } from './routes/chat-preferences.js'
+import { readChatDisplayPreferences } from './lib/chat-display-preferences.js'
+import {
+  beginChatProcessRun,
+  projectChatHistoryProcessMetadata,
+  setChatProcessGatewayRunId,
+} from './lib/chat-process-projection.js'
 import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
@@ -1770,6 +1776,34 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
         })
       }
     }
+    let chatProcessRun = null
+    if (method === 'chat.send') {
+      const clientRunId = typeof params?.idempotencyKey === 'string' ? params.idempotencyKey.trim() : ''
+      if (!clientRunId) {
+        return sendError(res, {
+          status: 400,
+          code: 'CHAT_PROCESS_SNAPSHOT_INVALID',
+          message: '本次对话缺少稳定执行标识，请刷新后重试',
+        })
+      }
+      try {
+        const historyBeforeSend = await gateway.call('chat.history', { sessionKey })
+        chatProcessRun = beginChatProcessRun({
+          db,
+          userId: req.user.id,
+          sessionKey,
+          clientRunId,
+          showProcess: readChatDisplayPreferences(db, req.user.id).showThinkingProcess,
+          historyPayload: historyBeforeSend,
+        })
+      } catch {
+        return sendError(res, {
+          status: 409,
+          code: 'CHAT_PROCESS_SNAPSHOT_UNAVAILABLE',
+          message: '暂时无法确认本次执行的过程显示边界，请稍后重试',
+        })
+      }
+    }
     const activeDataSource = method === 'chat.send'
       ? db.prepare('SELECT id FROM data_sources WHERE is_active = 1 LIMIT 1').get()
       : null
@@ -1788,6 +1822,15 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
       })
       : { params, attached: false }
     const result = await gateway.call(method, reportProvenance.params)
+    if (chatProcessRun) {
+      setChatProcessGatewayRunId(
+        db,
+        req.user.id,
+        sessionKey,
+        chatProcessRun.client_run_id,
+        result?.runId || result?.run_id,
+      )
+    }
     // Save the first successful WebChat request as its fixed, local title.
     // The title is never model-generated and is not sent to the Gateway.
     if (isConversationSend) setWorkspaceSessionTitleIfEmpty(db, sessionKey, webSessionTitleCandidate)
@@ -1798,7 +1841,9 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
       else if (SAFE_PLUGIN_STATUS_METHODS.has(method)) payload = projectSafePluginsPayload(result)
       else if (SAFE_SKILL_READ_METHODS.has(method)) payload = projectSafeSkillsPayload(result)
     }
-    if (method === 'sessions.usage' || method === 'usage.sessions') {
+    if (method === 'chat.history') {
+      payload = projectChatHistoryProcessMetadata(db, req.user.id, sessionKey, payload)
+    } else if (method === 'sessions.usage' || method === 'usage.sessions') {
       payload = filterSessionUsagePayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))
     } else if (isSessionList) {
       payload = filterSessionListPayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))

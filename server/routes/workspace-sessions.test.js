@@ -65,6 +65,7 @@ function createFixture({ gatewayCall, provenanceStored = true } = {}) {
   const db = createDb()
   const calls = []
   const provenance = []
+  const processRuns = []
   const audits = []
   const gateway = {
     isConnected: true,
@@ -89,8 +90,14 @@ function createFixture({ gatewayCall, provenanceStored = true } = {}) {
       provenance.push({ params, user, options })
       return { stored: provenanceStored }
     },
+    readDisplayPreferences: () => ({ showThinkingProcess: true }),
+    beginProcessRun: (params) => {
+      processRuns.push({ ...params, historyPayload: [...params.historyPayload] })
+      return { client_run_id: params.clientRunId }
+    },
+    setProcessGatewayRunId: (...args) => processRuns.push({ gatewayRun: args.slice(1) }),
   }))
-  return { app, db, calls, provenance, audits }
+  return { app, db, calls, provenance, processRuns, audits }
 }
 
 async function withServer(fixture, run) {
@@ -129,6 +136,11 @@ test('atomically creates a Gateway transcript with the first WebChat message and
     assert.equal(fixture.provenance[0].params.message, '生成最近七天的综述报告')
     assert.equal(fixture.provenance[0].options.dataSourceId, 'source-238web')
     assert.equal(fixture.provenance[0].options.transportMetadata, false)
+    assert.equal(fixture.processRuns[0].sessionKey, body.sessionKey)
+    assert.equal(fixture.processRuns[0].clientRunId, 'web-request-1')
+    assert.equal(fixture.processRuns[0].showProcess, true)
+    assert.deepEqual(fixture.processRuns[0].historyPayload, [])
+    assert.deepEqual(fixture.processRuns[1].gatewayRun, ['user-1', body.sessionKey, 'web-request-1', 'gateway-run-1'])
     assert.deepEqual(fixture.db.prepare(
       'SELECT session_title, status FROM workspace_sessions WHERE session_key = ?'
     ).get(body.sessionKey), {
