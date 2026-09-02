@@ -23,6 +23,11 @@ extension_plugin='/home/netinside/.openclaw/extensions/napm-openclaw-plugin/napm
 loader='/home/netinside/.openclaw/extensions/napm-openclaw-plugin/index.mjs'
 plugin_hash=$(sha256sum "$plugin" | awk '{print $1}')
 extension_plugin_hash=$(sha256sum "$extension_plugin" | awk '{print $1}')
+admin_server_hash=$(sha256sum /opt/gaiop/admin/server/index.js | awk '{print $1}')
+admin_index_hash=$(sha256sum /opt/gaiop/admin/dist/index.html | awk '{print $1}')
+admin_chat_asset=$(grep -E '^ChatWorkspace-[A-Za-z0-9_-]+\.js$' /opt/gaiop/admin/dist/.release-assets)
+test "$(printf '%s\n' "$admin_chat_asset" | sed '/^$/d' | wc -l | tr -d '[:space:]')" = 1
+admin_chat_asset_hash=$(sha256sum "/opt/gaiop/admin/dist/assets/$admin_chat_asset" | awk '{print $1}')
 ownership_guard=$(grep -Fc 'if (!shouldOwnAutomaticReportReplyDispatch(messageCtx))' "$plugin" || true)
 dispatch_anchor=$(grep -Fc 'const messageCtx = buildReplyDispatchMessageContext(event);' "$plugin" || true)
 ownership_function=$(grep -Fc 'function shouldOwnAutomaticReportReplyDispatch' "$plugin" || true)
@@ -119,7 +124,40 @@ if (record?.sessionFile) {
 process.stdout.write(JSON.stringify({ indexed: Boolean(record), events }))
 NODE
 )
-sudo -u gaiop env GAIOP_TARGET_SESSION_KEY="$session_key" GAIOP_PLUGIN_AUDIT_EVIDENCE="$plugin_audit_evidence" GAIOP_TRANSCRIPT_EVIDENCE="$transcript_evidence" GAIOP_RUNTIME_PLUGIN_HASH="$plugin_hash" GAIOP_RUNTIME_OWNERSHIP_GUARD="$ownership_guard" GAIOP_RUNTIME_DISPATCH_ANCHOR="$dispatch_anchor" GAIOP_RUNTIME_OWNERSHIP_FUNCTION="$ownership_function" GAIOP_RUNTIME_WECOM_CONTRACT="$wecom_contract" GAIOP_RUNTIME_LOADER_REFERENCE="$loader_reference" GAIOP_RUNTIME_LOADER_WORKSPACE_REFERENCE="$loader_workspace_reference" GAIOP_RUNTIME_EXTENSION_PLUGIN_HASH="$extension_plugin_hash" GAIOP_RUNTIME_EXTENSION_OWNERSHIP_GUARD="$extension_ownership_guard" GAIOP_RUNTIME_EXTENSION_DISPATCH_ANCHOR="$extension_dispatch_anchor" GAIOP_RUNTIME_EXTENSION_OWNERSHIP_FUNCTION="$extension_ownership_function" GAIOP_RUNTIME_EXTENSION_WECOM_CONTRACT="$extension_wecom_contract" "$node_bin" --env-file=/etc/gaiop/admin.env --input-type=module - <<'NODE'
+runtime_state=$("$node_bin" <<'NODE'
+const cp = require('node:child_process')
+function command(file, args) {
+  try { return cp.execFileSync(file, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() }
+  catch (error) { return String(error?.stdout || '').trim() }
+}
+function unit(name) {
+  return { active: command('systemctl', ['is-active', name]) || 'unknown', enabled: command('systemctl', ['is-enabled', name]) || 'unknown' }
+}
+function http(url, extra = []) {
+  return command('curl', ['-ksS', '-o', '/dev/null', '-w', '%{http_code}', '--max-time', '8', ...extra, url]) || '000'
+}
+const uid = command('id', ['-u', 'netinside'])
+const gateway = command('sudo', ['-u', 'netinside', 'env', 'XDG_RUNTIME_DIR=/run/user/' + uid, 'systemctl', '--user', 'is-active', 'openclaw-gateway.service']) || 'unknown'
+const timers = {}
+for (const name of [
+  'gaiop-admin-retention-cleanup.timer', 'gaiop-report-retention-cleanup.timer',
+  'gaiop-storage-watermark-monitor.timer', 'gaiop-upgrade-retention-cleanup.timer',
+  'gaiop-admin-sqlite-backup.timer', 'gaiop-upgrade-sqlite-backup.timer',
+  'gaiop-admin-session-retention.timer',
+]) timers[name] = unit(name)
+process.stdout.write(JSON.stringify({
+  services: { gateway, admin: unit('gaiop-admin.service'), upgrade: unit('gaiop-upgrade.service'), caddy: unit('caddy.service') },
+  health: {
+    admin: http('http://127.0.0.1:3000/api/health'),
+    upgrade: http('http://127.0.0.1:18900/health'),
+    upgradeUnauthenticated: http('http://127.0.0.1:18900/api/v1/upgrade/status'),
+    https: http('https://127.0.0.1/', ['-H', 'Host: 101.254.114.237']),
+  },
+  timers,
+}))
+NODE
+)
+sudo -u gaiop env GAIOP_TARGET_SESSION_KEY="$session_key" GAIOP_PLUGIN_AUDIT_EVIDENCE="$plugin_audit_evidence" GAIOP_TRANSCRIPT_EVIDENCE="$transcript_evidence" GAIOP_RUNTIME_STATE="$runtime_state" GAIOP_ADMIN_SERVER_HASH="$admin_server_hash" GAIOP_ADMIN_INDEX_HASH="$admin_index_hash" GAIOP_ADMIN_CHAT_ASSET="$admin_chat_asset" GAIOP_ADMIN_CHAT_ASSET_HASH="$admin_chat_asset_hash" GAIOP_RUNTIME_PLUGIN_HASH="$plugin_hash" GAIOP_RUNTIME_OWNERSHIP_GUARD="$ownership_guard" GAIOP_RUNTIME_DISPATCH_ANCHOR="$dispatch_anchor" GAIOP_RUNTIME_OWNERSHIP_FUNCTION="$ownership_function" GAIOP_RUNTIME_WECOM_CONTRACT="$wecom_contract" GAIOP_RUNTIME_LOADER_REFERENCE="$loader_reference" GAIOP_RUNTIME_LOADER_WORKSPACE_REFERENCE="$loader_workspace_reference" GAIOP_RUNTIME_EXTENSION_PLUGIN_HASH="$extension_plugin_hash" GAIOP_RUNTIME_EXTENSION_OWNERSHIP_GUARD="$extension_ownership_guard" GAIOP_RUNTIME_EXTENSION_DISPATCH_ANCHOR="$extension_dispatch_anchor" GAIOP_RUNTIME_EXTENSION_OWNERSHIP_FUNCTION="$extension_ownership_function" GAIOP_RUNTIME_EXTENSION_WECOM_CONTRACT="$extension_wecom_contract" "$node_bin" --env-file=/etc/gaiop/admin.env --input-type=module - <<'NODE'
 import fs from 'node:fs'
 import path from 'node:path'
 import Database from '/opt/gaiop/admin/node_modules/better-sqlite3/lib/index.js'
@@ -130,6 +168,7 @@ const dataDir = String(process.env.GAIOP_ADMIN_DATA_DIR || '/var/lib/gaiop/admin
 const reportRoot = String(process.env.GAIOP_REPORTS_DIR || '/var/lib/gaiop/reports')
 const pluginAuditEvidence = JSON.parse(String(process.env.GAIOP_PLUGIN_AUDIT_EVIDENCE || '{}'))
 const transcriptEvidence = JSON.parse(String(process.env.GAIOP_TRANSCRIPT_EVIDENCE || '{}'))
+const runtimeState = JSON.parse(String(process.env.GAIOP_RUNTIME_STATE || '{}'))
 const db = new Database(path.join(dataDir, 'wizard.db'), { readonly: true, fileMustExist: true })
 
 function short(value, limit = 160) {
@@ -267,6 +306,18 @@ const exactAuditMatches = walk(reportRoot).filter((file) => file.endsWith('.json
     return []
   }
 })
+const businessCounts = Object.fromEntries(['users', 'workspace_sessions', 'report_files', 'report_deliveries', 'audit_logs']
+  .map((table) => [table, Number(db.prepare('SELECT COUNT(*) AS count FROM ' + table).get().count)]))
+const formalFiles = walk(reportRoot)
+const auditFiles = formalFiles.filter((file) => file.endsWith('.json'))
+const registeredPairs = db.prepare('SELECT stored_name, audit_name FROM report_files').all().filter((row) =>
+  regularFile(safePath(row.stored_name)).regular && regularFile(safePath(row.audit_name)).regular)
+const formalStorage = {
+  totalFiles: formalFiles.length,
+  reportFiles: formalFiles.filter((file) => !file.endsWith('.json')).length,
+  auditFiles: auditFiles.length,
+  registeredPairs: registeredPairs.length,
+}
 
 const gateway = new OpenClawGateway(
   process.env.OPENCLAW_WS_URL,
@@ -322,6 +373,15 @@ try {
 
 process.stdout.write(JSON.stringify({
   sessionKey: target,
+  adminRuntime: {
+    serverHash: String(process.env.GAIOP_ADMIN_SERVER_HASH || ''),
+    indexHash: String(process.env.GAIOP_ADMIN_INDEX_HASH || ''),
+    chatAsset: String(process.env.GAIOP_ADMIN_CHAT_ASSET || ''),
+    chatAssetHash: String(process.env.GAIOP_ADMIN_CHAT_ASSET_HASH || ''),
+  },
+  runtimeState,
+  businessCounts,
+  formalStorage,
   runtimePlugin: {
     hash: String(process.env.GAIOP_RUNTIME_PLUGIN_HASH || ''),
     ownershipGuardCount: Number(process.env.GAIOP_RUNTIME_OWNERSHIP_GUARD || 0),
