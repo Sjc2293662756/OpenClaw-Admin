@@ -211,6 +211,8 @@ export function createUsersRouter({
       // record. Keep the existing delete lifecycle free of inaccessible rows.
       const preferencesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alert_notification_preferences'").get()
       if (preferencesTable) db.prepare('DELETE FROM alert_notification_preferences WHERE user_id = ?').run(user.id)
+      const chatPreferencesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_display_preferences'").get()
+      if (chatPreferencesTable) db.prepare('DELETE FROM chat_display_preferences WHERE user_id = ?').run(user.id)
       const overridesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_module_permission_overrides'").get()
       if (overridesTable) db.prepare('DELETE FROM user_module_permission_overrides WHERE user_id = ?').run(user.id)
       db.prepare('DELETE FROM users WHERE id = ?').run(user.id)

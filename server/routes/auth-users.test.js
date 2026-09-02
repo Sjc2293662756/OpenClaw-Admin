@@ -15,6 +15,7 @@ import { sendError } from '../lib/api-response.js'
 import { createAuthRouter } from './auth.js'
 import { createUsersRouter } from './users.js'
 import { migrateAlertNotificationPreferences } from '../lib/alert-notification-preferences.js'
+import { migrateChatDisplayPreferences } from '../lib/chat-display-preferences.js'
 import { createModuleAccessMiddleware, migrateModulePermissions, resolveEffectiveModulePermissions } from '../lib/module-permissions.js'
 
 const PASSWORDS = {
@@ -69,6 +70,7 @@ async function createFixture({ loginRateLimiter } = {}) {
   `)
   migrateUserSecurityColumns(db)
   migrateAlertNotificationPreferences(db)
+  migrateChatDisplayPreferences(db)
   migrateModulePermissions(db)
   const insert = db.prepare(`
     INSERT INTO users (
@@ -248,10 +250,12 @@ test('administrative reset, deletion, and recreation clear the matching login lo
       await fixture.login('basic-user', 'WrongPass9!')
     }
     fixture.db.prepare('INSERT INTO alert_notification_preferences (user_id, updated_at) VALUES (?, ?)').run('basic-id', 1)
+    fixture.db.prepare('INSERT INTO chat_display_preferences (user_id, updated_at) VALUES (?, ?)').run('basic-id', 1)
     const deleted = await fixture.request('/api/users/basic-id', { token: initial.token, method: 'DELETE' })
     assert.equal(deleted.response.status, 200)
     assert.equal(fixture.loginFailures.getState('basic-user').failures, 0)
     assert.equal(fixture.db.prepare('SELECT COUNT(*) AS count FROM alert_notification_preferences WHERE user_id = ?').get('basic-id').count, 0)
+    assert.equal(fixture.db.prepare('SELECT COUNT(*) AS count FROM chat_display_preferences WHERE user_id = ?').get('basic-id').count, 0)
 
     const recreated = await fixture.request('/api/users', {
       token: initial.token,

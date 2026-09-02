@@ -28,6 +28,7 @@ import { CopyOutline, RefreshOutline, SendOutline, StopCircleOutline, ChevronBac
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
+import { useChatDisplayPreferencesStore } from '@/stores/chat-display-preferences'
 import { useConfigStore } from '@/stores/config'
 import { useSessionStore } from '@/stores/session'
 import { useSkillStore } from '@/stores/skill'
@@ -62,6 +63,7 @@ const message = useMessage()
 const route = useRoute()
 const router = useRouter()
 const chatStore = useChatStore()
+const chatDisplayPreferences = useChatDisplayPreferencesStore()
 const configStore = useConfigStore()
 const sessionStore = useSessionStore()
 const skillStore = useSkillStore()
@@ -3362,7 +3364,7 @@ async function handleSend() {
                   </div>
                 </div>
 
-                <div class="chat-compose-status-line">
+                <div v-if="chatDisplayPreferences.preferences.showThinkingProcess" class="chat-compose-status-line">
                   <NSpace align="center" justify="space-between" style="width: 100%;">
                     <NTag
                       size="small"
@@ -3384,7 +3386,7 @@ async function handleSend() {
                   </NSpace>
                 </div>
 
-                <div v-if="showAgentDetails && hasAgentDetails" class="chat-agent-details">
+                <div v-if="chatDisplayPreferences.preferences.showThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
                   <NSpace vertical :size="6">
                     <NText depth="3" style="font-size: 12px;">
                       {{ t('pages.chat.agentDetails.phaseDuration', { duration: formatDurationMs(nowMs - currentAgentStatus.sinceMs) }) }}

@@ -46,6 +46,7 @@ import { createDashboardSummaryRouter } from './routes/dashboard-summary.js'
 import { createMediaRouter } from './routes/media.js'
 import { createStorageWatermarkRouter } from './routes/storage-watermark.js'
 import { createModulePermissionsRouter } from './routes/module-permissions.js'
+import { createChatPreferencesRouter } from './routes/chat-preferences.js'
 import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
@@ -590,6 +591,7 @@ app.use('/api/system-settings/branding', platformBrandingModuleMiddleware, creat
   recordAudit,
 }))
 app.use('/api', createBasicWorkspaceOnlyMiddleware(authMiddleware, recordAudit))
+app.use('/api/chat/preferences', createChatPreferencesRouter({ db, authMiddleware, recordAudit }))
 const modulePermissionRouters = createModulePermissionsRouter({
   db,
   authMiddleware,

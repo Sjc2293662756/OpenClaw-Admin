@@ -10,6 +10,7 @@ import { migrateSessionRetentionTables } from './lib/session-retention-service.j
 import { migrateStorageWatermarkTables } from './lib/storage-watermark-service.js'
 import { migrateAlertStreamState } from './lib/alert-stream-state.js'
 import { migrateAlertNotificationPreferences } from './lib/alert-notification-preferences.js'
+import { migrateChatDisplayPreferences } from './lib/chat-display-preferences.js'
 import { migrateModulePermissions } from './lib/module-permissions.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -247,6 +248,7 @@ migrateSessionRetentionTables(db)
 migrateStorageWatermarkTables(db)
 migrateAlertStreamState(db)
 migrateAlertNotificationPreferences(db)
+migrateChatDisplayPreferences(db)
 migrateModulePermissions(db)
 
 try {

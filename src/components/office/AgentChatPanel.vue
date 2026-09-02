@@ -33,6 +33,7 @@ import {
 import { useI18n } from 'vue-i18n'
 import { useOfficeStore } from '@/stores/office'
 import { useChatStore } from '@/stores/chat'
+import { useChatDisplayPreferencesStore } from '@/stores/chat-display-preferences'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useConfigStore } from '@/stores/config'
 import { useSkillStore } from '@/stores/skill'
@@ -63,6 +64,7 @@ const message = useMessage()
 const { t, locale } = useI18n()
 const officeStore = useOfficeStore()
 const chatStore = useChatStore()
+const chatDisplayPreferences = useChatDisplayPreferencesStore()
 const wsStore = useWebSocketStore()
 const configStore = useConfigStore()
 const skillStore = useSkillStore()
@@ -2511,7 +2513,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
               <NText depth="3" style="font-size: 12px;">{{ t('pages.chat.slash.noMatch') }}</NText>
             </div>
           </div>
-          <div class="chat-compose-status-line">
+          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess" class="chat-compose-status-line">
             <NTag
               size="small"
               :type="agentStatusTagType"
@@ -2531,7 +2533,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
             </NButton>
           </div>
 
-          <div v-if="showAgentDetails && hasAgentDetails" class="chat-agent-details">
+          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
             <NSpace vertical :size="6">
               <NText depth="3" style="font-size: 12px;">
                 {{ t('pages.chat.agentDetails.phaseDuration', { duration: formatDurationMs(nowMs - currentAgentStatus.sinceMs) }) }}
@@ -2907,7 +2909,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
               <NText depth="3" style="font-size: 12px;">{{ t('pages.chat.slash.noMatch') }}</NText>
             </div>
           </div>
-          <div class="chat-compose-status-line">
+          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess" class="chat-compose-status-line">
             <NTag
               size="small"
               :type="agentStatusTagType"
@@ -2927,7 +2929,7 @@ watch(selectedSessionKey, async (newSessionKey) => {
             </NButton>
           </div>
 
-          <div v-if="showAgentDetails && hasAgentDetails" class="chat-agent-details">
+          <div v-if="chatDisplayPreferences.preferences.showThinkingProcess && showAgentDetails && hasAgentDetails" class="chat-agent-details">
             <NSpace vertical :size="6">
               <NText depth="3" style="font-size: 12px;">
                 {{ t('pages.chat.agentDetails.phaseDuration', { duration: formatDurationMs(nowMs - currentAgentStatus.sinceMs) }) }}

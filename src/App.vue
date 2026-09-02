@@ -17,6 +17,7 @@ import { useLocaleStore } from "@/stores/locale";
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
 import { useAlertRealtimeStore } from '@/stores/alert-realtime'
+import { useChatDisplayPreferencesStore } from '@/stores/chat-display-preferences'
 import { createGlobalSseLifecycle } from '@/realtime/global-sse-lifecycle'
 import AlertNotificationHost from '@/components/alerts/AlertNotificationHost.vue'
 import { primeAlertNotificationSound } from '@/alerts/notification-sound'
@@ -30,6 +31,7 @@ const { t } = useI18n();
 const authStore = useAuthStore()
 const websocketStore = useWebSocketStore()
 const alertRealtimeStore = useAlertRealtimeStore()
+const chatDisplayPreferences = useChatDisplayPreferencesStore()
 const globalSseLifecycle = createGlobalSseLifecycle(websocketStore, alertRealtimeStore)
 const appTitle = computed(() => t('app.title'));
 const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
@@ -88,6 +90,7 @@ watch(
   () => [authStore.token, authStore.currentUser] as const,
   ([token, user]) => {
     globalSseLifecycle.sync(token, user)
+    void chatDisplayPreferences.syncAccount(token ? user : null)
   },
   { immediate: true },
 )

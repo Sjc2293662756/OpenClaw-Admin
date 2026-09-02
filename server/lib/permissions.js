@@ -244,6 +244,7 @@ export function isBasicWorkspaceApiRequest(user, method, originalUrl) {
   )) return true
   if (normalizedMethod === 'GET' && (path === '/api/events' || path === '/api/media')) return true
   if (normalizedMethod === 'GET' && path === '/api/module-permissions/catalog') return true
+  if ((normalizedMethod === 'GET' || normalizedMethod === 'PUT') && path === '/api/chat/preferences') return true
   if (normalizedMethod === 'PUT' && basicPasswordChangeTarget(path) === String(user.id || '')) return true
   if (path.startsWith('/api/reports/retention/') || (normalizedMethod === 'DELETE' && path.startsWith('/api/reports/'))) return false
   const moduleKey = restModuleKeyFor(normalizedMethod, path)

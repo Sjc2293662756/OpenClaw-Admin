@@ -10,6 +10,7 @@ import { useThemeStore, type ThemeMode } from '@/stores/theme'
 import { DEFAULT_ALERT_NOTIFICATION_PREFERENCES, useAlertRealtimeStore, type AlertNotificationPreferences } from '@/stores/alert-realtime'
 import type { AppLocale } from '@/i18n/locale'
 import SessionManagementPage from './SessionManagementPage.vue'
+import ChatDisplayPreferencesPanel from '@/components/chat/ChatDisplayPreferencesPanel.vue'
 
 type AlertPreferenceBooleanKey = Exclude<keyof AlertNotificationPreferences, 'updatedAt'>
 
@@ -188,6 +189,7 @@ onMounted(() => {
     </NCard>
 
     <NCard :title="text('界面偏好', 'Interface preferences')" class="app-card">
+      <ChatDisplayPreferencesPanel class="chat-display-preferences-panel" />
       <NForm label-placement="left" label-width="120" style="max-width: 500px;">
         <NFormItem :label="t('pages.settings.interfaceLanguage')">
           <NSelect
@@ -210,6 +212,7 @@ onMounted(() => {
 
 <style scoped>
 .alert-preferences-card :deep(.n-alert) { margin-bottom: 16px; }
+.chat-display-preferences-panel { margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid var(--border-color); }
 .alert-preferences-message { margin-top: 12px; }
 .alert-preferences-loading { color: var(--text-color-3); padding: 18px 0 4px; }
 .alert-preferences-master, .alert-preferences-sound { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }

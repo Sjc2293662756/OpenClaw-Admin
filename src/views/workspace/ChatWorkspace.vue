@@ -11,6 +11,7 @@ import {
   LockClosedOutline,
   LogOutOutline,
   PersonOutline,
+  SettingsOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
 import ChatPage from '@/views/chat/ChatPage.vue'
@@ -30,6 +31,7 @@ import { canAccessPage, canModifySession, MANAGEMENT_ACCESS_DENIED_NOTICE } from
 import { useI18n } from 'vue-i18n'
 import { platformBranding, usesDefaultPlatformBranding } from '@/branding/platform'
 import AlertNotificationEntry from '@/components/alerts/AlertNotificationEntry.vue'
+import ChatDisplayPreferencesPanel from '@/components/chat/ChatDisplayPreferencesPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -52,6 +54,7 @@ const creatingSession = ref(false)
 const historyRefreshing = ref(false)
 const userMenuOpen = ref(false)
 const showManagementAccessDenied = ref(false)
+const showMySettings = ref(false)
 let unsubscribeState: (() => void) | null = null
 
 const connectionText = computed(() => {
@@ -129,6 +132,11 @@ function openAdminConsole() {
     return
   }
   showManagementAccessDenied.value = true
+}
+
+function openMySettings() {
+  userMenuOpen.value = false
+  showMySettings.value = true
 }
 
 function consumeManagementAccessNotice() {
@@ -296,6 +304,9 @@ onUnmounted(() => {
           <button type="button" @click="router.push({ name: 'PasswordChange', query: { returnTo: route.fullPath } })">
             <NIcon :component="LockClosedOutline" /> {{ t('pages.gaiop.workspace.changePassword') }}
           </button>
+          <button type="button" @click="openMySettings">
+            <NIcon :component="SettingsOutline" /> {{ t('pages.gaiop.workspace.mySettings') }}
+          </button>
           <button type="button" @click="openAdminConsole">
             <NIcon :component="GridOutline" /> {{ t('pages.gaiop.workspace.adminConsole') }}
           </button>
@@ -349,6 +360,14 @@ onUnmounted(() => {
           {{ t('pages.gaiop.workspace.managementAccessDeniedConfirm') }}
         </NButton>
       </NSpace>
+    </NModal>
+    <NModal
+      v-model:show="showMySettings"
+      preset="card"
+      :title="t('pages.gaiop.workspace.mySettings')"
+      :style="{ width: 'min(620px, calc(100vw - 32px))' }"
+    >
+      <ChatDisplayPreferencesPanel />
     </NModal>
   </main>
 </template>

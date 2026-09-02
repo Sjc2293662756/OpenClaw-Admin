@@ -221,6 +221,8 @@ test('basic REST boundary allows workspace transport, alert reads/preferences, a
     ['GET', '/api/alerts/changes?afterSequence=1'],
     ['GET', '/api/alerts/preferences'],
     ['PUT', '/api/alerts/preferences'],
+    ['GET', '/api/chat/preferences'],
+    ['PUT', '/api/chat/preferences'],
     ['POST', '/api/alerts/export'],
     ['GET', '/api/reports?sourceSessionId=owned'],
     ['GET', '/api/reports/owned-report/download'],
@@ -273,6 +275,8 @@ test('basic REST middleware rejects direct management requests and preserves hea
   app.get('/api/alerts/changes', (_req, res) => res.json({ ok: true }))
   app.get('/api/alerts/preferences', (_req, res) => res.json({ ok: true }))
   app.put('/api/alerts/preferences', (_req, res) => res.json({ ok: true }))
+  app.get('/api/chat/preferences', (_req, res) => res.json({ ok: true }))
+  app.put('/api/chat/preferences', (_req, res) => res.json({ ok: true }))
   app.post('/api/alerts/export', (_req, res) => res.json({ ok: true }))
   app.put('/api/users/:id/password', (_req, res) => res.json({ ok: true }))
 
@@ -291,6 +295,8 @@ test('basic REST middleware rejects direct management requests and preserves hea
     assert.equal((await fetch(`${baseUrl}/api/alerts/changes`)).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/alerts/preferences`)).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/alerts/preferences`, { method: 'PUT' })).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/chat/preferences`)).status, 200)
+    assert.equal((await fetch(`${baseUrl}/api/chat/preferences`, { method: 'PUT' })).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/alerts/export`, { method: 'POST' })).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/users/basic-1/password`, { method: 'PUT' })).status, 200)
     assert.equal((await fetch(`${baseUrl}/api/users/other/password`, { method: 'PUT' })).status, 403)
