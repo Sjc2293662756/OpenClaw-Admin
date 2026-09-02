@@ -1700,10 +1700,6 @@ const showLiveThinkingProcess = computed(() => (
   chatDisplayPreferences.preferences.showThinkingProcess && agentBusy.value
 ))
 
-watch(showLiveThinkingProcess, (visible, wasVisible) => {
-  if (visible && !wasVisible) showAgentDetails.value = true
-})
-
 const currentToolProgress = computed(() => {
   return chatStore.toolProgress.get(currentAgentId.value) || null
 })

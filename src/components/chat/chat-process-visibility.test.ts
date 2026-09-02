@@ -13,7 +13,7 @@ describe('chat process visibility integration', () => {
     expect(chatPageSource).toContain(visibilityGuard)
     expect(chatPageSource).toContain(detailsGuard)
     expect(chatPageSource).toContain('isLiveChatProcessForSession(currentAgentStatus.value, normalizedSessionKey.value)')
-    expect(chatPageSource).toContain('watch(showLiveThinkingProcess')
+    expect(chatPageSource).not.toContain('watch(showLiveThinkingProcess')
     expect(chatPageSource).toContain('<ReportAttachmentList')
     expect(chatPageSource).toContain('v-if="agentBusy"')
     expect(chatPageSource).toContain(':component="StopCircleOutline"')
@@ -25,6 +25,7 @@ describe('chat process visibility integration', () => {
     expect(agentChatPanelSource.split('<ReportAttachmentList')).toHaveLength(3)
     expect(agentChatPanelSource.split('v-if="agentBusy"')).toHaveLength(3)
     expect(agentChatPanelSource).toContain('isLiveChatProcessForSession(currentAgentStatus.value, selectedSessionKey.value)')
+    expect(agentChatPanelSource).not.toContain('watch(showLiveThinkingProcess')
   })
 
   it('keeps the Hermes response transport permanently streaming', () => {

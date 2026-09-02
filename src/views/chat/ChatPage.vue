@@ -900,10 +900,6 @@ const showLiveThinkingProcess = computed(() => (
   chatDisplayPreferences.preferences.showThinkingProcess && agentBusy.value
 ))
 
-watch(showLiveThinkingProcess, (visible, wasVisible) => {
-  if (visible && !wasVisible) showAgentDetails.value = true
-})
-
 const agentBusyToolName = computed(() => {
   if (!agentBusy.value) return ''
 
