@@ -7,6 +7,9 @@ const wrapper = readFileSync(new URL('./Invoke-237ReportRuntimeContractRestore.p
 
 test('report runtime restoration is patch-based and rejects an unexpected archive', () => {
   assert.match(runner, /patch --dry-run/)
+  const makePatch = runner.slice(runner.indexOf('make_patch()'), runner.indexOf('apply_patch_file()'))
+  assert.match(makePatch, /if diff -u/)
+  assert.doesNotMatch(makePatch, /set \+e/)
   assert.match(runner, /expected_entries=/)
   assert.match(runner, /test "\$archive_entries" = "\$expected_entries"/)
   assert.doesNotMatch(runner, /rm -rf -- \/home\/netinside\/\.openclaw/)

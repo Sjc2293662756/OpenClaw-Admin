@@ -155,10 +155,12 @@ cp -a -- "$stage_root/current/." "$stage_root/patched/"
 
 make_patch() {
   local base="$1" fixed="$2" output="$3"
-  set +e
-  diff -u --label base --label fixed "$base" "$fixed" > "$output"
-  local code=$?
-  set -e
+  local code
+  if diff -u --label base --label fixed "$base" "$fixed" > "$output"; then
+    code=0
+  else
+    code=$?
+  fi
   test "$code" -eq 1
 }
 
