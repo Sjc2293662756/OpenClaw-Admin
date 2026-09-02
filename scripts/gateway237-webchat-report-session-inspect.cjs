@@ -147,6 +147,10 @@ for (const name of [
 ]) timers[name] = unit(name)
 process.stdout.write(JSON.stringify({
   services: { gateway, admin: unit('gaiop-admin.service'), upgrade: unit('gaiop-upgrade.service'), caddy: unit('caddy.service') },
+  adminListener: {
+    loopback3000: /127\.0\.0\.1:3000\b/u.test(command('ss', ['-lntH', 'sport = :3000'])),
+    wildcard3000: /(?:0\.0\.0\.0|\[::\]|\*):3000\b/u.test(command('ss', ['-lntH', 'sport = :3000'])),
+  },
   health: {
     admin: http('http://127.0.0.1:3000/api/health'),
     upgrade: http('http://127.0.0.1:18900/health'),
@@ -162,6 +166,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import Database from '/opt/gaiop/admin/node_modules/better-sqlite3/lib/index.js'
 import { OpenClawGateway } from '/opt/gaiop/admin/server/gateway.js'
+import { __test__ as reportRouteTests } from '/opt/gaiop/admin/server/routes/reports.js'
 
 const target = process.env.GAIOP_TARGET_SESSION_KEY
 const dataDir = String(process.env.GAIOP_ADMIN_DATA_DIR || '/var/lib/gaiop/admin')
@@ -306,6 +311,11 @@ const exactAuditMatches = walk(reportRoot).filter((file) => file.endsWith('.json
     return []
   }
 })
+const accessContract = reportRows.length === 1 ? {
+  ownerBasicVisible: reportRouteTests.canReadReport({ id: reportRows[0].source_user_id, role: 'basic' }, reportRows[0]),
+  ownerStandardVisible: reportRouteTests.canReadReport({ id: reportRows[0].source_user_id, role: 'standard' }, reportRows[0]),
+  nonOwnerBasicHidden: !reportRouteTests.canReadReport({ id: 'production-non-owner-probe', role: 'basic' }, reportRows[0]),
+} : null
 const businessCounts = Object.fromEntries(['users', 'workspace_sessions', 'report_files', 'report_deliveries', 'audit_logs']
   .map((table) => [table, Number(db.prepare('SELECT COUNT(*) AS count FROM ' + table).get().count)]))
 const formalFiles = walk(reportRoot)
@@ -402,6 +412,7 @@ process.stdout.write(JSON.stringify({
   transcriptEvidence,
   workspace,
   reports,
+  accessContract,
   recentReports,
   exactAuditMatches,
   history,
