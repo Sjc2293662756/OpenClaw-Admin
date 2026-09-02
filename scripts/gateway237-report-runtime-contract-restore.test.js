@@ -12,6 +12,14 @@ test('report runtime restoration is patch-based and rejects an unexpected archiv
   assert.doesNotMatch(runner, /rm -rf -- \/home\/netinside\/\.openclaw/)
 })
 
+test('inspect mode reports patch compatibility without switching production files', () => {
+  const inspect = runner.slice(runner.indexOf('if [ "$deployment_mode" = inspect ]'), runner.indexOf('test "$plugin_patch_status" = applicable'))
+  assert.match(inspect, /status: 'inspected'/)
+  assert.match(inspect, /runtimeHashes/)
+  assert.doesNotMatch(inspect, /phase=switch/)
+  assert.doesNotMatch(inspect, /install -o netinside/)
+})
+
 test('report runtime restoration backs up code and SQLite before switching', () => {
   assert.match(runner, /admin-code-config\.tgz/)
   assert.match(runner, /source\.backup\(process\.argv\[3\]\)/)
@@ -46,4 +54,5 @@ test('PowerShell wrapper loads only the user-scoped encrypted connection record'
   assert.match(wrapper, /Import-Clixml/)
   assert.match(wrapper, /SecureStringToBSTR/)
   assert.match(wrapper, /ZeroFreeBSTR/)
+  assert.match(wrapper, /ValidateSet\('Inspect', 'Release'\)/)
 })

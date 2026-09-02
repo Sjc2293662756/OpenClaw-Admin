@@ -2,6 +2,8 @@
 
 [CmdletBinding()]
 param(
+  [ValidateSet('Inspect', 'Release')]
+  [string]$Mode = 'Release',
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^[0-9]{8}T[0-9]{6}Z$')]
   [string]$ReleaseId,
@@ -44,6 +46,7 @@ try {
   $start.EnvironmentVariables['GAIOP_REPORT_RUNTIME_SSH_USERNAME'] = [string]$stored.Username
   $start.EnvironmentVariables['GAIOP_REPORT_RUNTIME_SSH_PASSWORD'] = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
   $start.EnvironmentVariables['GAIOP_REPORT_RUNTIME_RELEASE_ID'] = $ReleaseId
+  $start.EnvironmentVariables['GAIOP_REPORT_RUNTIME_MODE'] = $Mode.ToLowerInvariant()
   $start.EnvironmentVariables['GAIOP_REPORT_RUNTIME_ARCHIVE'] = (Resolve-Path -LiteralPath $ArchivePath).Path
   $start.EnvironmentVariables['GAIOP_REPORT_RUNTIME_ARCHIVE_SHA256'] = $ArchiveSha256.ToLowerInvariant()
 

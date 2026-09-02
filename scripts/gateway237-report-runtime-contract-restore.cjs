@@ -7,6 +7,7 @@ const { createReadStream } = require('node:fs')
 const archivePath = String(process.env.GAIOP_REPORT_RUNTIME_ARCHIVE || '').trim()
 const archiveSha256 = String(process.env.GAIOP_REPORT_RUNTIME_ARCHIVE_SHA256 || '').trim().toLowerCase()
 const releaseId = String(process.env.GAIOP_REPORT_RUNTIME_RELEASE_ID || '').trim()
+const deploymentMode = String(process.env.GAIOP_REPORT_RUNTIME_MODE || 'release').trim().toLowerCase()
 const connection = {
   host: String(process.env.GAIOP_REPORT_RUNTIME_SSH_HOST || '').trim(),
   username: String(process.env.GAIOP_REPORT_RUNTIME_SSH_USERNAME || '').trim(),
@@ -21,6 +22,7 @@ if (
   || !connection.host
   || !connection.username
   || !connection.password
+  || !['inspect', 'release'].includes(deploymentMode)
 ) {
   throw new Error('Controlled report runtime restoration inputs are incomplete.')
 }
@@ -69,6 +71,7 @@ function readLastJson(output) {
 function deploymentScript(remoteArchive) {
   return String.raw`set -Eeuo pipefail
 release_id='${releaseId}'
+deployment_mode='${deploymentMode}'
 remote_archive='${remoteArchive}'
 expected_archive_sha='${archiveSha256}'
 stage_root="/var/tmp/gaiop-report-runtime-$release_id"
@@ -165,10 +168,58 @@ apply_patch_file() {
   patch --silent "$current" < "$patch_file"
 }
 
+patch_status() {
+  local current="$1" patch_file="$2"
+  if patch --dry-run --silent "$current" < "$patch_file"; then
+    printf applicable
+  else
+    printf incompatible
+  fi
+}
+
 phase=patch_dry_run
 make_patch "$stage_root/archive/base/napm-openclaw-plugin.remote.js" "$stage_root/archive/fixed/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch"
 make_patch "$stage_root/archive/base/skills/openclaw-napm-report/services/ReportStorageService.js" "$stage_root/archive/fixed/skills/openclaw-napm-report/services/ReportStorageService.js" "$stage_root/patches/storage.patch"
 make_patch "$stage_root/archive/base/skills/openclaw-napm-report/services/ReportInputContractService.js" "$stage_root/archive/fixed/skills/openclaw-napm-report/services/ReportInputContractService.js" "$stage_root/patches/input.patch"
+plugin_patch_status=$(patch_status "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch")
+storage_patch_status=$(patch_status "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch")
+input_patch_status=$(patch_status "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch")
+if [ "$deployment_mode" = inspect ]; then
+  phase=inspected
+  trap - ERR
+  PLUGIN_PATCH_STATUS="$plugin_patch_status" STORAGE_PATCH_STATUS="$storage_patch_status" INPUT_PATCH_STATUS="$input_patch_status" \
+    PLUGIN_CONTRACT=$(grep -Fq 'shouldOwnAutomaticReportReplyDispatch' "$plugin_target" && printf present || printf missing) \
+    STORAGE_CONTRACT=$(grep -Fq 'GAIOP_REPORTS_DIR' "$storage_target" && printf present || printf missing) \
+    INPUT_CONTRACT=$(grep -Fq 'sourceMessagePreview' "$input_target" && printf present || printf missing) \
+    PLUGIN_SHA=$(sha256sum "$plugin_target" | awk '{print $1}') \
+    STORAGE_SHA=$(sha256sum "$storage_target" | awk '{print $1}') \
+    INPUT_SHA=$(sha256sum "$input_target" | awk '{print $1}') \
+    "$node_bin" - <<'NODE'
+process.stdout.write(JSON.stringify({
+  completed: true,
+  status: 'inspected',
+  patchStatus: {
+    plugin: process.env.PLUGIN_PATCH_STATUS,
+    reportStorage: process.env.STORAGE_PATCH_STATUS,
+    reportInput: process.env.INPUT_PATCH_STATUS,
+  },
+  existingContracts: {
+    nativeWebChatTurn: process.env.PLUGIN_CONTRACT,
+    formalReportRoot: process.env.STORAGE_CONTRACT,
+    sourceMessagePreview: process.env.INPUT_CONTRACT,
+  },
+  runtimeHashes: {
+    plugin: process.env.PLUGIN_SHA,
+    reportStorage: process.env.STORAGE_SHA,
+    reportInput: process.env.INPUT_SHA,
+  },
+}))
+NODE
+  exit 0
+fi
+test "$plugin_patch_status" = applicable
+test "$storage_patch_status" = applicable
+test "$input_patch_status" = applicable
 apply_patch_file "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch"
 apply_patch_file "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch"
 apply_patch_file "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch"
