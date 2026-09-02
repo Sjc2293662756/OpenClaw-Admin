@@ -508,6 +508,30 @@ describe('realtime event routing', () => {
     }])
   })
 
+  it('keeps the nested OpenClaw message id in a realtime report event', () => {
+    const store = useChatStore()
+    const sessionKey = 'agent:main:main:dm:webchat-nested-message-id'
+    store.setSessionKey(sessionKey)
+
+    store.handleRealtimeEvent('chat', {
+      id: 'transport-envelope-id',
+      type: 'message',
+      payload: {
+        message: {
+          sessionKey,
+          role: 'assistant',
+          content: '报告已生成，格式：docx。',
+          __openclaw: { id: 'nested-realtime-message' },
+        },
+      },
+    }, { refreshHistory: false })
+
+    expect(store.messages).toEqual([expect.objectContaining({
+      id: 'nested-realtime-message',
+      content: '报告已生成，格式：docx。',
+    })])
+  })
+
   it('keeps nested events from another session out of the open transcript', () => {
     const store = useChatStore()
     store.setSessionKey('agent:main:main:dm:webchat-selected')

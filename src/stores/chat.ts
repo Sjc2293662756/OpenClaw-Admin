@@ -672,6 +672,28 @@ export const useChatStore = defineStore('chat', () => {
     return 'assistant'
   }
 
+  function resolveMessageId(row: Record<string, unknown>): string | undefined {
+    const nestedMessage = asRecord(row.message)
+    const messageRow = nestedMessage || row
+    const openclawMetadata = asRecord(messageRow.__openclaw)
+    const metadata = asRecord(messageRow.metadata)
+    const metadataOpenclaw = asRecord(metadata?.__openclaw)
+    return asString(
+      messageRow.id ||
+        messageRow.messageId ||
+        messageRow.message_id ||
+        openclawMetadata?.id ||
+        metadata?.id ||
+        metadata?.messageId ||
+        metadata?.message_id ||
+        metadataOpenclaw?.id ||
+        row.id ||
+        row.messageId ||
+        row.message_id ||
+        asRecord(row.__openclaw)?.id,
+    ) || undefined
+  }
+
   function normalizeRealtimeMessage(value: unknown): ChatMessage | null {
     const row = asRecord(value)
     if (!row) return null
@@ -681,7 +703,7 @@ export const useChatStore = defineStore('chat', () => {
     ).trim()
     if (!content) return null
 
-    const id = typeof row.id === 'string' ? row.id : typeof row.messageId === 'string' ? row.messageId : undefined
+    const id = resolveMessageId(row)
     const timestamp =
       typeof row.timestamp === 'string'
         ? row.timestamp
@@ -737,8 +759,10 @@ export const useChatStore = defineStore('chat', () => {
 
     const row = payload as Record<string, unknown>
     const messages: ChatMessage[] = []
+    const hasNestedMessageObject = Boolean(row.message && typeof row.message === 'object' && !Array.isArray(row.message))
+    const directRoleType = typeof row.type === 'string' && ['user', 'assistant', 'tool', 'system', 'toolresult'].includes(row.type.toLowerCase())
     const hasDirectMessageFields =
-      row.role || row.type || row.content || row.text || row.output || row.delta || row.input || typeof row.message === 'string'
+      row.role || row.content || row.text || row.output || row.delta || row.input || typeof row.message === 'string' || (directRoleType && !hasNestedMessageObject)
     if (hasDirectMessageFields) {
       const ownMessage = normalizeRealtimeMessage(row)
       if (ownMessage) messages.push(ownMessage)

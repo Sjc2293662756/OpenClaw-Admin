@@ -966,10 +966,25 @@ export class RPCClient {
 
   private normalizeChatMessageItem(value: unknown): ChatMessage {
     const row = this.asRecord(value)
-    const openclawMetadata = this.asRecord(row.__openclaw)
-    const gatewaySequence = this.resolveCountNumber(row.seq ?? openclawMetadata.seq)
-    const processRow = this.asRecord(row.gaiopProcess)
-    const roleRaw = this.asString(row.role || row.type, 'assistant')
+    // Gateway history may wrap the actual message in an envelope. Message
+    // identity must come from that nested message before any transport id;
+    // report provenance stores the OpenClaw message id.
+    const nestedMessage = this.asRecord(row.message)
+    const hasNestedMessage = Object.keys(nestedMessage).length > 0
+    const messageRow = hasNestedMessage ? nestedMessage : row
+    const openclawMetadata = this.asRecord(messageRow.__openclaw)
+    const messageMetadata = this.asRecord(messageRow.metadata)
+    const messageMetadataOpenclaw = this.asRecord(messageMetadata.__openclaw)
+    const envelopeOpenclawMetadata = this.asRecord(row.__openclaw)
+    const gatewaySequence = this.resolveCountNumber(
+      messageRow.seq ??
+        openclawMetadata.seq ??
+        messageMetadataOpenclaw.seq ??
+        row.seq ??
+        envelopeOpenclawMetadata.seq,
+    )
+    const processRow = this.asRecord(messageRow.gaiopProcess || row.gaiopProcess)
+    const roleRaw = this.asString(messageRow.role || messageRow.type || row.role || row.type, 'assistant')
     const role: ChatMessage['role'] =
       roleRaw === 'user' ||
       roleRaw === 'assistant' ||
@@ -979,7 +994,7 @@ export class RPCClient {
         ? (roleRaw === 'toolResult' ? 'tool' : roleRaw)
         : 'assistant'
 
-    const rawContent = row.content
+    const rawContent = messageRow.content ?? row.content
     let contentText = ''
     let rawContentArray: ChatMessage['rawContent'] | undefined
 
@@ -1046,27 +1061,56 @@ export class RPCClient {
     } else {
       contentText = this.asText(
         rawContent ||
+          messageRow.text ||
           row.text ||
-          row.message ||
+          (hasNestedMessage ? undefined : row.message) ||
+          messageRow.output ||
           row.output ||
+          messageRow.input ||
           row.input ||
+          messageRow.delta ||
           row.delta ||
           (row.payload as unknown)
       )
     }
 
     return {
-      id: this.asString(row.id || row.messageId || openclawMetadata.id || (row.seq ?? openclawMetadata.seq)) || undefined,
+      id: this.asString(
+        messageRow.id ||
+          messageRow.messageId ||
+          messageRow.message_id ||
+          openclawMetadata.id ||
+          messageMetadata.id ||
+          messageMetadata.messageId ||
+          messageMetadata.message_id ||
+          messageMetadataOpenclaw.id ||
+          row.id ||
+          row.messageId ||
+          row.message_id ||
+          envelopeOpenclawMetadata.id ||
+          (messageRow.seq ??
+            row.seq ??
+            openclawMetadata.seq ??
+            messageMetadataOpenclaw.seq ??
+            envelopeOpenclawMetadata.seq),
+      ) || undefined,
       role,
       content: contentText,
-      timestamp: this.asString(row.timestamp || row.createdAt || row.time) || undefined,
-      name: this.asString(row.name || row.model) || undefined,
-      model: this.asString(row.model) || undefined,
-      provider: this.asString(row.provider) || undefined,
-      stopReason: this.asString(row.stopReason) || undefined,
-      toolCallId: this.asString(row.toolCallId || row.tool_call_id) || undefined,
-      toolName: this.asString(row.toolName || row.tool_name) || undefined,
-      isError: row.isError === true,
+      timestamp: this.asString(
+        messageRow.timestamp ||
+          messageRow.createdAt ||
+          messageRow.time ||
+          row.timestamp ||
+          row.createdAt ||
+          row.time,
+      ) || undefined,
+      name: this.asString(messageRow.name || messageRow.model || row.name || row.model) || undefined,
+      model: this.asString(messageRow.model || row.model) || undefined,
+      provider: this.asString(messageRow.provider || row.provider) || undefined,
+      stopReason: this.asString(messageRow.stopReason || row.stopReason) || undefined,
+      toolCallId: this.asString(messageRow.toolCallId || messageRow.tool_call_id || row.toolCallId || row.tool_call_id) || undefined,
+      toolName: this.asString(messageRow.toolName || messageRow.tool_name || row.toolName || row.tool_name) || undefined,
+      isError: messageRow.isError === true || row.isError === true,
       rawContent: rawContentArray,
       gatewaySequence,
       process: processRow.kind === 'user_visible_process'

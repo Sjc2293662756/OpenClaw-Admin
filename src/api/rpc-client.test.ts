@@ -3,7 +3,7 @@ import { RPCClient } from './rpc-client'
 import type { RPCFrame } from './types'
 
 class FakeSocket {
-  private handlers = new Map<string, (payload: unknown) => void>()
+  protected handlers = new Map<string, (payload: unknown) => void>()
 
   on(event: string, handler: (payload: unknown) => void) {
     this.handlers.set(event, handler)
@@ -66,6 +66,43 @@ describe('RPC chat history normalization', () => {
         visible: true,
         safe: true,
       },
+    })])
+  })
+
+  it('keeps identity and content when Gateway wraps the message envelope', async () => {
+    class NestedMessageSocket extends FakeSocket {
+      async send(frame: RPCFrame) {
+        if (frame.type !== 'req') return
+        queueMicrotask(() => {
+          this.handlers.get(`rpc:${frame.id}`)?.({
+            type: 'res',
+            id: frame.id,
+            ok: true,
+            payload: {
+              messages: [{
+                id: 'transport-envelope-id',
+                timestamp: '2026-09-02T08:24:39.489Z',
+                message: {
+                  role: 'assistant',
+                  content: [{ type: 'text', text: '报告已生成，格式：docx。' }],
+                  __openclaw: { id: 'nested-gateway-message', seq: 9 },
+                },
+              }],
+            },
+          })
+        })
+      }
+    }
+
+    const client = new RPCClient(new NestedMessageSocket() as never)
+    const history = await client.listChatHistory('session-1')
+
+    expect(history).toEqual([expect.objectContaining({
+      id: 'nested-gateway-message',
+      gatewaySequence: 9,
+      role: 'assistant',
+      content: '报告已生成，格式：docx。',
+      timestamp: '2026-09-02T08:24:39.489Z',
     })])
   })
 })
