@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-  [ValidateSet('Inspect', 'Release')]
+  [ValidateSet('Inspect', 'Stage', 'Release')]
   [string]$Mode = 'Release',
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^[0-9]{8}T[0-9]{6}Z$')]

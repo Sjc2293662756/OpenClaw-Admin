@@ -22,7 +22,7 @@ if (
   || !connection.host
   || !connection.username
   || !connection.password
-  || !['inspect', 'release'].includes(deploymentMode)
+  || !['inspect', 'stage', 'release'].includes(deploymentMode)
 ) {
   throw new Error('Controlled report runtime restoration inputs are incomplete.')
 }
@@ -123,7 +123,7 @@ rollback() {
 trap rollback ERR
 trap cleanup EXIT
 
-for command_name in tar sha256sum diff patch install find stat curl ss; do
+for command_name in tar sha256sum diff patch install find stat curl ss awk; do
   command -v "$command_name" >/dev/null
 done
 test -x "$node_bin"
@@ -170,12 +170,26 @@ apply_patch_file() {
   patch --silent "$current" < "$patch_file"
 }
 
+apply_patch_with_known_reject() {
+  local current="$1" patch_file="$2" reject_file="$3"
+  local code
+  if patch --batch --forward --reject-file="$reject_file" "$current" < "$patch_file" >/dev/null 2>&1; then
+    code=0
+  else
+    code=$?
+  fi
+  test "$code" -eq 1
+  test -s "$reject_file"
+  test "$(grep -c '^@@' "$reject_file")" -eq 1
+}
+
 patch_status() {
   local current="$1" patch_file="$2"
-  if patch --dry-run --silent "$current" < "$patch_file"; then
+  local probe_log="$3"
+  if patch --dry-run --verbose "$current" < "$patch_file" > "$probe_log" 2>&1; then
     printf applicable
   else
-    printf incompatible
+    printf 'incompatible:hunks=%s' "$(awk '/^Hunk #[0-9]+ FAILED/{gsub(/[^0-9]/, "", $2); printf "%s%s", separator, $2; separator=","}' "$probe_log")"
   fi
 }
 
@@ -183,9 +197,9 @@ phase=patch_dry_run
 make_patch "$stage_root/archive/base/napm-openclaw-plugin.remote.js" "$stage_root/archive/fixed/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch"
 make_patch "$stage_root/archive/base/skills/openclaw-napm-report/services/ReportStorageService.js" "$stage_root/archive/fixed/skills/openclaw-napm-report/services/ReportStorageService.js" "$stage_root/patches/storage.patch"
 make_patch "$stage_root/archive/base/skills/openclaw-napm-report/services/ReportInputContractService.js" "$stage_root/archive/fixed/skills/openclaw-napm-report/services/ReportInputContractService.js" "$stage_root/patches/input.patch"
-plugin_patch_status=$(patch_status "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch")
-storage_patch_status=$(patch_status "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch")
-input_patch_status=$(patch_status "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch")
+plugin_patch_status=$(patch_status "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch" "$stage_root/patches/plugin.probe")
+storage_patch_status=$(patch_status "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch" "$stage_root/patches/storage.probe")
+input_patch_status=$(patch_status "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch" "$stage_root/patches/input.probe")
 if [ "$deployment_mode" = inspect ]; then
   phase=inspected
   trap - ERR
@@ -219,12 +233,63 @@ process.stdout.write(JSON.stringify({
 NODE
   exit 0
 fi
-test "$plugin_patch_status" = applicable
+test "$plugin_patch_status" = applicable -o "$plugin_patch_status" = 'incompatible:hunks=9'
 test "$storage_patch_status" = applicable
-test "$input_patch_status" = applicable
-apply_patch_file "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch"
+test "$input_patch_status" = applicable -o "$input_patch_status" = 'incompatible:hunks=1'
+if [ "$plugin_patch_status" = applicable ]; then
+  apply_patch_file "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch"
+else
+  apply_patch_with_known_reject "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch" "$stage_root/patches/plugin.rej"
+  "$node_bin" - "$stage_root/patched/napm-openclaw-plugin.remote.js" <<'NODE'
+const fs = require('node:fs')
+const file = process.argv[2]
+let source = fs.readFileSync(file, 'utf8')
+const turnAnchor = '        const turnId = buildNapmTurnId();'
+if (source.split(turnAnchor).length !== 2 || source.includes('const channelReportProvenance = extractTrustedChannelReportProvenance(event, ctx);')) process.exit(2)
+source = source.replace(turnAnchor, turnAnchor + '\n        const channelReportProvenance = extractTrustedChannelReportProvenance(event, ctx);')
+const stateStart = source.indexOf('        const nextState = {', source.indexOf(turnAnchor))
+const stateEnd = source.indexOf('        };', stateStart)
+if (stateStart < 0 || stateEnd < 0) process.exit(3)
+const stateBlock = source.slice(stateStart, stateEnd)
+if (stateBlock.includes('channelReportProvenance:')) process.exit(4)
+const contextPattern = /^(\s*)contextTurnKey:\s*getContextTurnKey\(ctx\)\s*\|\|\s*null(,?)[ \t]*$/m
+const match = stateBlock.match(contextPattern)
+if (!match) process.exit(5)
+const replacement = match[1] + 'contextTurnKey: getContextTurnKey(ctx) || null,\n'
+  + match[1] + 'channelReportProvenance: channelReportProvenance || previousState?.channelReportProvenance || null'
+const patchedState = stateBlock.replace(contextPattern, replacement)
+source = source.slice(0, stateStart) + patchedState + source.slice(stateEnd)
+fs.writeFileSync(file, source)
+NODE
+fi
 apply_patch_file "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch"
-apply_patch_file "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch"
+if [ "$input_patch_status" = applicable ]; then
+  apply_patch_file "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch"
+else
+  apply_patch_with_known_reject "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch" "$stage_root/patches/input.rej"
+  "$node_bin" - "$stage_root/patched/ReportInputContractService.js" <<'NODE'
+const fs = require('node:fs')
+const file = process.argv[2]
+let source = fs.readFileSync(file, 'utf8')
+const anchor = '\n  if (!sourceReportData) {'
+if (source.split(anchor).length !== 2 || source.includes('const sourceOwnership = {')) process.exit(2)
+const ownership = [
+  '',
+  '  const sourceOwnership = {',
+  "    sourceUserId: String(payload.sourceUserId || options.sourceUserId || '').trim() || undefined,",
+  "    sourceSessionId: String(payload.sourceSessionId || options.sourceSessionId || '').trim() || undefined,",
+  "    sourceChannel: String(payload.sourceChannel || options.sourceChannel || '').trim() || undefined,",
+  "    sourceChannelUserId: String(payload.sourceChannelUserId || options.sourceChannelUserId || '').trim() || undefined,",
+  "    sourceChannelUserName: String(payload.sourceChannelUserName || options.sourceChannelUserName || '').trim() || undefined,",
+  "    sourceMessageId: String(payload.sourceMessageId || options.sourceMessageId || '').trim() || undefined,",
+  "    sourceMessagePreview: String(payload.sourceMessagePreview || options.sourceMessagePreview || '').trim() || undefined,",
+  "    dataSourceId: String(payload.dataSourceId || options.dataSourceId || '').trim() || undefined",
+  '  };',
+].join('\n') + '\n'
+source = source.replace(anchor, ownership + anchor)
+fs.writeFileSync(file, source)
+NODE
+fi
 
 phase=staged_contract
 "$node_bin" --check "$stage_root/patched/napm-openclaw-plugin.remote.js"
@@ -235,6 +300,25 @@ grep -Fq "channelId || '').trim().toLowerCase() === 'wecom'" "$stage_root/patche
 grep -Fq 'GAIOP_REPORTS_DIR' "$stage_root/patched/ReportStorageService.js"
 grep -Fq 'sourceMessagePreview' "$stage_root/patched/ReportInputContractService.js"
 grep -Fxq 'Environment=GAIOP_REPORTS_DIR=/var/lib/gaiop/reports' "$gateway_dropin"
+if [ "$deployment_mode" = stage ]; then
+  phase=staged
+  trap - ERR
+  PLUGIN_SHA=$(sha256sum "$stage_root/patched/napm-openclaw-plugin.remote.js" | awk '{print $1}') \
+    STORAGE_SHA=$(sha256sum "$stage_root/patched/ReportStorageService.js" | awk '{print $1}') \
+    INPUT_SHA=$(sha256sum "$stage_root/patched/ReportInputContractService.js" | awk '{print $1}') \
+    "$node_bin" - <<'NODE'
+process.stdout.write(JSON.stringify({
+  completed: true,
+  status: 'staged',
+  stagedHashes: {
+    plugin: process.env.PLUGIN_SHA,
+    reportStorage: process.env.STORAGE_SHA,
+    reportInput: process.env.INPUT_SHA,
+  },
+}))
+NODE
+  exit 0
+fi
 
 report_files_before=$(find /var/lib/gaiop/reports -type f ! -name '*.json' -printf x | wc -c | tr -d '[:space:]')
 audit_json_before=$(find /var/lib/gaiop/reports -type f -name '*.json' -printf x | wc -c | tr -d '[:space:]')
@@ -400,12 +484,16 @@ async function main() {
   }
 }
 
-main().catch(() => {
-  process.stdout.write(JSON.stringify({
-    completed: false,
-    status: 'runner-failed',
-    failurePhase: 'local-runner',
-    rolledBack: false,
-  }) + '\n')
-  process.exitCode = 1
-})
+module.exports = { deploymentScript }
+
+if (require.main === module) {
+  main().catch(() => {
+    process.stdout.write(JSON.stringify({
+      completed: false,
+      status: 'runner-failed',
+      failurePhase: 'local-runner',
+      rolledBack: false,
+    }) + '\n')
+    process.exitCode = 1
+  })
+}
