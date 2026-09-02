@@ -77,8 +77,9 @@ expected_archive_sha='${archiveSha256}'
 stage_root="/var/tmp/gaiop-report-runtime-$release_id"
 backup_root="/var/backups/gaiop/report-runtime-contract-$release_id"
 plugin_target=/home/netinside/.openclaw/extensions/napm-openclaw-plugin/napm-openclaw-plugin.remote.js
-storage_target=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportStorageService.js
-input_target=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportInputContractService.js
+  storage_target=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportStorageService.js
+  input_target=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportInputContractService.js
+  generation_target=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportGenerationService.js
 gateway_dropin=/home/netinside/.config/systemd/user/openclaw-gateway.service.d/90-gaiop-reports.conf
 admin_db=/var/lib/gaiop/admin/wizard.db
 node_bin=/usr/local/bin/node
@@ -109,6 +110,7 @@ rollback() {
     install -o netinside -g netinside -m 0644 "$backup_root/napm-openclaw-plugin.remote.js" "$plugin_target"
     install -o netinside -g netinside -m 0644 "$backup_root/ReportStorageService.js" "$storage_target"
     install -o netinside -g netinside -m 0644 "$backup_root/ReportInputContractService.js" "$input_target"
+    install -o netinside -g netinside -m 0644 "$backup_root/ReportGenerationService.js" "$generation_target"
     if [ -f "$backup_root/90-gaiop-reports.conf" ]; then
       install -o netinside -g netinside -m 0644 "$backup_root/90-gaiop-reports.conf" "$gateway_dropin"
     fi
@@ -131,9 +133,11 @@ test ! -e "$backup_root"
 test -f "$plugin_target"
 test -f "$storage_target"
 test -f "$input_target"
+test -f "$generation_target"
 test ! -L "$plugin_target"
 test ! -L "$storage_target"
 test ! -L "$input_target"
+test ! -L "$generation_target"
 test "$(sha256sum "$remote_archive" | awk '{print $1}')" = "$expected_archive_sha"
 
 archive_entries=$(tar -tzf "$remote_archive" | sed 's#^\./##' | sed '/^$/d' | sort)
@@ -141,9 +145,11 @@ expected_entries=$(printf '%s\n' \
   base/napm-openclaw-plugin.remote.js \
   base/skills/openclaw-napm-report/services/ReportInputContractService.js \
   base/skills/openclaw-napm-report/services/ReportStorageService.js \
+  base/skills/openclaw-napm-report/services/ReportGenerationService.js \
   fixed/napm-openclaw-plugin.remote.js \
   fixed/skills/openclaw-napm-report/services/ReportInputContractService.js \
-  fixed/skills/openclaw-napm-report/services/ReportStorageService.js | sort)
+  fixed/skills/openclaw-napm-report/services/ReportStorageService.js \
+  fixed/skills/openclaw-napm-report/services/ReportGenerationService.js | sort)
 test "$archive_entries" = "$expected_entries"
 
 install -d -o root -g root -m 0700 "$stage_root/archive" "$stage_root/current" "$stage_root/patched" "$stage_root/patches"
@@ -151,6 +157,7 @@ tar -xzf "$remote_archive" -C "$stage_root/archive" --no-same-owner --no-same-pe
 cp -- "$plugin_target" "$stage_root/current/napm-openclaw-plugin.remote.js"
 cp -- "$storage_target" "$stage_root/current/ReportStorageService.js"
 cp -- "$input_target" "$stage_root/current/ReportInputContractService.js"
+cp -- "$generation_target" "$stage_root/current/ReportGenerationService.js"
 cp -a -- "$stage_root/current/." "$stage_root/patched/"
 
 make_patch() {
@@ -197,19 +204,23 @@ phase=patch_dry_run
 make_patch "$stage_root/archive/base/napm-openclaw-plugin.remote.js" "$stage_root/archive/fixed/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch"
 make_patch "$stage_root/archive/base/skills/openclaw-napm-report/services/ReportStorageService.js" "$stage_root/archive/fixed/skills/openclaw-napm-report/services/ReportStorageService.js" "$stage_root/patches/storage.patch"
 make_patch "$stage_root/archive/base/skills/openclaw-napm-report/services/ReportInputContractService.js" "$stage_root/archive/fixed/skills/openclaw-napm-report/services/ReportInputContractService.js" "$stage_root/patches/input.patch"
+make_patch "$stage_root/archive/base/skills/openclaw-napm-report/services/ReportGenerationService.js" "$stage_root/archive/fixed/skills/openclaw-napm-report/services/ReportGenerationService.js" "$stage_root/patches/generation.patch"
 plugin_patch_status=$(patch_status "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch" "$stage_root/patches/plugin.probe")
 storage_patch_status=$(patch_status "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch" "$stage_root/patches/storage.probe")
 input_patch_status=$(patch_status "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch" "$stage_root/patches/input.probe")
+generation_patch_status=$(patch_status "$stage_root/patched/ReportGenerationService.js" "$stage_root/patches/generation.patch" "$stage_root/patches/generation.probe")
 if [ "$deployment_mode" = inspect ]; then
   phase=inspected
   trap - ERR
-  PLUGIN_PATCH_STATUS="$plugin_patch_status" STORAGE_PATCH_STATUS="$storage_patch_status" INPUT_PATCH_STATUS="$input_patch_status" \
+  PLUGIN_PATCH_STATUS="$plugin_patch_status" STORAGE_PATCH_STATUS="$storage_patch_status" INPUT_PATCH_STATUS="$input_patch_status" GENERATION_PATCH_STATUS="$generation_patch_status" \
     PLUGIN_CONTRACT=$(grep -Fq 'shouldOwnAutomaticReportReplyDispatch' "$plugin_target" && printf present || printf missing) \
     STORAGE_CONTRACT=$(grep -Fq 'GAIOP_REPORTS_DIR' "$storage_target" && printf present || printf missing) \
     INPUT_CONTRACT=$(grep -Fq 'sourceMessagePreview' "$input_target" && printf present || printf missing) \
+    GENERATION_CONTRACT=$(grep -Fq 'relativeAuditPath' "$generation_target" && printf present || printf missing) \
     PLUGIN_SHA=$(sha256sum "$plugin_target" | awk '{print $1}') \
     STORAGE_SHA=$(sha256sum "$storage_target" | awk '{print $1}') \
     INPUT_SHA=$(sha256sum "$input_target" | awk '{print $1}') \
+    GENERATION_SHA=$(sha256sum "$generation_target" | awk '{print $1}') \
     "$node_bin" - <<'NODE'
 process.stdout.write(JSON.stringify({
   completed: true,
@@ -218,25 +229,29 @@ process.stdout.write(JSON.stringify({
     plugin: process.env.PLUGIN_PATCH_STATUS,
     reportStorage: process.env.STORAGE_PATCH_STATUS,
     reportInput: process.env.INPUT_PATCH_STATUS,
+    reportGeneration: process.env.GENERATION_PATCH_STATUS,
   },
   existingContracts: {
     nativeWebChatTurn: process.env.PLUGIN_CONTRACT,
     formalReportRoot: process.env.STORAGE_CONTRACT,
     sourceMessagePreview: process.env.INPUT_CONTRACT,
+    formalAudit: process.env.GENERATION_CONTRACT,
   },
   runtimeHashes: {
     plugin: process.env.PLUGIN_SHA,
     reportStorage: process.env.STORAGE_SHA,
     reportInput: process.env.INPUT_SHA,
+    reportGeneration: process.env.GENERATION_SHA,
   },
 }))
 NODE
   exit 0
 fi
-test "$plugin_patch_status" = applicable -o "$plugin_patch_status" = 'incompatible:hunks=9'
-test "$storage_patch_status" = applicable
-test "$input_patch_status" = applicable -o "$input_patch_status" = 'incompatible:hunks=1'
-if [ "$plugin_patch_status" = applicable ]; then
+plugin_contract_present=$(grep -Fq 'shouldOwnAutomaticReportReplyDispatch' "$plugin_target" && printf yes || printf no)
+input_contract_present=$(grep -Fq 'sourceMessagePreview' "$input_target" && printf yes || printf no)
+if [ "$plugin_contract_present" = yes ]; then
+  :
+elif [ "$plugin_patch_status" = applicable ]; then
   apply_patch_file "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch"
 else
   apply_patch_with_known_reject "$stage_root/patched/napm-openclaw-plugin.remote.js" "$stage_root/patches/plugin.patch" "$stage_root/patches/plugin.rej"
@@ -262,8 +277,16 @@ source = source.slice(0, stateStart) + patchedState + source.slice(stateEnd)
 fs.writeFileSync(file, source)
 NODE
 fi
-apply_patch_file "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch"
-if [ "$input_patch_status" = applicable ]; then
+if [ "$storage_patch_status" = applicable ]; then
+  apply_patch_file "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch"
+elif [ "$storage_patch_status" = 'incompatible:hunks=2' ]; then
+  apply_patch_with_known_reject "$stage_root/patched/ReportStorageService.js" "$stage_root/patches/storage.patch" "$stage_root/patches/storage.rej"
+else
+  false
+fi
+if [ "$input_contract_present" = yes ]; then
+  :
+elif [ "$input_patch_status" = applicable ]; then
   apply_patch_file "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch"
 else
   apply_patch_with_known_reject "$stage_root/patched/ReportInputContractService.js" "$stage_root/patches/input.patch" "$stage_root/patches/input.rej"
@@ -290,15 +313,20 @@ source = source.replace(anchor, ownership + anchor)
 fs.writeFileSync(file, source)
 NODE
 fi
+test "$generation_patch_status" = applicable
+apply_patch_file "$stage_root/patched/ReportGenerationService.js" "$stage_root/patches/generation.patch"
 
 phase=staged_contract
 "$node_bin" --check "$stage_root/patched/napm-openclaw-plugin.remote.js"
 "$node_bin" --check "$stage_root/patched/ReportStorageService.js"
 "$node_bin" --check "$stage_root/patched/ReportInputContractService.js"
+"$node_bin" --check "$stage_root/patched/ReportGenerationService.js"
 grep -Fq 'shouldOwnAutomaticReportReplyDispatch' "$stage_root/patched/napm-openclaw-plugin.remote.js"
 grep -Fq "channelId || '').trim().toLowerCase() === 'wecom'" "$stage_root/patched/napm-openclaw-plugin.remote.js"
 grep -Fq 'GAIOP_REPORTS_DIR' "$stage_root/patched/ReportStorageService.js"
 grep -Fq 'sourceMessagePreview' "$stage_root/patched/ReportInputContractService.js"
+grep -Fq 'relativeFilePath' "$stage_root/patched/ReportStorageService.js"
+grep -Fq 'relativeAuditPath' "$stage_root/patched/ReportGenerationService.js"
 grep -Fxq 'Environment=GAIOP_REPORTS_DIR=/var/lib/gaiop/reports' "$gateway_dropin"
 if [ "$deployment_mode" = stage ]; then
   phase=staged
@@ -306,6 +334,7 @@ if [ "$deployment_mode" = stage ]; then
   PLUGIN_SHA=$(sha256sum "$stage_root/patched/napm-openclaw-plugin.remote.js" | awk '{print $1}') \
     STORAGE_SHA=$(sha256sum "$stage_root/patched/ReportStorageService.js" | awk '{print $1}') \
     INPUT_SHA=$(sha256sum "$stage_root/patched/ReportInputContractService.js" | awk '{print $1}') \
+    GENERATION_SHA=$(sha256sum "$stage_root/patched/ReportGenerationService.js" | awk '{print $1}') \
     "$node_bin" - <<'NODE'
 process.stdout.write(JSON.stringify({
   completed: true,
@@ -314,6 +343,7 @@ process.stdout.write(JSON.stringify({
     plugin: process.env.PLUGIN_SHA,
     reportStorage: process.env.STORAGE_SHA,
     reportInput: process.env.INPUT_SHA,
+    reportGeneration: process.env.GENERATION_SHA,
   },
 }))
 NODE
@@ -340,6 +370,7 @@ install -d -o root -g root -m 0700 "$backup_root"
 cp -a -- "$plugin_target" "$backup_root/napm-openclaw-plugin.remote.js"
 cp -a -- "$storage_target" "$backup_root/ReportStorageService.js"
 cp -a -- "$input_target" "$backup_root/ReportInputContractService.js"
+cp -a -- "$generation_target" "$backup_root/ReportGenerationService.js"
 cp -a -- "$gateway_dropin" "$backup_root/90-gaiop-reports.conf"
 tar -czf "$backup_root/admin-code-config.tgz" \
   /opt/gaiop/admin/dist /opt/gaiop/admin/server /opt/gaiop/admin/package.json /opt/gaiop/admin/package-lock.json \
@@ -363,6 +394,7 @@ phase=switch
 install -o netinside -g netinside -m 0644 "$stage_root/patched/napm-openclaw-plugin.remote.js" "$plugin_target"
 install -o netinside -g netinside -m 0644 "$stage_root/patched/ReportStorageService.js" "$storage_target"
 install -o netinside -g netinside -m 0644 "$stage_root/patched/ReportInputContractService.js" "$input_target"
+install -o netinside -g netinside -m 0644 "$stage_root/patched/ReportGenerationService.js" "$generation_target"
 switched=1
 gateway_control daemon-reload >/dev/null
 gateway_control restart >/dev/null
@@ -385,7 +417,12 @@ NODE
 sudo -u netinside env GAIOP_REPORTS_DIR=/var/lib/gaiop/reports "$node_bin" - "$storage_target" <<'NODE'
 const Storage = require(process.argv[2])
 const value = new Storage()
-if (value.outputDir !== '/var/lib/gaiop/reports') process.exit(1)
+const paths = value.buildPaths('probe', 'docx', { sourceUserId: 'probe-user', reportType: 'summary_report' })
+if (value.outputDir !== '/var/lib/gaiop/reports' || paths.relativeAuditPath !== 'probe-user/summary_report/probe.json') process.exit(1)
+NODE
+sudo -u netinside "$node_bin" - "$generation_target" <<'NODE'
+const Generation = require(process.argv[2])
+if (typeof Generation !== 'function') process.exit(1)
 NODE
 
 report_files_after=$(find /var/lib/gaiop/reports -type f ! -name '*.json' -printf x | wc -c | tr -d '[:space:]')
@@ -422,8 +459,9 @@ trap - ERR
 plugin_sha=$(sha256sum "$plugin_target" | awk '{print $1}')
 storage_sha=$(sha256sum "$storage_target" | awk '{print $1}')
 input_sha=$(sha256sum "$input_target" | awk '{print $1}')
+generation_sha=$(sha256sum "$generation_target" | awk '{print $1}')
 printf '%s\n' "$(
-  RELEASE_ID="$release_id" BACKUP_ROOT="$backup_root" PLUGIN_SHA="$plugin_sha" STORAGE_SHA="$storage_sha" INPUT_SHA="$input_sha" \
+  RELEASE_ID="$release_id" BACKUP_ROOT="$backup_root" PLUGIN_SHA="$plugin_sha" STORAGE_SHA="$storage_sha" INPUT_SHA="$input_sha" GENERATION_SHA="$generation_sha" \
   REPORTS="$report_files_after" AUDITS="$audit_json_after" DB="$db_after" RETENTION="$retention_state" \
   "$node_bin" - <<'NODE'
 process.stdout.write(JSON.stringify({
@@ -438,6 +476,7 @@ process.stdout.write(JSON.stringify({
     plugin: process.env.PLUGIN_SHA,
     reportStorage: process.env.STORAGE_SHA,
     reportInput: process.env.INPUT_SHA,
+    reportGeneration: process.env.GENERATION_SHA,
   },
   services: { gateway: 'active', admin: 'active', upgrade: 'active', caddy: 'active' },
   adminBinding: 'loopback-ipv4',

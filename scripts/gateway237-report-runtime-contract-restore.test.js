@@ -27,7 +27,7 @@ test('report runtime restoration is patch-based and rejects an unexpected archiv
 })
 
 test('inspect mode reports patch compatibility without switching production files', () => {
-  const inspect = runner.slice(runner.indexOf('if [ "$deployment_mode" = inspect ]'), runner.indexOf('test "$plugin_patch_status" = applicable'))
+  const inspect = runner.slice(runner.indexOf('if [ "$deployment_mode" = inspect ]'), runner.indexOf('plugin_contract_present='))
   assert.match(inspect, /status: 'inspected'/)
   assert.match(inspect, /runtimeHashes/)
   assert.doesNotMatch(inspect, /phase=switch/)
@@ -36,9 +36,7 @@ test('inspect mode reports patch compatibility without switching production file
   assert.match(runner, /patch --dry-run --verbose/)
 })
 
-test('release accepts only the two inspected single-hunk divergences', () => {
-  assert.match(runner, /incompatible:hunks=9/)
-  assert.match(runner, /incompatible:hunks=1/)
+test('release retains the two inspected single-hunk repair guards', () => {
   assert.match(runner, /test "\$\(grep -c '\^@@' "\$reject_file"\)" -eq 1/)
   assert.match(runner, /source\.split\(turnAnchor\)\.length !== 2/)
   assert.match(runner, /source\.split\(anchor\)\.length !== 2/)
