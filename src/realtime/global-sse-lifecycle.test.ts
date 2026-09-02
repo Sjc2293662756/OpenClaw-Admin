@@ -3,7 +3,14 @@ import { createGlobalSseLifecycle, shouldLoginCreateUnauthenticatedConnection } 
 
 function createContext() {
   const websocket = { connect: vi.fn(), disconnect: vi.fn() }
-  const alerts = { activate: vi.fn(), loadPreferences: vi.fn().mockResolvedValue(true), start: vi.fn(), stop: vi.fn(), clearForLogout: vi.fn() }
+  const alerts = {
+    activate: vi.fn(),
+    loadPreferences: vi.fn().mockResolvedValue(true),
+    loadNotifications: vi.fn().mockResolvedValue(true),
+    start: vi.fn(),
+    stop: vi.fn(),
+    clearForLogout: vi.fn(),
+  }
   return { websocket, alerts, lifecycle: createGlobalSseLifecycle(websocket, alerts) }
 }
 
@@ -30,6 +37,7 @@ describe('global SSE lifecycle', () => {
     // never performs route-driven disconnect/recreate work.
     expect(context.alerts.activate).toHaveBeenCalledOnce()
     expect(context.alerts.loadPreferences).toHaveBeenCalledOnce()
+    expect(context.alerts.loadNotifications).toHaveBeenCalledOnce()
   })
 
   it('disconnects and clears alert memory on logout or a changed authenticated account', async () => {
@@ -48,6 +56,7 @@ describe('global SSE lifecycle', () => {
     expect(context.websocket.disconnect).toHaveBeenCalledOnce()
     expect(context.websocket.connect).toHaveBeenCalledTimes(2)
     expect(context.alerts.loadPreferences).toHaveBeenCalledOnce()
+    expect(context.alerts.loadNotifications).toHaveBeenCalledOnce()
     expect(context.alerts.stop).toHaveBeenCalledOnce()
   })
 

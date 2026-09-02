@@ -5,7 +5,7 @@ export function canReceiveSseData(user, data, {
   canAccessSession,
 } = {}) {
   if (data?.type === 'permissionsChanged') return String(data.userId || '') === String(user?.id || '')
-  if (data?.type === 'alert' || data?.type === 'alertStreamState') {
+  if (data?.type === 'alert' || data?.type === 'alertStreamState' || data?.type === 'alertNotificationStateChanged') {
     return canAccessEffectiveModule(user, 'alerts.notifications')
   }
   if (data?.type !== 'event' || (

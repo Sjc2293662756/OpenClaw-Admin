@@ -3,10 +3,31 @@ import test from 'node:test'
 import Database from 'better-sqlite3'
 import { AlertReceiverStreamClient } from './alert-receiver-stream.js'
 import { migrateAlertStreamState, readAlertStreamState } from './alert-stream-state.js'
+import { migrateAlertNotificationPreferences } from './alert-notification-preferences.js'
+import { migrateModulePermissions } from './module-permissions.js'
+import { migrateAlertNotificationStore } from './alert-notification-store.js'
 
 function createDb() {
   const db = new Database(':memory:')
+  db.exec(`
+    CREATE TABLE users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL,
+      role TEXT NOT NULL,
+      status TEXT NOT NULL,
+      is_initial_admin INTEGER NOT NULL DEFAULT 0,
+      must_change_password INTEGER NOT NULL DEFAULT 0
+    )
+  `)
   migrateAlertStreamState(db)
+  migrateAlertNotificationPreferences(db)
+  migrateModulePermissions(db)
+  migrateAlertNotificationStore(db)
+  db.prepare(`
+    INSERT INTO users (
+      id, username, role, status, is_initial_admin, must_change_password, permission_version
+    ) VALUES ('admin-1', 'admin', 'admin', 'active', 1, 0, 0)
+  `).run()
   return db
 }
 
@@ -55,7 +76,7 @@ function eventFrame(cursor, severity = '重大', overrides = {}) {
   return `id: ${overrides.id ?? cursor}\nevent: ${overrides.event ?? 'alert.created'}\ndata: ${overrides.data ?? JSON.stringify(envelope)}\n\n`
 }
 
-function createClient({ db = createDb(), responses = [], fetchImpl, broadcastAlert, broadcastState } = {}) {
+function createClient({ db = createDb(), responses = [], fetchImpl, broadcastAlert, broadcastState, isUserOnline = () => true } = {}) {
   const calls = []
   const alerts = []
   const states = []
@@ -74,6 +95,7 @@ function createClient({ db = createDb(), responses = [], fetchImpl, broadcastAle
     }),
     broadcastAlert: broadcastAlert || ((event) => { alerts.push(event); return true }),
     broadcastState: broadcastState || ((event) => { states.push(event); return true }),
+    isUserOnline,
     retryDelays: [0],
     authRetryDelay: 0,
     connectTimeoutMs: 1_000,
@@ -124,6 +146,7 @@ test('persists a split initial connected cursor comment before any alert arrives
 
   assert.equal(outcome.reason, 'eof')
   assert.deepEqual(readAlertStreamState(context.db), {
+    receiverGeneration: 1,
     resumeCursor: 17,
     lastProcessedCursor: null,
     connectionState: 'connected',
@@ -156,6 +179,8 @@ test('projects and broadcasts all three severities using the established alert m
     type: 'alert',
     action: 'triggered',
     cursor: 1,
+    notificationId: 1,
+    receiverGeneration: 1,
     payload: {
       id: 'alert-1',
       occurredAt: new Date(1_784_000_000_001).toISOString(),
@@ -203,15 +228,17 @@ test('ignores malformed, unknown, mismatched, unsupported and out-of-order event
   assert.equal(readAlertStreamState(db).lastProcessedCursor, 1)
 })
 
-test('does not advance when browser broadcast fails and retries with the same cursor', async () => {
+test('keeps the durable notification and cursor when browser broadcast fails', async () => {
   const context = createClient({
     responses: [streamResponse([': connected cursor=0\n\n', eventFrame(1)])],
     broadcastAlert: () => false,
   })
   const outcome = await context.client.runOnce()
-  assert.equal(outcome.reason, 'processing_failed')
-  assert.equal(readAlertStreamState(context.db).resumeCursor, 0)
-  assert.equal(readAlertStreamState(context.db).lastProcessedCursor, null)
+  assert.equal(outcome.reason, 'eof')
+  assert.equal(readAlertStreamState(context.db).resumeCursor, 1)
+  assert.equal(readAlertStreamState(context.db).lastProcessedCursor, 1)
+  assert.equal(context.db.prepare('SELECT COUNT(*) AS count FROM alert_notification_events').get().count, 1)
+  assert.equal(context.db.prepare('SELECT COUNT(*) AS count FROM account_alert_notifications').get().count, 1)
 })
 
 test('reconnects from persisted cursor with Last-Event-ID and survives a BFF restart', async () => {
@@ -278,6 +305,7 @@ test('records an unresolved expired gap, broadcasts safe bounds and rebaselines 
     code: 'ALERT_CURSOR_EXPIRED',
     latestCursor: 20,
     lastProcessedCursor: null,
+    receiverGeneration: 1,
     gapState: 'unresolved',
     oldestAvailableSequence: 10,
     latestSequence: 20,
@@ -295,6 +323,7 @@ test('records an unresolved expired gap, broadcasts safe bounds and rebaselines 
     state: 'connected',
     latestCursor: 20,
     lastProcessedCursor: null,
+    receiverGeneration: 1,
     gapState: 'unresolved',
     oldestAvailableSequence: 10,
     latestSequence: 20,
@@ -323,12 +352,14 @@ test('records an ahead cursor as Receiver reset and safely rebuilds its baseline
   const state = readAlertStreamState(db)
   assert.equal(state.resumeCursor, 3)
   assert.equal(state.gapState, 'receiver_reset')
+  assert.equal(state.receiverGeneration, 2)
   assert.deepEqual(context.states.at(-1), {
     type: 'alertStreamState',
     state: 'receiverReset',
     code: 'ALERT_CURSOR_AHEAD',
     latestCursor: 3,
     lastProcessedCursor: null,
+    receiverGeneration: 2,
     gapState: 'receiver_reset',
     oldestAvailableSequence: 1,
     latestSequence: 3,
@@ -342,6 +373,7 @@ test('records an ahead cursor as Receiver reset and safely rebuilds its baseline
     state: 'connected',
     latestCursor: 3,
     lastProcessedCursor: null,
+    receiverGeneration: 2,
     gapState: 'receiver_reset',
     oldestAvailableSequence: 1,
     latestSequence: 3,
@@ -371,6 +403,7 @@ test('retains unresolved gap details while connection errors change the live str
     code: 'ALERT_RECEIVER_UNAUTHORIZED',
     latestCursor: 20,
     lastProcessedCursor: null,
+    receiverGeneration: 1,
     gapState: 'unresolved',
     oldestAvailableSequence: 10,
     latestSequence: 20,
@@ -384,6 +417,7 @@ test('retains unresolved gap details while connection errors change the live str
     code: 'ALERT_RECEIVER_UNAVAILABLE',
     latestCursor: 20,
     lastProcessedCursor: null,
+    receiverGeneration: 1,
     gapState: 'unresolved',
     oldestAvailableSequence: 10,
     latestSequence: 20,
@@ -397,6 +431,7 @@ test('retains unresolved gap details while connection errors change the live str
     code: 'ALERT_STREAM_CONTENT_TYPE_INVALID',
     latestCursor: 20,
     lastProcessedCursor: null,
+    receiverGeneration: 1,
     gapState: 'unresolved',
     oldestAvailableSequence: 10,
     latestSequence: 20,
@@ -423,7 +458,7 @@ test('handles authentication and network failures without throwing or changing i
   assert.equal(readAlertStreamState(db).connectionState, 'unavailable')
 })
 
-test('idempotently consumes a duplicate business alert id and restarts from its newer cursor', async () => {
+test('persists each business action by stream sequence even when the alert id repeats', async () => {
   const db = createDb()
   const context = createClient({ db, responses: [streamResponse([
     ': connected cursor=0\n\n',
@@ -431,7 +466,8 @@ test('idempotently consumes a duplicate business alert id and restarts from its 
     eventFrame(2, '紧急', { alert: { id: 'same-alert' } }),
   ])] })
   await context.client.runOnce()
-  assert.deepEqual(context.alerts.map((event) => event.cursor), [1])
+  assert.deepEqual(context.alerts.map((event) => event.cursor), [1, 2])
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM alert_notification_events WHERE alert_id = ?').get('same-alert').count, 2)
   assert.equal(readAlertStreamState(db).resumeCursor, 2)
   assert.equal(readAlertStreamState(db).lastProcessedCursor, 2)
 

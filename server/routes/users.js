@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { deleteAlertNotificationsForUser } from '../lib/alert-notification-store.js'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { PASSWORD_POLICY_MESSAGE, canManageUser, validatePassword } from '../lib/account-security.js'
 
@@ -213,6 +214,7 @@ export function createUsersRouter({
       if (preferencesTable) db.prepare('DELETE FROM alert_notification_preferences WHERE user_id = ?').run(user.id)
       const chatPreferencesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chat_display_preferences'").get()
       if (chatPreferencesTable) db.prepare('DELETE FROM chat_display_preferences WHERE user_id = ?').run(user.id)
+      deleteAlertNotificationsForUser(db, user.id)
       const overridesTable = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'user_module_permission_overrides'").get()
       if (overridesTable) db.prepare('DELETE FROM user_module_permission_overrides WHERE user_id = ?').run(user.id)
       db.prepare('DELETE FROM users WHERE id = ?').run(user.id)

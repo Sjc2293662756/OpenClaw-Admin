@@ -26,6 +26,7 @@ export function migrateAlertStreamState(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS alert_stream_runtime (
       singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+      receiver_generation INTEGER NOT NULL DEFAULT 1 CHECK (receiver_generation >= 1),
       resume_cursor INTEGER CHECK (resume_cursor IS NULL OR resume_cursor >= 0),
       last_processed_cursor INTEGER CHECK (last_processed_cursor IS NULL OR last_processed_cursor >= 0),
       connection_state TEXT NOT NULL DEFAULT 'idle'
@@ -42,12 +43,17 @@ export function migrateAlertStreamState(db) {
       singleton_id, connection_state, updated_at
     ) VALUES (1, 'idle', 0);
   `)
+  const columns = new Set(db.prepare('PRAGMA table_info(alert_stream_runtime)').all().map((column) => column.name))
+  if (!columns.has('receiver_generation')) {
+    db.exec('ALTER TABLE alert_stream_runtime ADD COLUMN receiver_generation INTEGER NOT NULL DEFAULT 1 CHECK (receiver_generation >= 1)')
+  }
 }
 
 export function readAlertStreamState(db) {
   const row = db.prepare('SELECT * FROM alert_stream_runtime WHERE singleton_id = 1').get()
   if (!row) throw new Error('alert_stream_state_missing')
   return {
+    receiverGeneration: Math.max(1, Number(row.receiver_generation) || 1),
     resumeCursor: row.resume_cursor === null ? null : Number(row.resume_cursor),
     lastProcessedCursor: row.last_processed_cursor === null ? null : Number(row.last_processed_cursor),
     connectionState: row.connection_state,
@@ -111,9 +117,13 @@ export function persistAlertStreamRebaseline(db, {
   }
   const latest = safeCursor(latestSequence)
   const oldest = safeCursor(oldestAvailableSequence, { nullable: true })
+  const generationUpdate = normalizedState === 'receiver_reset'
+    ? 'receiver_generation = receiver_generation + 1,'
+    : ''
   db.prepare(`
     UPDATE alert_stream_runtime
-    SET resume_cursor = ?, connection_state = ?, gap_state = ?,
+    SET ${generationUpdate}
+        resume_cursor = ?, connection_state = ?, gap_state = ?,
         oldest_available_sequence = ?, latest_sequence = ?, last_error_code = ?,
         gap_detected_at = ?, updated_at = ?
     WHERE singleton_id = 1

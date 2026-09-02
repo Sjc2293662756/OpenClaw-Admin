@@ -4,6 +4,7 @@ type ConnectionStore = { connect: () => void; disconnect: () => void }
 type AlertStore = {
   activate: (user: AuthUser) => void
   loadPreferences: () => Promise<boolean>
+  loadNotifications: () => Promise<boolean>
   start: () => void
   stop: () => void
   clearForLogout: () => void
@@ -39,7 +40,10 @@ export function createGlobalSseLifecycle(websocket: ConnectionStore, alerts: Ale
       // A saved all-off preference must be known before the browser starts
       // consuming its one alert SSE stream. This prevents a just-logged-in
       // account from flashing a notification while its setting is loading.
-      if (notificationsAllowed) await alerts.loadPreferences()
+      if (notificationsAllowed) {
+        await alerts.loadPreferences()
+        await alerts.loadNotifications()
+      }
       if (generation !== syncGeneration || previousToken !== token || previousAccount !== account) return
       if (notificationsAllowed) alerts.start()
       else alerts.stop()

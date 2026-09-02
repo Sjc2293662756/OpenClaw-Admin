@@ -113,7 +113,7 @@ describe('ApiClient authenticated fetch SSE', () => {
 
   it('dispatches BFF alert events and stream state while safely ignoring unknown types', async () => {
     const fetchMock = vi.fn().mockResolvedValue(streamingResponse([
-      'data: {"type":"alert","action":"triggered","cursor":9,"payload":{"id":"a-9"}}\n\n',
+      'data: {"type":"alert","action":"triggered","cursor":9,"notificationId":19,"receiverGeneration":1,"payload":{"id":"a-9"}}\n\n',
       'data: {"type":"alertStreamState","state":"connected","latestCursor":9}\n\n',
       'data: {"type":"futureEvent","secret":"ignored"}\n\n',
     ]))
@@ -125,7 +125,7 @@ describe('ApiClient authenticated fetch SSE', () => {
     client.on('alertStreamState', state)
     client.connect()
     await vi.waitFor(() => expect(alert).toHaveBeenCalledOnce())
-    expect(alert).toHaveBeenCalledWith(expect.objectContaining({ cursor: 9, action: 'triggered' }))
+    expect(alert).toHaveBeenCalledWith(expect.objectContaining({ cursor: 9, notificationId: 19, action: 'triggered' }))
     expect(state).toHaveBeenCalledWith(expect.objectContaining({ state: 'connected' }))
     client.disconnect()
   })
@@ -142,6 +142,38 @@ describe('ApiClient authenticated fetch SSE', () => {
     client.connect()
     await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
     expect(changed).toHaveBeenCalledWith({ userId: 'user-1', permissionVersion: 7 })
+    client.disconnect()
+  })
+
+  it('dispatches an account alert-notification state invalidation on the existing SSE', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamingResponse([
+      'data: {"type":"alertNotificationStateChanged","action":"read"}\n\n',
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient({ getToken: () => 'login-token', reconnectInterval: 60_000 })
+    const changed = vi.fn()
+    client.on('alertNotificationStateChanged', changed)
+    client.connect()
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledOnce())
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ action: 'read' }))
+    client.disconnect()
+  })
+
+  it('distinguishes an authenticated SSE transport connection from Gateway availability', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(streamingResponse([
+      'data: {"type":"connected","clientId":"browser-1"}\n\n',
+      'data: {"type":"gatewayState","state":"disconnected"}\n\n',
+    ]))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = new ApiClient({ getToken: () => 'login-token', reconnectInterval: 60_000 })
+    const sseConnected = vi.fn()
+    const gatewayConnected = vi.fn()
+    client.on('sseConnected', sseConnected)
+    client.on('connected', gatewayConnected)
+    client.connect()
+    await vi.waitFor(() => expect(sseConnected).toHaveBeenCalledOnce())
+    expect(sseConnected).toHaveBeenCalledWith({ clientId: 'browser-1' })
+    expect(gatewayConnected).not.toHaveBeenCalled()
     client.disconnect()
   })
 })

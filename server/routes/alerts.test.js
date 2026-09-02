@@ -6,11 +6,14 @@ import Database from 'better-sqlite3'
 import express from 'express'
 import { createAlertsRouter } from './alerts.js'
 import { migrateAlertNotificationPreferences } from '../lib/alert-notification-preferences.js'
+import { migrateAlertNotificationStore } from '../lib/alert-notification-store.js'
 
-async function startTestServer(readAlertSource, { role = 'admin', userId = 'admin-1', readAlertChanges, db = null } = {}) {
+async function startTestServer(readAlertSource, { role = 'admin', userId = 'admin-1', readAlertChanges, db = null, notifyAlertNotificationsChanged } = {}) {
   const audits = []
+  const notificationChanges = []
   const database = db || new Database(':memory:')
   migrateAlertNotificationPreferences(database)
+  migrateAlertNotificationStore(database)
   const app = express()
   app.use(express.json())
   app.use('/alerts', createAlertsRouter({
@@ -22,10 +25,12 @@ async function startTestServer(readAlertSource, { role = 'admin', userId = 'admi
     db: database,
     readAlertSource,
     readAlertChanges,
+    notifyAlertNotificationsChanged: notifyAlertNotificationsChanged
+      || ((changedUserId, action) => notificationChanges.push({ userId: changedUserId, action })),
   }))
   const server = app.listen(0, '127.0.0.1')
   await once(server, 'listening')
-  return { baseUrl: `http://127.0.0.1:${server.address().port}/alerts`, audits, db: database, server }
+  return { baseUrl: `http://127.0.0.1:${server.address().port}/alerts`, audits, notificationChanges, db: database, server }
 }
 
 const defaultPreferences = {
@@ -33,6 +38,46 @@ const defaultPreferences = {
   minorPopupEnabled: true, minorNotificationEnabled: true,
   majorPopupEnabled: true, majorNotificationEnabled: true,
   criticalPopupEnabled: true, criticalNotificationEnabled: true,
+}
+
+function seedNotification(db, {
+  eventId,
+  userId = 'admin-1',
+  severity = '重大',
+  readAt = null,
+  clearedAt = null,
+  createdOffline = false,
+  action = 'triggered',
+} = {}) {
+  const payload = {
+    id: `alert-${eventId}`,
+    occurredAt: new Date(1_788_000_000_000 + eventId).toISOString(),
+    sourceHost: '198.51.100.10',
+    category: 'appAlerts',
+    categoryLabel: '应用告警',
+    severity,
+    name: `alert ${eventId}`,
+    ruleId: 1,
+    metrics: [],
+    description: null,
+    triggerCondition: null,
+    groupPath: null,
+    startTime: null,
+    endTime: null,
+    eventId: `receiver-event-${eventId}`,
+    restored: action === 'recovered',
+  }
+  db.prepare(`
+    INSERT INTO alert_notification_events (
+      event_id, receiver_generation, stream_sequence, alert_id, action, severity,
+      occurred_at, received_at, safe_payload_json, created_at
+    ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(eventId, eventId, payload.id, action, severity, Date.parse(payload.occurredAt), Date.parse(payload.occurredAt), JSON.stringify(payload), eventId)
+  db.prepare(`
+    INSERT INTO account_alert_notifications (
+      user_id, event_id, read_at, cleared_at, created_offline, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `).run(userId, eventId, readAt, clearedAt, createdOffline ? 1 : 0, eventId)
 }
 
 test('alert list uses the formal receiver read model without changing the browser response shape or adding refresh audit noise', async () => {
@@ -203,6 +248,148 @@ test('alert notification preferences allow basic users but remain current-accoun
     })).status, 200)
     assert.equal((await fetch(`${context.baseUrl}/export`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: [{}] }) })).status, 200)
   } finally { context.server.close(); context.db.close() }
+})
+
+test('account notifications use stable keyset pagination with server-side filters and exact counts', async () => {
+  const db = new Database(':memory:')
+  const context = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), {
+    db,
+    userId: 'account-one',
+  })
+  seedNotification(db, { eventId: 1, userId: 'account-one', severity: '轻微' })
+  seedNotification(db, { eventId: 2, userId: 'account-one', severity: '重大', readAt: 20 })
+  seedNotification(db, { eventId: 3, userId: 'account-one', severity: '紧急', createdOffline: true })
+  seedNotification(db, { eventId: 4, userId: 'account-two', severity: '紧急' })
+  seedNotification(db, { eventId: 5, userId: 'account-one', severity: '重大', clearedAt: 50 })
+  try {
+    const first = await fetch(`${context.baseUrl}/notifications?limit=2`).then((response) => response.json())
+    assert.deepEqual(first.notifications.map((item) => item.notificationId), [3, 2])
+    assert.equal(first.notifications[0].createdOffline, true)
+    assert.equal(first.notifications[1].read, true)
+    assert.deepEqual(first.counts, {
+      total: 3,
+      unread: 2,
+      filteredTotal: 3,
+      filteredUnread: 2,
+      bySeverity: {
+        轻微: { total: 1, unread: 1 },
+        重大: { total: 1, unread: 0 },
+        紧急: { total: 1, unread: 1 },
+      },
+    })
+    assert.deepEqual(first.page, { limit: 2, hasMore: true, nextBeforeId: 2, snapshotThroughId: 3 })
+
+    const second = await fetch(`${context.baseUrl}/notifications?limit=2&beforeId=2`).then((response) => response.json())
+    assert.deepEqual(second.notifications.map((item) => item.notificationId), [1])
+    assert.equal(second.page.hasMore, false)
+
+    const filtered = await fetch(`${context.baseUrl}/notifications?severity=紧急&readState=unread`).then((response) => response.json())
+    assert.deepEqual(filtered.notifications.map((item) => item.notificationId), [3])
+    assert.equal(filtered.counts.filteredTotal, 1)
+    assert.equal(filtered.counts.filteredUnread, 1)
+
+    assert.equal((await fetch(`${context.baseUrl}/notifications?severity=一般`)).status, 400)
+    assert.equal((await fetch(`${context.baseUrl}/notifications?readState=read`)).status, 400)
+    assert.equal((await fetch(`${context.baseUrl}/notifications?beforeId=2x`)).status, 400)
+  } finally { context.server.close(); db.close() }
+})
+
+test('single and filtered read or clear operations remain account-scoped and never delete shared events', async () => {
+  const db = new Database(':memory:')
+  const context = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), {
+    db,
+    userId: 'account-one',
+  })
+  seedNotification(db, { eventId: 1, userId: 'account-one', severity: '轻微' })
+  seedNotification(db, { eventId: 2, userId: 'account-one', severity: '轻微' })
+  seedNotification(db, { eventId: 3, userId: 'account-one', severity: '重大', readAt: 30 })
+  seedNotification(db, { eventId: 4, userId: 'account-one', severity: '重大' })
+  seedNotification(db, { eventId: 5, userId: 'account-two', severity: '紧急' })
+  try {
+    const single = await fetch(`${context.baseUrl}/notifications/1/read`, { method: 'PUT' }).then((response) => response.json())
+    assert.equal(single.changed, true)
+    const repeated = await fetch(`${context.baseUrl}/notifications/1/read`, { method: 'PUT' }).then((response) => response.json())
+    assert.equal(repeated.changed, false)
+    assert.equal((await fetch(`${context.baseUrl}/notifications/5/read`, { method: 'PUT' })).status, 404)
+
+    const batchRead = await fetch(`${context.baseUrl}/notifications/read`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ severity: '轻微', readState: 'unread' }),
+    }).then((response) => response.json())
+    assert.equal(batchRead.changed, 1)
+
+    const batchClear = await fetch(`${context.baseUrl}/notifications/clear`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ severity: '重大', readState: 'unread' }),
+    }).then((response) => response.json())
+    assert.equal(batchClear.changed, 1)
+    assert.equal(db.prepare('SELECT cleared_at FROM account_alert_notifications WHERE user_id = ? AND event_id = 3').get('account-one').cleared_at, null)
+    assert.notEqual(db.prepare('SELECT cleared_at FROM account_alert_notifications WHERE user_id = ? AND event_id = 4').get('account-one').cleared_at, null)
+
+    assert.equal((await fetch(`${context.baseUrl}/notifications/3`, { method: 'DELETE' })).status, 200)
+    assert.equal((await fetch(`${context.baseUrl}/notifications/3`, { method: 'DELETE' })).status, 404)
+    assert.equal((await fetch(`${context.baseUrl}/notifications/5`, { method: 'DELETE' })).status, 404)
+
+    const remaining = await fetch(`${context.baseUrl}/notifications`).then((response) => response.json())
+    assert.deepEqual(remaining.notifications.map((item) => item.notificationId), [2, 1])
+    assert.equal(remaining.counts.total, 2)
+    assert.equal(remaining.counts.unread, 0)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM alert_notification_events').get().count, 5)
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM account_alert_notifications WHERE user_id = 'account-two'").get().count, 1)
+    assert.deepEqual(context.notificationChanges, [
+      { userId: 'account-one', action: 'read' },
+      { userId: 'account-one', action: 'read' },
+      { userId: 'account-one', action: 'clear' },
+      { userId: 'account-one', action: 'clear' },
+    ])
+
+    assert.equal((await fetch(`${context.baseUrl}/notifications/0/read`, { method: 'PUT' })).status, 400)
+    assert.equal((await fetch(`${context.baseUrl}/notifications/clear`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ readState: 'read' }),
+    })).status, 400)
+  } finally { context.server.close(); db.close() }
+})
+
+test('offline summary REST lease is single-claim, confirm is idempotence-safe, and range filters are enforced', async () => {
+  const db = new Database(':memory:')
+  const context = await startTestServer(async () => ({ alerts: [], availableCount: 0, hasMore: false }), {
+    db,
+    userId: 'account-one',
+  })
+  seedNotification(db, { eventId: 1, userId: 'account-one', severity: '轻微', createdOffline: true })
+  seedNotification(db, { eventId: 2, userId: 'account-one', severity: '重大', createdOffline: false })
+  seedNotification(db, { eventId: 3, userId: 'account-one', severity: '紧急', createdOffline: true })
+  try {
+    const claim = await fetch(`${context.baseUrl}/notifications/offline-summary/claim`, { method: 'POST' }).then((response) => response.json())
+    assert.equal(claim.summary.total, 2)
+    assert.deepEqual(claim.summary.bySeverity, { 轻微: 1, 重大: 0, 紧急: 1 })
+    const concurrent = await fetch(`${context.baseUrl}/notifications/offline-summary/claim`, { method: 'POST' }).then((response) => response.json())
+    assert.equal(concurrent.summary, null)
+    assert.equal(concurrent.claimInProgress, true)
+
+    const ranged = await fetch(`${context.baseUrl}/notifications?offlineAfterId=0&throughId=3`).then((response) => response.json())
+    assert.deepEqual(ranged.notifications.map((item) => item.notificationId), [3, 1])
+    assert.equal(ranged.counts.filteredTotal, 2)
+    assert.equal((await fetch(`${context.baseUrl}/notifications?offlineAfterId=0`)).status, 400)
+
+    const confirm = await fetch(`${context.baseUrl}/notifications/offline-summary/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claimToken: claim.summary.claimToken }),
+    })
+    assert.equal(confirm.status, 200)
+    const repeated = await fetch(`${context.baseUrl}/notifications/offline-summary/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ claimToken: claim.summary.claimToken }),
+    })
+    assert.equal(repeated.status, 409)
+    const afterRefresh = await fetch(`${context.baseUrl}/notifications/offline-summary/claim`, { method: 'POST' }).then((response) => response.json())
+    assert.equal(afterRefresh.summary, null)
+    assert.equal(db.prepare("SELECT COUNT(*) AS count FROM account_alert_notifications WHERE read_at IS NULL").get().count, 3)
+  } finally { context.server.close(); db.close() }
 })
 
 test('all four roles retain bounded, sanitized current-page exports and empty input remains rejected', async () => {

@@ -51,6 +51,7 @@ import { registerRetiredApiBarriers } from './lib/legacy-api.js'
 import { createAuditRecorder, createAuditRejectionMiddleware } from './lib/audit-service.js'
 import { configureTrustedProxy, createCorsMiddleware } from './lib/http-security.js'
 import { AlertReceiverStreamClient } from './lib/alert-receiver-stream.js'
+import { isAlertAccountOnlineAt } from './lib/alert-account-presence.js'
 import { createModuleAccessMiddleware, resolveEffectiveModulePermissions } from './lib/module-permissions.js'
 import { canReceiveSseData as canReceiveSseDataForUser } from './lib/sse-access.js'
 import { readSessionSettings } from './lib/session-settings.js'
@@ -365,6 +366,29 @@ function broadcastSSE(data) {
   return true
 }
 
+function broadcastAlertSSE(data, recipientUserIds = []) {
+  const recipients = new Set(recipientUserIds.map((value) => String(value)))
+  if (recipients.size === 0) return true
+  const message = `data: ${JSON.stringify(data)}\n\n`
+  for (const [id, client] of sseClients) {
+    if (!recipients.has(String(client.user?.id || '')) || !canReceiveSseData(client.user, data)) continue
+    try {
+      client.res.write(message)
+    } catch {
+      sseClients.delete(id)
+    }
+  }
+  return true
+}
+
+function notifyAlertNotificationsChanged(userId, action) {
+  return broadcastAlertSSE({ type: 'alertNotificationStateChanged', action }, [userId])
+}
+
+function isAccountOnlineAt(userId, receivedAt) {
+  return isAlertAccountOnlineAt(sseClients, userId, receivedAt)
+}
+
 function notifyPermissionsChanged(userId, permissionVersion) {
   const currentUser = db.prepare(`
     SELECT id, username, role, status, is_initial_admin, must_change_password, permission_version
@@ -434,8 +458,9 @@ function getAlertStreamEnv() {
 alertStreamClient = new AlertReceiverStreamClient({
   db,
   env: getAlertStreamEnv(),
-  broadcastAlert: broadcastSSE,
+  broadcastAlert: broadcastAlertSSE,
   broadcastState: broadcastSSE,
+  isUserOnline: isAccountOnlineAt,
 })
 
 function hashPassword(password) {
@@ -685,6 +710,7 @@ app.use('/api/alerts', createAlertsRouter({
   notificationsMiddleware: alertNotificationsModuleMiddleware,
   exportMiddleware: alertRecordsModuleMiddleware,
   recordAudit,
+  notifyAlertNotificationsChanged,
 }))
 app.use('/api/wizard', officeModuleMiddleware)
 
@@ -1812,7 +1838,7 @@ app.get('/api/events', authMiddleware, (req, res) => {
   res.flushHeaders()
 
   const clientId = randomUUID()
-  sseClients.set(clientId, { res, user: req.user, subscriptions: new Set(['*']) })
+  sseClients.set(clientId, { res, user: req.user, connectedAt: Date.now(), subscriptions: new Set(['*']) })
   debug('[SSE] Client connected:', clientId, 'total clients:', sseClients.size)
 
   res.write(`data: ${JSON.stringify({ type: 'connected', clientId })}\n\n`)

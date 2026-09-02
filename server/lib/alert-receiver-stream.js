@@ -6,13 +6,13 @@ import {
   persistProcessedAlertCursor,
   readAlertStreamState,
 } from './alert-stream-state.js'
+import { persistAlertNotificationEvent } from './alert-notification-store.js'
 
 const ALERT_SCHEMA_VERSION = 'gaiop.alert-event.v1'
 const ALERT_EVENT_TYPE = 'alert.created'
 const ALERT_SEVERITIES = new Set(['轻微', '重大', '紧急'])
 const DEFAULT_RETRY_DELAYS = [1_000, 2_000, 5_000, 10_000, 30_000]
 const AUTH_RETRY_DELAY = 30_000
-const MAX_SEEN_ALERT_IDS = 5_000
 
 function isRecord(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -95,6 +95,7 @@ export class AlertReceiverStreamClient {
     retryDelays = DEFAULT_RETRY_DELAYS,
     authRetryDelay = AUTH_RETRY_DELAY,
     connectTimeoutMs = 10_000,
+    isUserOnline,
   } = {}) {
     if (!db) throw new TypeError('alert_stream_database_required')
     if (typeof broadcastAlert !== 'function') throw new TypeError('alert_stream_broadcast_required')
@@ -107,6 +108,7 @@ export class AlertReceiverStreamClient {
     this.retryDelays = retryDelays.length > 0 ? retryDelays.map((value) => Math.max(0, Number(value) || 0)) : [30_000]
     this.authRetryDelay = Math.max(0, Number(authRetryDelay) || AUTH_RETRY_DELAY)
     this.connectTimeoutMs = Math.max(100, Number(connectTimeoutMs) || 10_000)
+    this.isUserOnline = typeof isUserOnline === 'function' ? isUserOnline : () => false
     this.started = false
     this.loopPromise = null
     this.activeController = null
@@ -114,7 +116,6 @@ export class AlertReceiverStreamClient {
     this.retryResolve = null
     this.retryAttempt = 0
     this.lastControlSignature = ''
-    this.seenAlertIds = new Set()
   }
 
   configure(env) {
@@ -169,6 +170,7 @@ export class AlertReceiverStreamClient {
       ...diagnostic,
       latestCursor: state.resumeCursor,
       lastProcessedCursor: state.lastProcessedCursor,
+      receiverGeneration: state.receiverGeneration,
       ...gap,
     })
   }
@@ -344,44 +346,42 @@ export class AlertReceiverStreamClient {
       return 'ignored'
     }
 
-    const payload = mapGAIOPAlertEvent(envelope.alert)
-    if (this.seenAlertIds.has(alertId)) {
-      try {
-        if (!persistProcessedAlertCursor(this.db, cursor)) {
-          this._diagnostic('event_cursor_persist_failed')
-          return 'failed'
-        }
-      } catch {
-        this._diagnostic('event_cursor_persist_failed')
-        return 'failed'
-      }
-      this._diagnostic('event_alert_duplicate_consumed')
+    const mappedPayload = mapGAIOPAlertEvent(envelope.alert)
+    const action = mappedPayload.restored ? 'recovered' : 'triggered'
+    let persisted
+    try {
+      persisted = persistAlertNotificationEvent(this.db, {
+        streamSequence: cursor,
+        action,
+        payload: mappedPayload,
+        receiverReceivedAt: envelope.alert.receivedAt,
+        isUserOnline: this.isUserOnline,
+      })
+    } catch {
+      this._diagnostic('event_persist_failed')
+      return 'failed'
+    }
+    if (!persisted.inserted) {
+      this._diagnostic('event_sequence_duplicate_consumed')
       return 'processed'
     }
     const event = {
       type: 'alert',
-      action: payload.restored ? 'recovered' : 'triggered',
+      action,
       cursor,
-      payload,
+      notificationId: persisted.eventId,
+      receiverGeneration: persisted.receiverGeneration,
+      payload: persisted.payload,
     }
+    const onlineRecipients = persisted.recipients
+      .filter((recipient) => !recipient.createdOffline)
+      .map((recipient) => recipient.userId)
     try {
-      if (this.broadcastAlert(event) === false) throw new Error('broadcast_rejected')
+      if (this.broadcastAlert(event, onlineRecipients) === false) throw new Error('broadcast_rejected')
     } catch {
+      // The durable notification and stream cursor are already committed.
+      // A transient page popup must never stall or duplicate upstream intake.
       this._diagnostic('event_broadcast_failed')
-      return 'failed'
-    }
-    try {
-      if (!persistProcessedAlertCursor(this.db, cursor)) {
-        this._diagnostic('event_cursor_persist_failed')
-        return 'failed'
-      }
-    } catch {
-      this._diagnostic('event_cursor_persist_failed')
-      return 'failed'
-    }
-    this.seenAlertIds.add(alertId)
-    if (this.seenAlertIds.size > MAX_SEEN_ALERT_IDS) {
-      this.seenAlertIds.delete(this.seenAlertIds.values().next().value)
     }
     return 'processed'
   }

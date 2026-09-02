@@ -122,6 +122,7 @@ export class ApiClient {
         case 'connected':
           this.clientId = message.clientId
           console.log('[ApiClient] Connected with clientId:', this.clientId)
+          queueMicrotask(() => this.emit('sseConnected', { clientId: this.clientId }))
           break
 
         case 'gatewayState':
@@ -161,7 +162,9 @@ export class ApiClient {
 
         case 'alert':
           if ((message.action === 'triggered' || message.action === 'recovered')
-            && Number.isSafeInteger(message.cursor) && message.cursor >= 0
+            && Number.isSafeInteger(message.cursor) && message.cursor >= 1
+            && Number.isSafeInteger(message.notificationId) && message.notificationId >= 1
+            && Number.isSafeInteger(message.receiverGeneration) && message.receiverGeneration >= 1
             && message.payload && typeof message.payload === 'object') {
             queueMicrotask(() => this.emit('alert', message))
           }
@@ -170,6 +173,12 @@ export class ApiClient {
         case 'alertStreamState':
           if (typeof message.state === 'string') {
             queueMicrotask(() => this.emit('alertStreamState', message))
+          }
+          break
+
+        case 'alertNotificationStateChanged':
+          if (typeof message.action === 'string') {
+            queueMicrotask(() => this.emit('alertNotificationStateChanged', message))
           }
           break
 

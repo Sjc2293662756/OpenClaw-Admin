@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import { randomUUID } from 'node:crypto'
 import { sendError, sendOk } from '../lib/api-response.js'
 import { createAlertExportWorkbook, normalizeAlertExportRows, normalizeExportLocale } from '../lib/alert-export.js'
 import { ALERT_CATEGORY_LABELS, filterAlerts } from '../lib/syslog-alerts.js'
@@ -8,9 +9,19 @@ import {
   saveAlertNotificationPreferences,
   validateAlertNotificationPreferences,
 } from '../lib/alert-notification-preferences.js'
+import {
+  clearAlertNotification,
+  clearAlertNotifications,
+  claimOfflineAlertSummary,
+  confirmOfflineAlertSummary,
+  listAlertNotifications,
+  markAlertNotificationRead,
+  markAlertNotificationsRead,
+} from '../lib/alert-notification-store.js'
 
 const ALERT_VIEWER_ROLES = new Set(['basic', 'standard', 'auditor', 'admin'])
 const ALERT_EXPORTER_ROLES = new Set(['basic', 'standard', 'auditor', 'admin'])
+const ALERT_NOTIFICATION_SEVERITIES = new Set(['轻微', '重大', '紧急'])
 
 function readFilter(value, maxLength = 120) {
   return String(value || '').trim().slice(0, maxLength)
@@ -26,6 +37,33 @@ function readTimestamp(value) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
 }
 
+function readPositiveInteger(value) {
+  const text = String(value ?? '').trim()
+  if (!/^\d+$/.test(text)) return null
+  const parsed = Number(text)
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? parsed : null
+}
+
+function readNonNegativeInteger(value) {
+  const text = String(value ?? '').trim()
+  if (!/^\d+$/.test(text)) return null
+  const parsed = Number(text)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function readNotificationFilters(source = {}) {
+  const severityText = String(source.severity || '').trim()
+  const severity = !severityText || severityText === 'all' ? null : severityText
+  if (severity !== null && !ALERT_NOTIFICATION_SEVERITIES.has(severity)) {
+    return { ok: false, message: '告警级别筛选无效' }
+  }
+  const readState = String(source.readState || 'all').trim()
+  if (readState !== 'all' && readState !== 'unread') {
+    return { ok: false, message: '告警读取状态筛选无效' }
+  }
+  return { ok: true, value: { severity, unreadOnly: readState === 'unread' } }
+}
+
 export function createAlertsRouter({
   db,
   authMiddleware,
@@ -33,10 +71,14 @@ export function createAlertsRouter({
   notificationsMiddleware = authMiddleware,
   exportMiddleware = authMiddleware,
   recordAudit,
+  notifyAlertNotificationsChanged = () => true,
   readAlertSource = readGAIOPAlerts,
   readAlertChanges = readGAIOPAlertChanges,
 }) {
   const router = Router()
+  const notifyNotificationChange = (userId, action) => {
+    try { notifyAlertNotificationsChanged(userId, action) } catch { /* durable state is already committed */ }
+  }
   const assertAlertViewer = (req, res) => {
     if (ALERT_VIEWER_ROLES.has(req.user?.role)) return true
     sendError(res, { status: 403, code: 'ALERT_ACCESS_DENIED', message: '当前账号无权使用告警通知设置' })
@@ -53,6 +95,127 @@ export function createAlertsRouter({
     const preferences = saveAlertNotificationPreferences(db, req.user.id, validated.value)
     recordAudit(req.user, '保存账户告警通知设置', '告警通知设置', '已更新当前账户的实时提醒、声音与三档页面弹窗/告警通知开关')
     return sendOk(res, { preferences })
+  })
+  router.get('/notifications', notificationsMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    const filters = readNotificationFilters(req.query)
+    if (!filters.ok) return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_FILTER_INVALID', message: filters.message })
+    const beforeText = String(req.query.beforeId ?? '').trim()
+    const beforeEventId = beforeText ? readPositiveInteger(beforeText) : null
+    if (beforeText && beforeEventId === null) {
+      return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_CURSOR_INVALID', message: '告警通知分页位置无效' })
+    }
+    const offlineAfterText = String(req.query.offlineAfterId ?? '').trim()
+    const throughText = String(req.query.throughId ?? '').trim()
+    const offlineAfterEventId = offlineAfterText ? readNonNegativeInteger(offlineAfterText) : null
+    const throughEventId = throughText ? readPositiveInteger(throughText) : null
+    if ((offlineAfterEventId === null) !== (throughEventId === null)
+      || (offlineAfterEventId !== null && throughEventId !== null && throughEventId <= offlineAfterEventId)) {
+      return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_RANGE_INVALID', message: '离线告警汇总范围无效' })
+    }
+    try {
+      return sendOk(res, listAlertNotifications(db, {
+        userId: req.user.id,
+        ...filters.value,
+        beforeEventId,
+        offlineAfterEventId,
+        throughEventId,
+        limit: readBoundedInteger(req.query.limit, 30, 1, 100),
+      }))
+    } catch {
+      return sendError(res, { status: 500, code: 'ALERT_NOTIFICATION_LIST_FAILED', message: '告警通知暂时无法读取，请稍后重试' })
+    }
+  })
+  router.put('/notifications/:eventId/read', notificationsMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    const eventId = readPositiveInteger(req.params.eventId)
+    if (eventId === null) return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_ID_INVALID', message: '告警通知编号无效' })
+    try {
+      const result = markAlertNotificationRead(db, req.user.id, eventId)
+      if (!result) return sendError(res, { status: 404, code: 'ALERT_NOTIFICATION_NOT_FOUND', message: '告警通知不存在或已清空' })
+      if (result.changed) notifyNotificationChange(req.user.id, 'read')
+      return sendOk(res, result)
+    } catch {
+      return sendError(res, { status: 500, code: 'ALERT_NOTIFICATION_READ_FAILED', message: '告警通知读取状态保存失败' })
+    }
+  })
+  router.post('/notifications/read', notificationsMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    const filters = readNotificationFilters(req.body)
+    if (!filters.ok) return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_FILTER_INVALID', message: filters.message })
+    const offlineAfterEventId = req.body?.offlineAfterId === undefined ? null : readNonNegativeInteger(req.body.offlineAfterId)
+    const throughEventId = req.body?.throughId === undefined ? null : readPositiveInteger(req.body.throughId)
+    if ((offlineAfterEventId === null) !== (throughEventId === null)
+      || (offlineAfterEventId !== null && throughEventId !== null && throughEventId <= offlineAfterEventId)) {
+      return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_RANGE_INVALID', message: '离线告警汇总范围无效' })
+    }
+    try {
+      const scopedFilters = { ...filters.value, offlineAfterEventId, throughEventId }
+      const changed = markAlertNotificationsRead(db, req.user.id, scopedFilters)
+      const { counts } = listAlertNotifications(db, { userId: req.user.id, ...scopedFilters, limit: 1 })
+      if (changed > 0) notifyNotificationChange(req.user.id, 'read')
+      return sendOk(res, { changed, counts })
+    } catch {
+      return sendError(res, { status: 500, code: 'ALERT_NOTIFICATION_READ_FAILED', message: '告警通知读取状态保存失败' })
+    }
+  })
+  router.delete('/notifications/:eventId', notificationsMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    const eventId = readPositiveInteger(req.params.eventId)
+    if (eventId === null) return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_ID_INVALID', message: '告警通知编号无效' })
+    try {
+      if (!clearAlertNotification(db, req.user.id, eventId)) {
+        return sendError(res, { status: 404, code: 'ALERT_NOTIFICATION_NOT_FOUND', message: '告警通知不存在或已清空' })
+      }
+      notifyNotificationChange(req.user.id, 'clear')
+      return sendOk(res, { notificationId: eventId })
+    } catch {
+      return sendError(res, { status: 500, code: 'ALERT_NOTIFICATION_CLEAR_FAILED', message: '告警通知清空状态保存失败' })
+    }
+  })
+  router.post('/notifications/clear', notificationsMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    const filters = readNotificationFilters(req.body)
+    if (!filters.ok) return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_FILTER_INVALID', message: filters.message })
+    const offlineAfterEventId = req.body?.offlineAfterId === undefined ? null : readNonNegativeInteger(req.body.offlineAfterId)
+    const throughEventId = req.body?.throughId === undefined ? null : readPositiveInteger(req.body.throughId)
+    if ((offlineAfterEventId === null) !== (throughEventId === null)
+      || (offlineAfterEventId !== null && throughEventId !== null && throughEventId <= offlineAfterEventId)) {
+      return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_RANGE_INVALID', message: '离线告警汇总范围无效' })
+    }
+    try {
+      const scopedFilters = { ...filters.value, offlineAfterEventId, throughEventId }
+      const changed = clearAlertNotifications(db, req.user.id, scopedFilters)
+      const { counts } = listAlertNotifications(db, { userId: req.user.id, ...scopedFilters, limit: 1 })
+      if (changed > 0) notifyNotificationChange(req.user.id, 'clear')
+      return sendOk(res, { changed, counts })
+    } catch {
+      return sendError(res, { status: 500, code: 'ALERT_NOTIFICATION_CLEAR_FAILED', message: '告警通知清空状态保存失败' })
+    }
+  })
+  router.post('/notifications/offline-summary/claim', notificationsMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    try {
+      return sendOk(res, claimOfflineAlertSummary(db, req.user.id, { claimToken: randomUUID() }))
+    } catch {
+      return sendError(res, { status: 500, code: 'ALERT_NOTIFICATION_SUMMARY_CLAIM_FAILED', message: '离线期间告警汇总暂时无法读取' })
+    }
+  })
+  router.post('/notifications/offline-summary/confirm', notificationsMiddleware, (req, res) => {
+    if (!assertAlertViewer(req, res)) return
+    const claimToken = String(req.body?.claimToken || '').trim()
+    if (!claimToken || claimToken.length > 200) {
+      return sendError(res, { status: 400, code: 'ALERT_NOTIFICATION_SUMMARY_TOKEN_INVALID', message: '离线期间告警汇总确认信息无效' })
+    }
+    try {
+      const confirmed = confirmOfflineAlertSummary(db, req.user.id, claimToken)
+      if (!confirmed) {
+        return sendError(res, { status: 409, code: 'ALERT_NOTIFICATION_SUMMARY_CLAIM_LOST', message: '离线期间告警汇总已由其他页面处理' })
+      }
+      return sendOk(res, confirmed)
+    } catch {
+      return sendError(res, { status: 500, code: 'ALERT_NOTIFICATION_SUMMARY_CONFIRM_FAILED', message: '离线期间告警汇总确认失败' })
+    }
   })
   router.post('/export', exportMiddleware, (req, res) => {
     if (!ALERT_EXPORTER_ROLES.has(req.user?.role)) {

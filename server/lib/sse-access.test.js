@@ -11,6 +11,7 @@ test('alert and alert stream state follow the same roles as GET /api/alerts', ()
   for (const data of [
     { type: 'alert', payload: { name: 'sensitive alert' } },
     { type: 'alertStreamState', state: 'gap', latestSequence: 10 },
+    { type: 'alertNotificationStateChanged', action: 'read' },
   ]) {
     assert.equal(canReceiveSseData({ role: 'basic' }, data, dependencies), true)
     assert.equal(canReceiveSseData({ role: 'standard' }, data, dependencies), true)
@@ -19,6 +20,7 @@ test('alert and alert stream state follow the same roles as GET /api/alerts', ()
     assert.equal(canReceiveSseData(null, data, dependencies), false)
   }
   assert.equal(canReceiveSseData({ role: 'standard', effectiveModules: { 'alerts.notifications': false } }, { type: 'alert' }, dependencies), false)
+  assert.equal(canReceiveSseData({ role: 'standard', effectiveModules: { 'alerts.notifications': false } }, { type: 'alertNotificationStateChanged' }, dependencies), false)
   assert.equal(canReceiveSseData({ role: 'basic', effectiveModules: { 'alerts.notifications': true } }, { type: 'alertStreamState' }, dependencies), true)
 })
 

@@ -12,6 +12,7 @@ import { migrateAlertStreamState } from './lib/alert-stream-state.js'
 import { migrateAlertNotificationPreferences } from './lib/alert-notification-preferences.js'
 import { migrateChatDisplayPreferences } from './lib/chat-display-preferences.js'
 import { migrateModulePermissions } from './lib/module-permissions.js'
+import { migrateAlertNotificationStore } from './lib/alert-notification-store.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -250,6 +251,7 @@ migrateAlertStreamState(db)
 migrateAlertNotificationPreferences(db)
 migrateChatDisplayPreferences(db)
 migrateModulePermissions(db)
+migrateAlertNotificationStore(db)
 
 try {
   db.exec('ALTER TABLE scenarios ADD COLUMN execution_log TEXT DEFAULT \'[]\'')
