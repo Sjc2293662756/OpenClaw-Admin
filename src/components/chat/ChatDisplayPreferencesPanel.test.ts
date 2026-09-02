@@ -11,12 +11,12 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({ locale: { value: 'zh-CN' } }) }))
 vi.mock('naive-ui', () => ({
   NAlert: { template: '<div><slot /><slot name="action" /></div>' },
   NButton: { inheritAttrs: false, template: '<button v-bind="$attrs"><slot /></button>' },
-  NSwitch: {
-    props: ['value', 'disabled', 'loading'],
+  NFormItem: { props: ['label'], template: '<label class="preference-form-item"><span>{{ label }}</span><slot /></label>' },
+  NSelect: {
+    props: ['value', 'options', 'disabled', 'loading'],
     emits: ['update:value'],
-    template: '<button class="preference-switch" :disabled="disabled" @click="$emit(\'update:value\', !value)">{{ value ? \'on\' : \'off\' }}</button>',
+    template: '<select class="preference-select" :value="value" :disabled="disabled" @change="$emit(\'update:value\', $event.target.value)"><option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option></select>',
   },
-  NText: { template: '<span><slot /></span>' },
 }))
 
 beforeEach(() => {
@@ -38,7 +38,8 @@ describe('ChatDisplayPreferencesPanel', () => {
     const wrapper = mount(ChatDisplayPreferencesPanel)
     await flushPromises()
     expect(wrapper.text()).toContain('显示思考过程')
-    expect(wrapper.text()).toContain('流式输出始终开启')
+    expect(wrapper.text()).toContain('显示过程与结果')
+    expect(wrapper.text()).toContain('仅显示对话结果')
     expect(wrapper.text()).toContain('暂时无法读取已保存设置')
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
@@ -48,7 +49,7 @@ describe('ChatDisplayPreferencesPanel', () => {
     await wrapper.findAll('button').find((button) => button.text() === '重试')!.trigger('click')
     await flushPromises()
     expect(store.preferences.showThinkingProcess).toBe(false)
-    expect(wrapper.find('.preference-switch').text()).toBe('off')
+    expect((wrapper.find('.preference-select').element as HTMLSelectElement).value).toBe('results-only')
     wrapper.unmount()
   })
 
@@ -58,7 +59,7 @@ describe('ChatDisplayPreferencesPanel', () => {
     store.preferencesReady = true
     vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('save failed')))
     const wrapper = mount(ChatDisplayPreferencesPanel)
-    await wrapper.find('.preference-switch').trigger('click')
+    await wrapper.find('.preference-select').setValue('results-only')
     await flushPromises()
     expect(store.preferences.showThinkingProcess).toBe(true)
     expect(wrapper.text()).toContain('仍保留上一次已保存的选择')
@@ -67,7 +68,7 @@ describe('ChatDisplayPreferencesPanel', () => {
       ok: true,
       preferences: { showThinkingProcess: false, updatedAt: 30 },
     }))))
-    await wrapper.find('.preference-switch').trigger('click')
+    await wrapper.find('.preference-select').setValue('results-only')
     await flushPromises()
     expect(store.preferences.showThinkingProcess).toBe(false)
     wrapper.unmount()

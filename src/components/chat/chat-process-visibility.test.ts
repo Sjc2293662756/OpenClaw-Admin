@@ -31,6 +31,7 @@ describe('chat process visibility integration', () => {
 
   it('keeps the account preference in system interface preferences without a workspace duplicate', () => {
     expect(settingsPageSource.split('<ChatDisplayPreferencesPanel').length).toBe(2)
+    expect(settingsPageSource.indexOf('<ChatDisplayPreferencesPanel')).toBeGreaterThan(settingsPageSource.indexOf('<NForm label-placement'))
     expect(chatWorkspaceSource).not.toContain('ChatDisplayPreferencesPanel')
     expect(chatWorkspaceSource).not.toContain('showMySettings')
     expect(chatWorkspaceSource).not.toContain('我的设置')
