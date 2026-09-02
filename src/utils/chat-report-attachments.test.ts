@@ -62,6 +62,33 @@ describe('mapReportsToAssistantMessageIndexes', () => {
     expect(mapping.get(1)?.map((item) => item.id)).toEqual(['report-1'])
   })
 
+  it('attaches directly to an authoritative assistant completion id when the user turn was not persisted', () => {
+    const completed: ChatMessage = {
+      id: 'assistant-completion-1',
+      role: 'assistant',
+      content: '系统巡检报告已生成，完整报告将以附件形式发送。',
+    }
+    const mapping = mapReportsToAssistantMessageIndexes(
+      [completed],
+      [report({ sourceMessageId: completed.id, sourceMessagePreview: null })],
+    )
+
+    expect(mapping.get(0)?.map((item) => item.id)).toEqual(['report-1'])
+  })
+
+  it('does not attach directly to an assistant id without an explicit report completion signal', () => {
+    const ordinaryReply: ChatMessage = {
+      id: 'assistant-ordinary-1',
+      role: 'assistant',
+      content: '数据查询已经完成。',
+    }
+
+    expect(mapReportsToAssistantMessageIndexes(
+      [ordinaryReply],
+      [report({ sourceMessageId: ordinaryReply.id, sourceMessagePreview: null })],
+    ).size).toBe(0)
+  })
+
   it('places the card after the final assistant reply even when it omits the filename', () => {
     const user: ChatMessage = { id: 'user-1', role: 'user', content: '生成巡检报告', timestamp: '2026-08-24T02:00:00Z' }
     const preparing: ChatMessage = { role: 'assistant', content: '正在整理数据。', timestamp: '2026-08-24T02:00:02Z' }

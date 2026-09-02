@@ -129,7 +129,10 @@ export function mapReportsToAssistantMessageIndexes(
     const sourcePreview = String(report.sourceMessagePreview || '').trim()
 
     if (exactSourceIndexes.length === 1) {
-      targetIndex = uniqueCompletionTarget(messages, exactSourceIndexes[0]!)
+      const exactSourceIndex = exactSourceIndexes[0]!
+      targetIndex = hasReportCompletionSignal(messages[exactSourceIndex]!)
+        ? exactSourceIndex
+        : uniqueCompletionTarget(messages, exactSourceIndex)
     }
 
     if (targetIndex === undefined && sourcePreview) {
