@@ -118,6 +118,23 @@ describe('mapReportsToAssistantMessageIndexes', () => {
     expect(mapping.get(1)?.[0]?.id).toBe('report-1')
   })
 
+  it('matches a source preview when Gateway repeats user text in raw content', () => {
+    const prompt = '生成最近三天的巡检报告'
+    const user: ChatMessage = {
+      id: 'gateway-user-9',
+      role: 'user',
+      content: prompt,
+      rawContent: [{ type: 'text', text: prompt }],
+    }
+    const completed: ChatMessage = { role: 'assistant', content: '报告文件已生成并通过受控归档流程登记。' }
+    const mapping = mapReportsToAssistantMessageIndexes([user, completed], [report({
+      sourceMessageId: 'web-1788403436586-bcyh85e8',
+      sourceMessagePreview: prompt,
+    })])
+
+    expect(mapping.get(1)?.[0]?.id).toBe('report-1')
+  })
+
   it('recovers a persisted turn when the exact optimistic source is appended after the reply', () => {
     const prompt = '给我回溯238web 最近3天的综述报告！'
     const persistedUser: ChatMessage = {

@@ -25,7 +25,9 @@ function messageText(message: ChatMessage): string {
     if (typeof part.text === 'string') parts.push(part.text)
     if (typeof part.content === 'string') parts.push(part.content)
   }
-  return parts.join('\n')
+  // Gateway history can expose the same text both as the normalized content
+  // and as a raw text item. Keep one copy so source previews remain exact.
+  return [...new Set(parts.filter(Boolean))].join('\n')
 }
 
 export function hasReportDocumentReference(message: ChatMessage): boolean {
