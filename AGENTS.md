@@ -25,11 +25,11 @@
   - store/composable/utils：简洁的小写或 camelCase 文件名（例如 `session.ts`、`useTheme.ts`）
 
 ## 测试要求
-- 当前仓库尚未配置自动化测试框架。
-- 合并前必须检查：
-  - `npm run build` 通过，无类型与构建错误。
-  - 针对改动流程做手工冒烟测试（登录、WebSocket 连接、相关页面），并连接可用 Gateway（`ws://127.0.0.1:18789`）。
-- 对于非简单逻辑改动，请在 PR 中附测试计划；后续迭代优先补充 Vitest 单元测试。
+- 当前仓库同时使用 Node.js 原生测试和 Vitest；具体入口以 `package.json` 为准。
+- 每次改动至少运行相关定向测试和 `npm run build`；跨模块改动、合并或发布前运行 `npm test`。
+- 页面改动还要针对相关流程做浏览器冒烟测试；构建和自动化测试通过不能代替真实页面验收。
+- 连接 237 预览时遵循上级 `../AGENTS.md` 和 `../ops/local-dev/本地工作树连接237只读前端预览.md`，不得为预览写入生产或降低认证边界。
+- 对于非简单逻辑改动，请在 PR 中附测试计划和必要的截图或录屏。
 
 ## 提交与 PR 规范
 - 提交前缀建议使用 Conventional Commit：`feat:`、`fix:`、`refactor:`、`docs:`、`chore:`。
