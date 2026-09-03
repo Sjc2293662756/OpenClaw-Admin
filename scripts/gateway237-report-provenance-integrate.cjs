@@ -40,10 +40,9 @@ function execute(client, script) {
   return new Promise((resolve) => client.exec("sudo -S -p '' bash -s", (error, stream) => {
     if (error) return resolve({ ok: false, output: '' })
     let output = ''
-    let errorOutput = ''
     stream.on('data', (chunk) => { output += chunk.toString('utf8') })
-    stream.stderr.on('data', (chunk) => { errorOutput += chunk.toString('utf8') })
-    stream.on('close', (exitCode) => resolve({ ok: exitCode === 0, output, errorOutput }))
+    stream.stderr.on('data', () => {})
+    stream.on('close', (exitCode) => resolve({ ok: exitCode === 0, output }))
     stream.write(`${connection.password}\n${script}`)
     stream.end()
   }))
@@ -371,10 +370,7 @@ if (!matched && candidateCount === 0) {
   // the synthetic bridge and report E2E checks below remain mandatory.
   process.exit(0)
 }
-if (!matched) {
-  console.error(JSON.stringify({ candidateCount, resolvedCount, hasTestApi: Boolean(plugin?.__test__) }))
-  process.exit(1)
-}
+if (!matched) process.exit(1)
 NODE
 mark VERIFY_ADMIN_HEALTH
 admin_healthy=0
@@ -453,13 +449,7 @@ setTimeout(() => {
   }) + '\n')
 }, 75)
 const result = await resultPromise
-console.error('REPORT_E2E_RESULT ' + JSON.stringify({ details: result?.details || null }))
 if (!result?.details?.ok) {
-  console.error('REPORT_E2E_DETAILS ' + JSON.stringify({
-    ok: Boolean(result?.details?.ok),
-    errorCode: String(result?.details?.errorCode || ''),
-    message: String(result?.details?.message || ''),
-  }))
   process.exit(1)
 }
 function walk(directory) {
@@ -469,10 +459,8 @@ function walk(directory) {
   })
 }
 const audits = walk(process.env.GAIOP_REPORTS_DIR).filter((file) => file.endsWith('.json'))
-console.error('REPORT_E2E_AUDITS ' + audits.length)
 if (audits.length !== 1) process.exit(1)
 const audit = JSON.parse(fs.readFileSync(audits[0], 'utf8'))
-console.error('REPORT_E2E_AUDIT_FIELDS ' + JSON.stringify({ sourceChannel: audit.sourceChannel, sourceUserId: audit.sourceUserId, sourceSessionId: audit.sourceSessionId, dataSourceId: audit.dataSourceId }))
 if (
   audit.sourceChannel !== 'web'
   || audit.sourceUserId !== 'deployment-probe'
@@ -517,8 +505,7 @@ client.on('ready', async () => {
     const parsed = parseResult(result.output)
     finished = true
     clearTimeout(timeout)
-    const diagnostic = String(result.errorOutput || '').match(/REPORT_E2E_[^\n]*/g)?.slice(-4) || null
-    process.stdout.write(`${JSON.stringify({ completed: result.ok && parsed.completed, status: result.ok ? 'completed' : 'failed', diagnostic, ...parsed })}\n`)
+    process.stdout.write(`${JSON.stringify({ completed: result.ok && parsed.completed, status: result.ok ? 'completed' : 'failed', ...parsed })}\n`)
     client.end()
     if (!result.ok) process.exitCode = 1
   } catch {
