@@ -702,6 +702,9 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
       ws.subscribe('sseConnected', () => { void claimOfflineSummary() }),
       ws.subscribe('alertNotificationStateChanged', () => { void loadNotifications({ reset: true }) }),
     ]
+    // The SSE connected signal can arrive before this store finishes subscribing
+    // during login. Claim once here as well, so a genuine offline period is not missed.
+    void claimOfflineSummary()
   }
 
   function stop() {

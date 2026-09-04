@@ -98,19 +98,19 @@ onMounted(async () => {
         <div><NText strong>{{ text('声音提醒', 'Sound reminders') }}</NText><NText depth="3">{{ text('仅在实际创建页面弹窗时播放。', 'Plays only when a page popup is actually created.') }}</NText></div>
         <NSwitch v-model:value="draft.soundEnabled" :disabled="!draft.realtimeEnabled || !hasEnabledPagePopup" />
       </div>
-      <div class="alert-preferences-grid" :class="{ 'is-disabled': !draft.realtimeEnabled }">
-        <div class="alert-preferences-grid-header">{{ text('级别', 'Severity') }}</div>
-        <div class="alert-preferences-grid-header">{{ text('页面弹窗', 'Page popup') }}</div>
-        <div class="alert-preferences-grid-header">{{ text('告警通知', 'Alert notification') }}</div>
-        <div class="alert-preferences-grid-header">{{ text('提示音', 'Sound') }}</div>
-        <div class="alert-preferences-grid-header">{{ text('试听', 'Preview') }}</div>
-        <template v-for="row in rows" :key="row.popup">
-          <NText>{{ row.label }}</NText>
-          <NSwitch :value="draft[row.popup] && draft[row.notification]" :disabled="!draft.realtimeEnabled || !draft[row.notification]" @update:value="updatePopup(row.popup, $event)" />
-          <NSwitch v-model:value="draft[row.notification]" :disabled="!draft.realtimeEnabled" />
-          <div class="alert-preferences-control-cell"><NSelect :value="draft[row.sound]" :options="soundOptions" :disabled="!draft.realtimeEnabled" @update:value="updateSound(row.sound, $event)" /></div>
-          <div class="alert-preferences-control-cell"><NButton size="small" :disabled="!draft.realtimeEnabled || draft[row.sound] === 'none'" @click="previewSound(draft[row.sound])">{{ text('试听', 'Preview') }}</NButton></div>
-        </template>
+      <div class="alert-preferences-table-wrap" :class="{ 'is-disabled': !draft.realtimeEnabled }">
+        <table class="alert-preferences-table">
+          <thead><tr><th>{{ text('级别', 'Severity') }}</th><th>{{ text('页面弹窗', 'Page popup') }}</th><th>{{ text('告警通知', 'Alert notification') }}</th><th>{{ text('提示音', 'Sound') }}</th><th>{{ text('试听', 'Preview') }}</th></tr></thead>
+          <tbody>
+            <tr v-for="row in rows" :key="row.popup">
+              <td><NText>{{ row.label }}</NText></td>
+              <td><NSwitch :value="draft[row.popup] && draft[row.notification]" :disabled="!draft.realtimeEnabled || !draft[row.notification]" @update:value="updatePopup(row.popup, $event)" /></td>
+              <td><NSwitch v-model:value="draft[row.notification]" :disabled="!draft.realtimeEnabled" /></td>
+              <td><NSelect :value="draft[row.sound]" :options="soundOptions" :disabled="!draft.realtimeEnabled" @update:value="updateSound(row.sound, $event)" /></td>
+              <td><NButton size="small" :disabled="!draft.realtimeEnabled || draft[row.sound] === 'none'" @click="previewSound(draft[row.sound])">{{ text('试听', 'Preview') }}</NButton></td>
+            </tr>
+          </tbody>
+        </table>
       </div>
       <NButtonGroup class="alert-preferences-actions">
         <NButton :disabled="!dirty || alerts.preferencesSaving" @click="reset">{{ text('放弃修改', 'Discard') }}</NButton>
@@ -126,21 +126,21 @@ onMounted(async () => {
 .alert-preferences-retry { justify-self: start; margin-top: -4px; }
 .alert-preferences-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 10px 0; border-bottom: 1px solid var(--border-color); }
 .alert-preferences-row :deep(.n-text--depth-3) { display: block; margin-top: 4px; line-height: 1.5; }
-.alert-preferences-grid { display: grid; grid-template-columns: minmax(70px, .8fr) minmax(92px, 1fr) minmax(108px, 1fr) minmax(154px, 1.45fr) minmax(66px, .65fr); align-items: center; overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; }
-.alert-preferences-grid > * { display: flex; align-items: center; min-height: 48px; padding: 10px 14px; border-bottom: 1px solid var(--border-color); }
-.alert-preferences-grid > *:nth-last-child(-n + 5) { border-bottom: 0; }
-.alert-preferences-grid > *:not(:nth-child(5n + 1)) { justify-content: center; border-left: 1px solid var(--border-color); }
-.alert-preferences-grid-header { font-size: 13px; color: var(--text-color-3); background: var(--table-header-color, var(--card-color)); }
-.alert-preferences-grid.is-disabled { opacity: .66; }
-.alert-preferences-control-cell :deep(.n-base-selection), .alert-preferences-control-cell :deep(.n-button) { width: 100%; }
+.alert-preferences-table-wrap { overflow: hidden; border: 1px solid var(--border-color); border-radius: 8px; }
+.alert-preferences-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.alert-preferences-table th, .alert-preferences-table td { height: 56px; padding: 8px 14px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); text-align: center; vertical-align: middle; }
+.alert-preferences-table th { font-size: 13px; font-weight: 500; color: var(--text-color-3); background: var(--table-header-color, var(--card-color)); }
+.alert-preferences-table th:first-child, .alert-preferences-table td:first-child { width: 14%; text-align: left; }
+.alert-preferences-table th:nth-child(2), .alert-preferences-table th:nth-child(3) { width: 17%; }
+.alert-preferences-table th:nth-child(4) { width: 35%; }
+.alert-preferences-table th:last-child, .alert-preferences-table td:last-child { width: 17%; border-right: 0; }
+.alert-preferences-table tbody tr:last-child td { border-bottom: 0; }
+.alert-preferences-table :deep(.n-base-selection), .alert-preferences-table :deep(.n-button) { width: 100%; }
+.alert-preferences-table-wrap.is-disabled { opacity: .66; }
 .alert-preferences-actions { justify-self: end; }
 @media (max-width: 560px) {
   .alert-preferences-row { align-items: flex-start; }
-  .alert-preferences-grid { grid-template-columns: 1fr 88px; font-size: 13px; }
-  .alert-preferences-grid > * { min-height: 42px; padding: 9px 10px; }
-  .alert-preferences-grid > *:nth-last-child(-n + 5) { border-bottom: 1px solid var(--border-color); }
-  .alert-preferences-grid > *:not(:nth-child(5n + 1)) { justify-content: flex-start; border-left: 0; }
-  .alert-preferences-grid > *:nth-child(5n + 1) { grid-column: 1 / -1; padding-bottom: 2px; border-bottom: 0; background: var(--table-header-color, var(--card-color)); }
-  .alert-preferences-grid-header { display: none; }
+  .alert-preferences-table-wrap { overflow-x: auto; }
+  .alert-preferences-table { min-width: 620px; }
 }
 </style>
