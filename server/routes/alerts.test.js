@@ -35,6 +35,7 @@ async function startTestServer(readAlertSource, { role = 'admin', userId = 'admi
 
 const defaultPreferences = {
   realtimeEnabled: true, soundEnabled: true,
+  minorSound: 'minor-soft', majorSound: 'major-chime', criticalSound: 'critical-pulse',
   minorPopupEnabled: true, minorNotificationEnabled: true,
   majorPopupEnabled: true, majorNotificationEnabled: true,
   criticalPopupEnabled: true, criticalNotificationEnabled: true,

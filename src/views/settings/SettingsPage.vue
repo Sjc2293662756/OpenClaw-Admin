@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NForm, NFormItem, NSelect, NSpace, NSwitch, NText, useMessage } from 'naive-ui'
 import { useI18n } from 'vue-i18n'
 import { localizeApiError } from '@/utils/api-error'
@@ -7,12 +7,14 @@ import { useAuthStore } from '@/stores/auth'
 import { canAccessPage } from '@/permissions/access-control'
 import { useLocaleStore } from '@/stores/locale'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
-import { DEFAULT_ALERT_NOTIFICATION_PREFERENCES, useAlertRealtimeStore, type AlertNotificationPreferences } from '@/stores/alert-realtime'
+import { DEFAULT_ALERT_NOTIFICATION_PREFERENCES, LOCAL_ALERT_SOUND_DEMO, useAlertRealtimeStore, type AlertNotificationPreferences, type AlertNotificationSeverity } from '@/stores/alert-realtime'
+import { isAlertSoundId, playAlertNotificationSound, primeAlertNotificationSound, type AlertSoundId } from '@/alerts/notification-sound'
 import type { AppLocale } from '@/i18n/locale'
 import SessionManagementPage from './SessionManagementPage.vue'
 import ChatDisplayPreferencesPanel from '@/components/chat/ChatDisplayPreferencesPanel.vue'
 
-type AlertPreferenceBooleanKey = Exclude<keyof AlertNotificationPreferences, 'updatedAt'>
+type AlertPreferenceBooleanKey = Exclude<keyof AlertNotificationPreferences, 'updatedAt' | 'minorSound' | 'majorSound' | 'criticalSound'>
+type AlertPreferenceSoundKey = Extract<keyof AlertNotificationPreferences, 'minorSound' | 'majorSound' | 'criticalSound'>
 
 const authStore = useAuthStore()
 const localeStore = useLocaleStore()
@@ -25,19 +27,33 @@ const reportStorageConfigured = ref(false)
 const reportStorageRoot = ref('')
 const reportStorageLoading = ref(false)
 const reportStorageError = ref(false)
-const canConfigureAlertNotifications = computed(() => canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.notifications'))
+const canConfigureAlertNotifications = computed(() => LOCAL_ALERT_SOUND_DEMO || canAccessPage(authStore.currentUser?.effectiveModules, 'alerts.notifications'))
 const alertPreferencesDraft = ref<AlertNotificationPreferences>({ ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES })
 const alertPreferencesLoaded = ref(false)
 const alertPreferenceRows = computed(() => [
-  { label: text('轻微', 'Minor'), popup: 'minorPopupEnabled', notification: 'minorNotificationEnabled' },
-  { label: text('重大', 'Major'), popup: 'majorPopupEnabled', notification: 'majorNotificationEnabled' },
-  { label: text('紧急', 'Critical'), popup: 'criticalPopupEnabled', notification: 'criticalNotificationEnabled' },
-] as Array<{ label: string; popup: AlertPreferenceBooleanKey; notification: AlertPreferenceBooleanKey }>)
+  { label: text('轻微', 'Minor'), popup: 'minorPopupEnabled', notification: 'minorNotificationEnabled', sound: 'minorSound' },
+  { label: text('重大', 'Major'), popup: 'majorPopupEnabled', notification: 'majorNotificationEnabled', sound: 'majorSound' },
+  { label: text('紧急', 'Critical'), popup: 'criticalPopupEnabled', notification: 'criticalNotificationEnabled', sound: 'criticalSound' },
+] as Array<{ label: string; popup: AlertPreferenceBooleanKey; notification: AlertPreferenceBooleanKey; sound: AlertPreferenceSoundKey }>)
+const alertSoundOptions = computed(() => [
+  { label: text('系统单音', 'System single tone'), value: 'minor-soft' },
+  { label: text('系统双音', 'System double tone'), value: 'major-chime' },
+  { label: text('紧急短促音', 'Urgent short tone'), value: 'critical-pulse' },
+  { label: text('清晰双音', 'Clear double tone'), value: 'rising-bell' },
+  { label: text('低频提示音', 'Low tone'), value: 'falling-bell' },
+  { label: text('数字短音', 'Digital short tone'), value: 'digital-ping' },
+  { label: text('双击提醒音', 'Double reminder'), value: 'woodblock' },
+  { label: text('重复提醒音', 'Repeating reminder'), value: 'rapid-signal' },
+  { label: text('静音', 'Silent'), value: 'none' },
+])
 const hasEnabledPagePopup = computed(() => alertPreferenceRows.value.some((row) => (
   alertPreferencesDraft.value[row.popup] === true && alertPreferencesDraft.value[row.notification] === true
 )))
 const alertPreferencesDirty = computed(() => Object.keys(DEFAULT_ALERT_NOTIFICATION_PREFERENCES)
   .some((key) => alertPreferencesDraft.value[key as keyof AlertNotificationPreferences] !== alerts.preferences[key as keyof AlertNotificationPreferences]))
+const localDemoRunning = ref(false)
+let localDemoTimer: ReturnType<typeof setInterval> | null = null
+let localDemoNotificationId = 900_000
 
 const themeOptions = computed(() => ([
   { label: t('pages.settings.themeLight'), value: 'light' },
@@ -100,6 +116,50 @@ function updatePopupPreference(key: AlertPreferenceBooleanKey, value: boolean) {
   alertPreferencesDraft.value[key] = value
 }
 
+function updateSoundPreference(key: AlertPreferenceSoundKey, value: unknown) {
+  if (isAlertSoundId(value)) alertPreferencesDraft.value[key] = value
+}
+
+async function previewAlertSound(sound: AlertSoundId) {
+  await primeAlertNotificationSound()
+  playAlertNotificationSound(sound)
+}
+
+function simulateAlert(severity: AlertNotificationSeverity) {
+  if (!LOCAL_ALERT_SOUND_DEMO) return
+  localDemoNotificationId += 1
+  alerts.addEvent({
+    type: 'alert',
+    action: 'triggered',
+    cursor: localDemoNotificationId,
+    notificationId: localDemoNotificationId,
+    receiverGeneration: 1,
+    payload: {
+      id: `local-alert-${localDemoNotificationId}`,
+      severity,
+      categoryLabel: '本地演示告警',
+      name: `${severity}级模拟告警`,
+      source: '本地演示',
+      occurredAt: new Date().toISOString(),
+    },
+  })
+}
+
+function toggleLocalDemo() {
+  if (!LOCAL_ALERT_SOUND_DEMO) return
+  if (localDemoTimer) {
+    clearInterval(localDemoTimer)
+    localDemoTimer = null
+    localDemoRunning.value = false
+    return
+  }
+  const levels: AlertNotificationSeverity[] = ['轻微', '重大', '紧急']
+  let index = 0
+  simulateAlert(levels[index++] || '轻微')
+  localDemoTimer = setInterval(() => simulateAlert(levels[index++ % levels.length] || '轻微'), 4_000)
+  localDemoRunning.value = true
+}
+
 async function loadAlertPreferences() {
   if (!canConfigureAlertNotifications.value) return
   await alerts.loadPreferences()
@@ -110,7 +170,9 @@ async function saveAlertPreferences() {
   try {
     const saved = await alerts.savePreferences({ ...alertPreferencesDraft.value })
     alertPreferencesDraft.value = { ...saved }
-    message.success(text('告警通知设置已保存；仅影响之后到达的新事件。', 'Alert notification settings saved. They affect only newly arriving events.'))
+    message.success(LOCAL_ALERT_SOUND_DEMO
+      ? text('本地演示设置已更新。', 'Local demo settings were updated.')
+      : text('告警通知设置已保存；仅影响之后到达的新事件。', 'Alert notification settings saved. They affect only newly arriving events.'))
   } catch {
     message.error(text('保存告警通知设置失败，请检查连接后重试。', 'Failed to save alert notification settings. Check the connection and try again.'))
   }
@@ -121,6 +183,10 @@ watch(() => alerts.preferences, resetAlertPreferencesDraft, { deep: true })
 onMounted(() => {
   void loadReportStorageStatus()
   void loadAlertPreferences()
+})
+
+onUnmounted(() => {
+  if (localDemoTimer) clearInterval(localDemoTimer)
 })
 </script>
 
@@ -159,6 +225,9 @@ onMounted(() => {
       </NAlert>
       <div v-if="alerts.preferencesLoading && !alertPreferencesLoaded" class="alert-preferences-loading">{{ text('正在读取账户设置…', 'Loading account settings…') }}</div>
       <template v-else>
+        <NAlert v-if="LOCAL_ALERT_SOUND_DEMO" type="warning" :bordered="false" class="alert-preferences-message">
+          {{ text('本地演示模式：设置只保存在当前浏览器内存，不读取、不写入 237。可用下方按钮模拟实时告警。', 'Local demo mode: settings stay only in browser memory and never read or write 237. Use the buttons below to simulate live alerts.') }}
+        </NAlert>
         <div class="alert-preferences-master">
           <div><NText strong>{{ text('实时告警提醒', 'Real-time alert reminders') }}</NText><NText depth="3">{{ text('控制本账户新到达告警的页面弹窗、声音和通知条目。', 'Controls popups, sound, and notification entries for new alerts in this account.') }}</NText></div>
           <NSwitch v-model:value="alertPreferencesDraft.realtimeEnabled" />
@@ -171,6 +240,8 @@ onMounted(() => {
           <div class="alert-preferences-grid-header">{{ text('级别', 'Severity') }}</div>
           <div class="alert-preferences-grid-header">{{ text('页面弹窗', 'Page popup') }}</div>
           <div class="alert-preferences-grid-header">{{ text('告警通知', 'Alert notification') }}</div>
+          <div class="alert-preferences-grid-header">{{ text('提示音', 'Sound') }}</div>
+          <div class="alert-preferences-grid-header">{{ text('试听', 'Preview') }}</div>
           <template v-for="row in alertPreferenceRows" :key="row.popup">
             <NText>{{ row.label }}</NText>
             <NSwitch
@@ -179,8 +250,17 @@ onMounted(() => {
               @update:value="updatePopupPreference(row.popup, $event)"
             />
             <NSwitch v-model:value="alertPreferencesDraft[row.notification]" :disabled="!alertPreferencesDraft.realtimeEnabled" />
+            <div class="alert-preferences-control-cell"><NSelect :value="alertPreferencesDraft[row.sound]" :options="alertSoundOptions" :disabled="!alertPreferencesDraft.realtimeEnabled" @update:value="updateSoundPreference(row.sound, $event)" /></div>
+            <div class="alert-preferences-control-cell"><NButton size="small" :disabled="!alertPreferencesDraft.realtimeEnabled || alertPreferencesDraft[row.sound] === 'none'" @click="previewAlertSound(alertPreferencesDraft[row.sound])">{{ text('试听', 'Preview') }}</NButton></div>
           </template>
         </div>
+        <NSpace v-if="LOCAL_ALERT_SOUND_DEMO" class="alert-preferences-demo" wrap>
+          <NText strong>{{ text('模拟实时告警：', 'Simulate live alerts:') }}</NText>
+          <NButton size="small" @click="simulateAlert('轻微')">{{ text('模拟轻微', 'Simulate minor') }}</NButton>
+          <NButton size="small" @click="simulateAlert('重大')">{{ text('模拟重大', 'Simulate major') }}</NButton>
+          <NButton size="small" @click="simulateAlert('紧急')">{{ text('模拟紧急', 'Simulate critical') }}</NButton>
+          <NButton size="small" type="primary" @click="toggleLocalDemo">{{ localDemoRunning ? text('停止自动连续告警', 'Stop automatic alerts') : text('开启自动连续告警', 'Start automatic alerts') }}</NButton>
+        </NSpace>
         <NSpace justify="end" class="alert-preferences-actions">
           <NButton :disabled="!alertPreferencesDirty || alerts.preferencesSaving" @click="resetAlertPreferencesDraft">{{ text('放弃修改', 'Discard changes') }}</NButton>
           <NButton type="primary" :loading="alerts.preferencesSaving" :disabled="!alertPreferencesDirty || alerts.preferencesLoading" @click="saveAlertPreferences">{{ text('保存设置', 'Save settings') }}</NButton>
@@ -217,16 +297,22 @@ onMounted(() => {
 .alert-preferences-master, .alert-preferences-sound { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; }
 .alert-preferences-master :deep(.n-text--depth-3), .alert-preferences-sound :deep(.n-text--depth-3) { display: block; margin-top: 4px; line-height: 1.5; }
 .alert-preferences-sound { border-top: 1px solid var(--border-color); }
-.alert-preferences-grid { display: grid; grid-template-columns: minmax(92px, 1fr) minmax(112px, 1fr) minmax(126px, 1fr); align-items: center; gap: 0; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
+.alert-preferences-grid { display: grid; grid-template-columns: minmax(70px, .8fr) minmax(92px, 1fr) minmax(108px, 1fr) minmax(154px, 1.45fr) minmax(66px, .65fr); align-items: center; gap: 0; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; }
 .alert-preferences-grid > * { min-height: 48px; display: flex; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-color); }
-.alert-preferences-grid > *:nth-last-child(-n + 3) { border-bottom: 0; }
-.alert-preferences-grid > *:not(:nth-child(3n + 1)) { border-left: 1px solid var(--border-color); justify-content: center; }
+.alert-preferences-grid > *:nth-last-child(-n + 5) { border-bottom: 0; }
+.alert-preferences-grid > *:not(:nth-child(5n + 1)) { border-left: 1px solid var(--border-color); justify-content: center; }
 .alert-preferences-grid-header { font-size: 13px; color: var(--text-color-3); background: var(--table-header-color, var(--card-color)); }
 .alert-preferences-grid.is-disabled { opacity: .66; }
+.alert-preferences-control-cell :deep(.n-base-selection), .alert-preferences-control-cell :deep(.n-button) { width: 100%; }
 .alert-preferences-actions { margin-top: 16px; }
+.alert-preferences-demo { align-items: center; margin-top: 16px; }
 @media (max-width: 560px) {
   .alert-preferences-master, .alert-preferences-sound { align-items: flex-start; }
-  .alert-preferences-grid { grid-template-columns: 1fr 84px 100px; font-size: 13px; }
-  .alert-preferences-grid > * { padding: 9px 8px; }
+  .alert-preferences-grid { grid-template-columns: 1fr 88px; font-size: 13px; }
+  .alert-preferences-grid > * { min-height: 42px; padding: 9px 10px; }
+  .alert-preferences-grid > *:nth-last-child(-n + 5) { border-bottom: 1px solid var(--border-color); }
+  .alert-preferences-grid > *:not(:nth-child(5n + 1)) { justify-content: flex-start; border-left: 0; }
+  .alert-preferences-grid > *:nth-child(5n + 1) { grid-column: 1 / -1; padding-bottom: 2px; border-bottom: 0; background: var(--table-header-color, var(--card-color)); }
+  .alert-preferences-grid-header { display: none; }
 }
 </style>

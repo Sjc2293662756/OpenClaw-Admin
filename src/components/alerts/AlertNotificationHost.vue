@@ -118,7 +118,14 @@ function notifyNext() {
   activeNotifications.set(item.notificationId, notice)
   // Sound is tied to an actually-created live popup, never merely to a
   // received SSE event or an item that only entered the notification drawer.
-  if (alerts.preferences.realtimeEnabled && alerts.preferences.soundEnabled) playAlertNotificationSound()
+  if (alerts.preferences.realtimeEnabled && alerts.preferences.soundEnabled) {
+    const sound = payload.severity === '轻微'
+      ? alerts.preferences.minorSound
+      : payload.severity === '重大'
+        ? alerts.preferences.majorSound
+        : alerts.preferences.criticalSound
+    playAlertNotificationSound(sound)
+  }
 }
 
 watch(() => alerts.notificationQueue.length, () => notifyNext(), { immediate: true })

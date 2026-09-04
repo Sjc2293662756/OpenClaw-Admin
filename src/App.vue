@@ -16,7 +16,7 @@ import { useTheme } from "@/composables/useTheme";
 import { useLocaleStore } from "@/stores/locale";
 import { useAuthStore } from '@/stores/auth'
 import { useWebSocketStore } from '@/stores/websocket'
-import { useAlertRealtimeStore } from '@/stores/alert-realtime'
+import { LOCAL_ALERT_SOUND_DEMO, useAlertRealtimeStore } from '@/stores/alert-realtime'
 import { useChatDisplayPreferencesStore } from '@/stores/chat-display-preferences'
 import { createGlobalSseLifecycle } from '@/realtime/global-sse-lifecycle'
 import AlertNotificationHost from '@/components/alerts/AlertNotificationHost.vue'
@@ -36,7 +36,7 @@ const globalSseLifecycle = createGlobalSseLifecycle(websocketStore, alertRealtim
 const appTitle = computed(() => t('app.title'));
 const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
 const activeTheme = computed(() => (lightOnlyRoute.value ? null : theme.value));
-const canReceiveAlertNotifications = computed(() => canAccessPage(
+const canReceiveAlertNotifications = computed(() => LOCAL_ALERT_SOUND_DEMO || canAccessPage(
   authStore.currentUser?.effectiveModules,
   'alerts.notifications',
 ))

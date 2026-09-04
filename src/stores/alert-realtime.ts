@@ -3,11 +3,15 @@ import { defineStore } from 'pinia'
 import { useWebSocketStore } from './websocket'
 import { useAuthStore } from './auth'
 import type { AuthUser } from './auth'
+import { DEFAULT_ALERT_SOUNDS, isAlertSoundId, type AlertSoundId } from '@/alerts/notification-sound'
 
 const NOTIFICATION_PAGE_SIZE = 30
 const NOTIFICATION_QUEUE_LIMIT = 100
 const SEEN_NOTIFICATION_LIMIT = 1_000
 const ALERT_SEVERITIES = ['轻微', '重大', '紧急'] as const
+export const LOCAL_ALERT_SOUND_DEMO = import.meta.env.DEV
+  && typeof window !== 'undefined'
+  && new URLSearchParams(window.location.search).has('alertSoundDemo')
 
 export type AlertNotificationReadState = 'all' | 'unread'
 export type AlertNotificationSeverity = typeof ALERT_SEVERITIES[number]
@@ -45,6 +49,9 @@ type AlertStreamState = {
 export type AlertNotificationPreferences = {
   realtimeEnabled: boolean
   soundEnabled: boolean
+  minorSound: AlertSoundId
+  majorSound: AlertSoundId
+  criticalSound: AlertSoundId
   minorPopupEnabled: boolean
   minorNotificationEnabled: boolean
   majorPopupEnabled: boolean
@@ -85,6 +92,7 @@ type ApiFailure = Error & { status?: number; code?: string }
 export const DEFAULT_ALERT_NOTIFICATION_PREFERENCES: AlertNotificationPreferences = Object.freeze({
   realtimeEnabled: true,
   soundEnabled: true,
+  ...DEFAULT_ALERT_SOUNDS,
   minorPopupEnabled: true,
   minorNotificationEnabled: true,
   majorPopupEnabled: true,
@@ -112,8 +120,13 @@ function emptyCounts(): AlertNotificationCounts {
 function readPreferences(value: unknown): AlertNotificationPreferences | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const source = value as Record<string, unknown>
-  if (PREFERENCE_FIELDS.some((field) => typeof source[field] !== 'boolean')) return null
-  return Object.fromEntries(PREFERENCE_FIELDS.map((field) => [field, source[field]])) as AlertNotificationPreferences
+  const soundFields = ['minorSound', 'majorSound', 'criticalSound'] as const
+  const booleanFields = PREFERENCE_FIELDS.filter((field) => !soundFields.includes(field as typeof soundFields[number]))
+  if (booleanFields.some((field) => typeof source[field] !== 'boolean')) return null
+  return {
+    ...Object.fromEntries(booleanFields.map((field) => [field, source[field]])),
+    ...Object.fromEntries(soundFields.map((field) => [field, isAlertSoundId(source[field]) ? source[field] : DEFAULT_ALERT_SOUNDS[field]])),
+  } as AlertNotificationPreferences
 }
 
 function levelPreferencePrefix(severity: unknown) {
@@ -363,6 +376,13 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
 
   async function loadPreferences({ retry = false }: { retry?: boolean } = {}): Promise<boolean> {
     if (!activeAccount.value) return false
+    if (LOCAL_ALERT_SOUND_DEMO) {
+      preferences.value = { ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES }
+      preferencesReady.value = true
+      preferencesLoading.value = false
+      preferencesLoadError.value = null
+      return true
+    }
     if (preferencesReady.value && !retry) return true
     if (preferenceLoadPromise) return preferenceLoadPromise
     const account = activeAccount.value
@@ -410,6 +430,12 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
   async function savePreferences(next: AlertNotificationPreferences): Promise<AlertNotificationPreferences> {
     const validated = readPreferences(next)
     if (!validated || !activeAccount.value) throw new Error('ALERT_NOTIFICATION_PREFERENCES_INVALID')
+    if (LOCAL_ALERT_SOUND_DEMO) {
+      preferences.value = validated
+      preferencesReady.value = true
+      preferencesSaveError.value = null
+      return validated
+    }
     const account = activeAccount.value
     const generation = preferenceGeneration
     preferencesSaving.value = true

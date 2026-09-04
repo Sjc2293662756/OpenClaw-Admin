@@ -13,6 +13,7 @@ const mocked = vi.hoisted(() => ({
 vi.mock('@/stores/alert-realtime', () => ({
   DEFAULT_ALERT_NOTIFICATION_PREFERENCES: {
     realtimeEnabled: true, soundEnabled: true,
+    minorSound: 'minor-soft', majorSound: 'major-chime', criticalSound: 'critical-pulse',
     minorPopupEnabled: true, minorNotificationEnabled: true,
     majorPopupEnabled: true, majorNotificationEnabled: true,
     criticalPopupEnabled: true, criticalNotificationEnabled: true,
@@ -20,6 +21,7 @@ vi.mock('@/stores/alert-realtime', () => ({
   useAlertRealtimeStore: () => ({
     preferences: {
       realtimeEnabled: true, soundEnabled: true,
+      minorSound: 'minor-soft', majorSound: 'major-chime', criticalSound: 'critical-pulse',
       minorPopupEnabled: true, minorNotificationEnabled: true,
       majorPopupEnabled: true, majorNotificationEnabled: true,
       criticalPopupEnabled: true, criticalNotificationEnabled: true,
@@ -39,6 +41,7 @@ vi.mock('naive-ui', () => ({
   NAlert: { template: '<div><slot /><slot name="action" /></div>' },
   NButton: { inheritAttrs: false, template: '<button v-bind="$attrs"><slot /></button>' },
   NButtonGroup: { template: '<div><slot /></div>' },
+  NSelect: { inheritAttrs: false, template: '<span><slot /></span>' },
   NSwitch: { template: '<input type="checkbox" />' },
   NText: { template: '<span><slot /></span>' },
 }))

@@ -105,6 +105,9 @@ test('uses effective module permission and account settings to select recipients
   saveAlertNotificationPreferences(db, 'disabled', {
     realtimeEnabled: true,
     soundEnabled: true,
+    minorSound: 'minor-soft',
+    majorSound: 'major-chime',
+    criticalSound: 'critical-pulse',
     minorPopupEnabled: true,
     minorNotificationEnabled: true,
     majorPopupEnabled: true,

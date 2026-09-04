@@ -44,7 +44,10 @@ export default defineConfig(({ mode }) => {
           // SSE 流式响应需要禁用缓冲
           configure: (proxy) => {
             proxy.on('proxyReq', (proxyReq) => {
-              if (stripProxyOrigin) proxyReq.removeHeader('origin')
+              if (stripProxyOrigin) {
+                proxyReq.removeHeader('origin')
+                proxyReq.removeHeader('referer')
+              }
             })
             proxy.on('proxyRes', (proxyRes) => {
               // 对于 SSE 响应，禁用代理缓冲
