@@ -21,6 +21,7 @@ expected_dir=/var/lib/gaiop/reports
 legacy_reports_dir=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/output
 report_storage_service=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportStorageService.js
 report_generation_service=/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportGenerationService.js
+report_retention_service=/opt/gaiop/admin/server/report-retention-service.js
 
 env_state() {
   env_file=$1
@@ -54,6 +55,7 @@ admin_report_schema=unavailable
 admin_report_migration=missing
 admin_report_list_failure=none
 admin_report_sync_probe=unavailable
+report_retention_policy=unavailable
 
 if [ -d "$reports_dir" ]; then
   directory_state=present
@@ -94,6 +96,9 @@ if [ -f "$report_storage_service" ]; then
 fi
 if [ -f "$report_generation_service" ]; then
   if grep -Fq 'relativeFilePath' "$report_generation_service" && grep -Fq 'relativeAuditPath' "$report_generation_service"; then runtime_audit_contract=contract-aware; else runtime_audit_contract=legacy-only; fi
+fi
+if [ -f "$report_retention_service" ]; then
+  if grep -Fq 'REPORT_RETENTION_DAYS = 365' "$report_retention_service" && grep -Fq 'REPORT_RECOVERY_DAYS = 7' "$report_retention_service"; then report_retention_policy=365-days-7-days; else report_retention_policy=custom; fi
 fi
 if command -v setfacl >/dev/null 2>&1 && command -v getfacl >/dev/null 2>&1; then acl_support=available; else acl_support=unavailable; fi
 if sudo -u netinside node -e "require('/home/netinside/.openclaw/workspace/skills/openclaw-napm-report/services/ReportGenerationService.js')" >/dev/null 2>&1; then report_runtime_dependencies=available; fi
@@ -185,6 +190,7 @@ printf 'ADMIN_REPORT_SCHEMA=%s\n' "$admin_report_schema"
 printf 'ADMIN_REPORT_MIGRATION=%s\n' "$admin_report_migration"
 printf 'ADMIN_REPORT_LIST_FAILURE=%s\n' "$admin_report_list_failure"
 printf 'ADMIN_REPORT_SYNC_PROBE=%s\n' "$admin_report_sync_probe"
+printf 'REPORT_RETENTION_POLICY=%s\n' "$report_retention_policy"
 printf 'ADMIN_SERVICE=%s\n' "$(systemctl is-active gaiop-admin.service 2>/dev/null || true)"
 printf 'ISO_GATEWAY_SERVICE=%s\n' "$(systemctl is-active gaiop-gateway.service 2>/dev/null || true)"
 printf 'OPENCLAW_GATEWAY_SERVICE=%s\n' "$(sudo -u netinside XDG_RUNTIME_DIR=/run/user/$(id -u netinside) systemctl --user is-active openclaw-gateway.service 2>/dev/null || true)"
@@ -221,6 +227,7 @@ function parseInspection(output) {
     adminReportMigration: values.ADMIN_REPORT_MIGRATION || 'unavailable',
     adminReportListFailure: values.ADMIN_REPORT_LIST_FAILURE || 'unavailable',
     adminReportSyncProbe: values.ADMIN_REPORT_SYNC_PROBE || 'unavailable',
+    reportRetentionPolicy: values.REPORT_RETENTION_POLICY || 'unavailable',
     adminService: values.ADMIN_SERVICE || 'unavailable',
     isoGatewayService: values.ISO_GATEWAY_SERVICE || 'unavailable',
     openclawGatewayService: values.OPENCLAW_GATEWAY_SERVICE || 'unavailable',
