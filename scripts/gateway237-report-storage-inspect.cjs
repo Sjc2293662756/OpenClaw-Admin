@@ -146,8 +146,12 @@ fi
 if sudo -u gaiop env GAIOP_REPORTS_DIR="$reports_dir" node --input-type=module - <<'NODE' >/dev/null 2>&1
 const { __test__ } = await import('/opt/gaiop/admin/server/routes/reports.js');
 const db = { prepare(sql) {
-  if (!String(sql).includes('INSERT INTO report_files')) throw new Error('unexpected probe query');
-  return { run() {} };
+  const statement = String(sql).replace(/\s+/g, ' ').trim();
+  if (statement.includes('INSERT INTO report_files')) return { run() {} };
+  if (statement.includes('SELECT stored_name FROM report_files WHERE id = ?')) return { get() { return null; } };
+  if (statement.includes('UPDATE report_files SET')) return { run() {} };
+  if (statement.includes('SELECT id FROM data_sources WHERE is_active = 1')) return { all() { return []; } };
+  throw new Error('unexpected probe query');
 } };
 __test__.syncGeneratedReports(db);
 NODE
