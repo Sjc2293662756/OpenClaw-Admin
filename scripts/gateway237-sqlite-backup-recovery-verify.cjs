@@ -127,7 +127,7 @@ case "$upgrade_root" in /opt/gaiop/*|/opt/gaiop-*) ;; *) exit 41 ;; esac
 upgrade_db=unknown
 for candidate in /var/lib/gaiop-upgrade/upgrade.db /var/lib/gaiop-upgrade/napm-upgrade.db /var/lib/gaiop/upgrade/upgrade.db /var/lib/gaiop/upgrade/napm-upgrade.db; do if [ -f "$candidate" ]; then upgrade_db="$candidate"; break; fi; done
 upgrade_backup_root=unknown
-for candidate in /var/lib/gaiop-upgrade/sqlite-backups /var/lib/gaiop/upgrade/sqlite-backups; do if [ -d "$candidate" ]; then upgrade_backup_root="$candidate"; break; fi; done
+for candidate in /var/lib/gaiop-upgrade/sqlite-backups/v1 /var/lib/gaiop/upgrade/sqlite-backups/v1; do if [ -d "$candidate" ]; then upgrade_backup_root="$candidate"; break; fi; done
 test "$upgrade_db" != unknown
 test "$upgrade_backup_root" != unknown
 upgrade_restore_root="$(dirname "$upgrade_backup_root")/sqlite-restore-tests"
@@ -135,7 +135,7 @@ phase=check_live_databases
 admin_live=$(/usr/local/bin/node "$verifier" live "$admin_root/node_modules/better-sqlite3" /var/lib/gaiop/admin/wizard.db x admin x)
 upgrade_live=$(/usr/local/bin/node "$verifier" live "$upgrade_root/node_modules/better-sqlite3" "$upgrade_db" x upgrade x)
 phase=verify_admin_backup_set
-admin_set=$(runuser -u gaiop -- /usr/local/bin/node "$verifier" backup-set "$admin_root/node_modules/better-sqlite3" /var/lib/gaiop/admin/sqlite-backups /var/lib/gaiop/admin/sqlite-restore-tests admin users,workspace_sessions,report_files)
+admin_set=$(runuser -u gaiop -- /usr/local/bin/node "$verifier" backup-set "$admin_root/node_modules/better-sqlite3" /var/lib/gaiop/admin/sqlite-backups/v1 /var/lib/gaiop/admin/sqlite-restore-tests admin users,workspace_sessions,report_files)
 phase=verify_upgrade_backup_set
 upgrade_set=$(/usr/local/bin/node "$verifier" backup-set "$upgrade_root/node_modules/better-sqlite3" "$upgrade_backup_root" "$upgrade_restore_root" upgrade upgrade_tasks,backups,components)
 phase=emit_summary

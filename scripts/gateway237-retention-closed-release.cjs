@@ -3347,7 +3347,7 @@ function sqliteBackupEnableScript(expected) {
 release_id='${releaseId}'
 admin_root=/opt/gaiop/admin
 admin_db=/var/lib/gaiop/admin/wizard.db
-admin_backup_root=/var/lib/gaiop/admin/sqlite-backups
+admin_backup_root=/var/lib/gaiop/admin/sqlite-backups/v1
 admin_restore_root=/var/lib/gaiop/admin/sqlite-restore-tests
 admin_service=gaiop-admin-sqlite-backup.service
 admin_timer=gaiop-admin-sqlite-backup.timer
@@ -3363,7 +3363,7 @@ upgrade_timer_file=/etc/systemd/system/gaiop-upgrade-sqlite-backup.timer
 upgrade_dropin_dir=/etc/systemd/system/gaiop-upgrade-sqlite-backup.service.d
 upgrade_dropin_file=$upgrade_dropin_dir/99-gaiop-sqlite-backup-production.conf
 upgrade_policy=/etc/gaiop/upgrade-sqlite-backup.policy
-upgrade_backup_root=/var/lib/gaiop-upgrade/sqlite-backups
+upgrade_backup_root=/var/lib/gaiop-upgrade/sqlite-backups/v1
 upgrade_restore_root=/var/lib/gaiop-upgrade/sqlite-restore-tests
 backup_root=/var/backups/gaiop/sqlite-backup-enable-$release_id
 work_root=$(mktemp -d /run/gaiop-sqlite-backup-enable.XXXXXX)
@@ -3773,8 +3773,12 @@ for descriptor in /proc/$upgrade_pid/fd/*; do
 done
 test -n "$upgrade_db"
 phase=preflight_timers_and_health
-test "$(timer_state "$admin_timer")" = 'inactive|disabled'
-test "$(timer_state "$upgrade_timer")" = 'inactive|disabled'
+for sqlite_timer in "$admin_timer" "$upgrade_timer"; do
+  case "$(timer_state "$sqlite_timer")" in
+    inactive\|disabled|active\|enabled) ;;
+    *) exit 54 ;;
+  esac
+done
 test "$(timer_state gaiop-admin-retention-cleanup.timer)" = 'active|enabled'
 test "$(timer_state gaiop-upgrade-retention-cleanup.timer)" = 'active|enabled'
 test "$(timer_state gaiop-storage-watermark-monitor.timer)" = 'active|enabled'
@@ -3881,6 +3885,11 @@ for mode_entry in "$upgrade_db:upgrade-database" "$upgrade_db-wal:upgrade-databa
   fi
 done
 backup_captured=1
+
+phase=quiesce_sqlite_timers
+systemctl disable --now "$admin_timer" "$upgrade_timer"
+test "$(timer_state "$admin_timer")" = 'inactive|disabled'
+test "$(timer_state "$upgrade_timer")" = 'inactive|disabled'
 
 phase=database_safety_backups
 online_backup "$admin_root/node_modules/better-sqlite3" "$admin_db" "$backup_root/wizard.db.before-enable"
