@@ -19,3 +19,9 @@ test('report sync probe models every prepared statement used by production sync'
   assert.match(probe, /return \{ all\(\) \{ return \[\]; \} \}/)
   assert.match(probe, /throw new Error\('unexpected probe query'\)/)
 })
+
+test('report storage inspection verifies the fixed 365-day and 7-day policy constants', () => {
+  assert.match(runner, /REPORT_RETENTION_DAYS = 365/)
+  assert.match(runner, /REPORT_RECOVERY_DAYS = 7/)
+  assert.match(runner, /REPORT_RETENTION_POLICY/)
+})
