@@ -161,7 +161,7 @@ const registryScript = [
   "const reason = !row ? 'ROW_MISSING' : row.stored_name !== process.env.REPORT_STORED_NAME || row.audit_name !== process.env.REPORT_AUDIT_NAME ? 'PATH_MISMATCH' : row.status !== 'ready' ? 'STATUS_NOT_READY' : !row.source_user_id || !row.source_session_id || !row.data_source_id ? 'SOURCE_INCOMPLETE' : null",
   'process.stdout.write(JSON.stringify({ registered: !reason, reason }))',
   'if (reason) process.exitCode = 1',
-].join('\\n')
+].join('\n')
 const registryProcess = spawnSync('sudo', [
   '-u', 'gaiop', 'env',
   'GAIOP_REPORTS_DIR=' + reportsDirectory,
