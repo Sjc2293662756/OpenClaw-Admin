@@ -5,7 +5,7 @@ import test from 'node:test'
 
 const root = process.cwd()
 const powershell = readFileSync(join(root, 'scripts', 'Invoke-237RetentionClosedRelease.ps1'), 'utf8')
-const runner = readFileSync(join(root, 'scripts', 'gateway237-retention-closed-release.cjs'), 'utf8')
+const runner = readFileSync(join(root, 'scripts', 'gateway237-retention-closed-release.cjs'), 'utf8').replace(/\r\n/g, '\n')
 
 test('controlled entry validates both verified SQLite backup source trees', () => {
   assert.match(powershell, /'enable-sqlite-backups'/)
@@ -33,6 +33,13 @@ test('production policies enable creation but keep expiration cleanup closed', (
   assert.doesNotMatch(runner, /GAIOP_(?:ADMIN|UPGRADE)_SQLITE_BACKUP_CLEANUP_ENABLED=true/)
 })
 
+test('current backup policy is isolated from retained unknown root entries', () => {
+  assert.match(runner, /admin_backup_root=\/var\/lib\/gaiop\/admin\/sqlite-backups\/v1/)
+  assert.match(runner, /upgrade_backup_root=\/var\/lib\/gaiop-upgrade\/sqlite-backups\/v1/)
+  assert.match(runner, /install -d -o gaiop -g gaiop -m 0700 "\$admin_backup_root"/)
+  assert.match(runner, /install -d -o root -g root -m 0700 "\$upgrade_backup_root"/)
+})
+
 test('effective units use isolated runtime directories and do not load main environments', () => {
   for (const value of [
     'WorkingDirectory=/run/gaiop-admin-sqlite-backup',
@@ -50,6 +57,9 @@ test('effective units use isolated runtime directories and do not load main envi
 })
 
 test('release requires safety snapshots, three tiers, restore tests and an idempotent enabled run', () => {
+  assert.match(runner, /phase=quiesce_sqlite_timers/)
+  assert.match(runner, /systemctl disable --now "\$admin_timer" "\$upgrade_timer"/)
+  assert.ok(runner.indexOf('timer_state "$admin_timer" > "$backup_root/admin.timer-state"') < runner.indexOf('phase=quiesce_sqlite_timers'))
   assert.match(runner, /phase=database_safety_backups/)
   assert.match(runner, /online_backup .*wizard\.db\.before-enable/)
   assert.match(runner, /online_backup .*upgrade\.db\.before-enable/)
