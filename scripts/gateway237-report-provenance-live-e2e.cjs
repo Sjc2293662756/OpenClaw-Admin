@@ -172,7 +172,11 @@ const registryProcess = spawnSync('sudo', [
   process.execPath, '--env-file=/etc/gaiop/admin.env', '--input-type=module', '-e', registryScript,
 ], { encoding: 'utf8' })
 let registryResult = null
-try { registryResult = JSON.parse(registryProcess.stdout || '{}') } catch {}
+const registryLine = String(registryProcess.stdout || '')
+  .split(/\r?\n/)
+  .reverse()
+  .find((line) => line.startsWith('{'))
+try { registryResult = JSON.parse(registryLine || '{}') } catch {}
 if (!registryResult?.registered || registryProcess.status !== 0) {
   const registryError = String(registryProcess.stderr || registryProcess.error?.message || '')
   const reason = ['ROW_MISSING', 'PATH_MISMATCH', 'STATUS_NOT_READY', 'SOURCE_INCOMPLETE'].includes(registryResult?.reason)
