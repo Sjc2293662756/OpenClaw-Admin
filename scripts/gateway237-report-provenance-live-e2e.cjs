@@ -169,7 +169,7 @@ const registryProcess = spawnSync('sudo', [
   'REPORT_ID=' + String(audit.reportId || ''),
   'REPORT_STORED_NAME=' + String(audit.relativeFilePath || ''),
   'REPORT_AUDIT_NAME=' + path.relative(reportsDirectory, auditFile).split(path.sep).join('/'),
-  process.execPath, '--input-type=module', '-e', registryScript,
+  process.execPath, '--env-file=/etc/gaiop/admin.env', '--input-type=module', '-e', registryScript,
 ], { encoding: 'utf8' })
 let registryResult = null
 try { registryResult = JSON.parse(registryProcess.stdout || '{}') } catch {}
