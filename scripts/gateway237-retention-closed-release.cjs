@@ -3844,8 +3844,14 @@ done
 for restore_dir in "$admin_restore_root" "$upgrade_restore_root"; do
   if [ -d "$restore_dir" ]; then test -z "$(find "$restore_dir" -mindepth 1 -maxdepth 1 -print -quit)"; fi
 done
-admin_existing_count=$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
-upgrade_existing_count=$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -printf x 2>/dev/null | wc -c | tr -d '[:space:]')
+admin_existing_count=0
+upgrade_existing_count=0
+if [ -d "$admin_backup_root" ]; then
+  admin_existing_count=$(find "$admin_backup_root" -mindepth 1 -maxdepth 1 -printf x | wc -c | tr -d '[:space:]')
+fi
+if [ -d "$upgrade_backup_root" ]; then
+  upgrade_existing_count=$(find "$upgrade_backup_root" -mindepth 1 -maxdepth 1 -printf x | wc -c | tr -d '[:space:]')
+fi
 case "$admin_existing_count" in 0|6) ;; *) exit 52 ;; esac
 case "$upgrade_existing_count" in 0|6) ;; *) exit 53 ;; esac
 admin_expected_created=3

@@ -38,6 +38,10 @@ test('current backup policy is isolated from retained unknown root entries', () 
   assert.match(runner, /upgrade_backup_root=\/var\/lib\/gaiop-upgrade\/sqlite-backups\/v1/)
   assert.match(runner, /install -d -o gaiop -g gaiop -m 0700 "\$admin_backup_root"/)
   assert.match(runner, /install -d -o root -g root -m 0700 "\$upgrade_backup_root"/)
+  assert.match(runner, /admin_existing_count=0/)
+  assert.match(runner, /if \[ -d "\$admin_backup_root" \]; then/)
+  assert.match(runner, /upgrade_existing_count=0/)
+  assert.match(runner, /if \[ -d "\$upgrade_backup_root" \]; then/)
 })
 
 test('effective units use isolated runtime directories and do not load main environments', () => {
