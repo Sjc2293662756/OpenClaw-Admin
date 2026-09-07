@@ -28,9 +28,9 @@ const parsedName = (name) => {
   const match = new RegExp('^' + component + '-(daily|weekly|monthly)-(\\d{4}-(?:\\d{2}|W\\d{2}|\\d{2}-\\d{2}))\\.sqlite3$').exec(name)
   if (!match) return null
   const period = name.slice((component + '-' + match[1] + '-').length, -8)
-  const valid = (match[1] === 'daily' && /^\\d{4}-\\d{2}-\\d{2}$/.test(period))
-    || (match[1] === 'weekly' && /^\\d{4}-W\\d{2}$/.test(period))
-    || (match[1] === 'monthly' && /^\\d{4}-\\d{2}$/.test(period))
+  const valid = (match[1] === 'daily' && /^\d{4}-\d{2}-\d{2}$/.test(period))
+    || (match[1] === 'weekly' && /^\d{4}-W\d{2}$/.test(period))
+    || (match[1] === 'monthly' && /^\d{4}-\d{2}$/.test(period))
   return valid ? { tier: match[1], period } : null
 }
 const Database = require(moduleRoot)
