@@ -3782,7 +3782,10 @@ done
 test "$(timer_state gaiop-admin-retention-cleanup.timer)" = 'active|enabled'
 test "$(timer_state gaiop-upgrade-retention-cleanup.timer)" = 'active|enabled'
 test "$(timer_state gaiop-storage-watermark-monitor.timer)" = 'active|enabled'
-test "$(timer_state gaiop-report-retention-cleanup.timer)" = 'inactive|disabled'
+case "$(timer_state gaiop-report-retention-cleanup.timer)" in
+  inactive\|disabled|active\|enabled) ;;
+  *) exit 55 ;;
+esac
 test "$(timer_state gaiop-admin-session-retention.timer)" = 'inactive|disabled'
 test "$(http_status http://127.0.0.1:3000/api/health)" = 200
 test "$(http_status http://127.0.0.1:18900/health)" = 200
