@@ -22,6 +22,8 @@ test('uses the component restore root alongside the isolated v1 backup set', () 
   assert.match(runner, /upgrade_restore_root="\$\(dirname "\$\(dirname "\$upgrade_backup_root"\)"\)\/sqlite-restore-tests"/)
   assert.match(runner, /entryKinds = \{ sqlite3: 0, manifests: 0, other: 0 \}/)
   assert.match(runner, /entryNames = entries\.map\(\(entry\) => entry\.name\)\.sort\(\)/)
+  assert.match(runner, /switches \/etc\/gaiop\/admin-sqlite-backup\.policy/)
+  assert.match(runner, /switches \/etc\/gaiop\/upgrade-sqlite-backup\.policy/)
 })
 
 test('embedded verifier recognizes the controlled daily backup filename', () => {
