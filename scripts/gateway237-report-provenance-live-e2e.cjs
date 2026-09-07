@@ -174,9 +174,18 @@ const registryProcess = spawnSync('sudo', [
 let registryResult = null
 try { registryResult = JSON.parse(registryProcess.stdout || '{}') } catch {}
 if (!registryResult?.registered || registryProcess.status !== 0) {
+  const registryError = String(registryProcess.stderr || registryProcess.error?.message || '')
   const reason = ['ROW_MISSING', 'PATH_MISMATCH', 'STATUS_NOT_READY', 'SOURCE_INCOMPLETE'].includes(registryResult?.reason)
     ? registryResult.reason
-    : 'FAILED'
+    : /ERR_MODULE_NOT_FOUND|Cannot find (?:package|module)/i.test(registryError)
+      ? 'MODULE_UNAVAILABLE'
+      : /EACCES|EPERM|permission denied/i.test(registryError)
+        ? 'PERMISSION_DENIED'
+        : /SQLITE/i.test(registryError)
+          ? 'DATABASE_UNAVAILABLE'
+          : /SyntaxError|Invalid or unexpected token/i.test(registryError)
+            ? 'SCRIPT_INVALID'
+            : 'EXECUTION_FAILED'
   throw new Error('LIVE_REPORT_ADMIN_SYNC_' + reason)
 }
 
@@ -233,7 +242,11 @@ function execute(client) {
             'LIVE_REPORT_ADMIN_SYNC_PATH_MISMATCH',
             'LIVE_REPORT_ADMIN_SYNC_STATUS_NOT_READY',
             'LIVE_REPORT_ADMIN_SYNC_SOURCE_INCOMPLETE',
-            'LIVE_REPORT_ADMIN_SYNC_FAILED',
+            'LIVE_REPORT_ADMIN_SYNC_MODULE_UNAVAILABLE',
+            'LIVE_REPORT_ADMIN_SYNC_PERMISSION_DENIED',
+            'LIVE_REPORT_ADMIN_SYNC_DATABASE_UNAVAILABLE',
+            'LIVE_REPORT_ADMIN_SYNC_SCRIPT_INVALID',
+            'LIVE_REPORT_ADMIN_SYNC_EXECUTION_FAILED',
             'DOWNLOAD_AUTH_TIMEOUT',
             'DOWNLOAD_AUTH_BOUNDARY_FAILED',
             'additional properties',
