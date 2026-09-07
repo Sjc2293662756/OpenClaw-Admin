@@ -20,6 +20,7 @@ test('uses the component restore root alongside the isolated v1 backup set', () 
   assert.match(runner, /sqlite-backups\/v1/)
   assert.match(runner, /upgrade_restore_root="\$\(dirname "\$\(dirname "\$upgrade_backup_root"\)"\)\/sqlite-restore-tests"/)
   assert.match(runner, /entryKinds = \{ sqlite3: 0, manifests: 0, other: 0 \}/)
+  assert.match(runner, /entryNames = entries\.map\(\(entry\) => entry\.name\)\.sort\(\)/)
 })
 
 test('summarizes only the allowlisted backup metadata projection', () => {

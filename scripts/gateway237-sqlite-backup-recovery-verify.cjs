@@ -52,6 +52,7 @@ async function backupSet() {
   const failures = []
   const entries = fs.readdirSync(root, { withFileTypes: true })
   const entryKinds = { sqlite3: 0, manifests: 0, other: 0 }
+  const entryNames = entries.map((entry) => entry.name).sort()
   for (const entry of entries) {
     if (entry.name.endsWith('.sqlite3')) entryKinds.sqlite3 += 1
     else if (entry.name.endsWith('.manifest.json')) entryKinds.manifests += 1
@@ -101,7 +102,7 @@ async function backupSet() {
       for (const suffix of ['', '-wal', '-shm']) { try { fs.rmSync(destination + suffix, { force: true }) } catch {} }
     }
   }
-  return { ok: failures.length === 0 && restore.ok, directory: { mode: (fs.statSync(root).mode & 0o777).toString(8), restoreMode: (fs.statSync(temporary).mode & 0o777).toString(8), entryCount: entries.length, entryKinds }, tiers, invalidBackupCount: failures.length, invalidReasonCodes: [...new Set(failures)], restore }
+  return { ok: failures.length === 0 && restore.ok, directory: { mode: (fs.statSync(root).mode & 0o777).toString(8), restoreMode: (fs.statSync(temporary).mode & 0o777).toString(8), entryCount: entries.length, entryKinds, entryNames }, tiers, invalidBackupCount: failures.length, invalidReasonCodes: [...new Set(failures)], restore }
 }
 
 ;(async () => {
