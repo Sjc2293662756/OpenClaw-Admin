@@ -18,6 +18,7 @@ node --input-type=module - <<'NODE'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import http from 'node:http'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { OpenClawGateway } from '/opt/gaiop/admin/server/gateway.js'
@@ -151,6 +152,42 @@ if (
   || audit.sourceSessionId !== sessionKey
   || !audit.dataSourceId
 ) throw new Error('LIVE_REPORT_PROVENANCE_INCOMPLETE')
+console.error('PHASE_ADMIN_SYNC')
+const registryScript = [
+  "import db from 'file:///opt/gaiop/admin/server/database.js'",
+  "import { __test__ } from 'file:///opt/gaiop/admin/server/routes/reports.js'",
+  '__test__.syncGeneratedReports(db)',
+  "const row = db.prepare('SELECT * FROM report_files WHERE id = ?').get(process.env.REPORT_ID)",
+  'if (!row) process.exit(1)',
+  'if (row.stored_name !== process.env.REPORT_STORED_NAME || row.audit_name !== process.env.REPORT_AUDIT_NAME) process.exit(1)',
+  "if (row.status !== 'ready' || !row.source_user_id || !row.source_session_id || !row.data_source_id) process.exit(1)",
+  "process.stdout.write(JSON.stringify({ registered: true }))",
+].join('\\n')
+const registryResult = JSON.parse(execFileSync('sudo', [
+  '-u', 'gaiop', 'env',
+  'GAIOP_REPORTS_DIR=' + reportsDirectory,
+  'GAIOP_ADMIN_DATA_DIR=' + dataDirectory,
+  'REPORT_ID=' + String(audit.reportId || ''),
+  'REPORT_STORED_NAME=' + String(audit.relativeFilePath || ''),
+  'REPORT_AUDIT_NAME=' + path.relative(reportsDirectory, auditFile).split(path.sep).join('/'),
+  '/usr/local/bin/node', '--input-type=module', '-e', registryScript,
+], { encoding: 'utf8' }))
+if (!registryResult.registered) throw new Error('LIVE_REPORT_ADMIN_SYNC_FAILED')
+
+console.error('PHASE_DOWNLOAD_AUTH')
+const unauthenticatedDownloadStatus = await new Promise((resolve, reject) => {
+  const request = http.get(
+    'http://127.0.0.1:3000/api/reports/' + encodeURIComponent(String(audit.reportId || '')) + '/download',
+    { timeout: 5_000 },
+    (response) => {
+      response.resume()
+      response.on('end', () => resolve(response.statusCode))
+    },
+  )
+  request.on('error', reject)
+  request.on('timeout', () => request.destroy(new Error('DOWNLOAD_AUTH_TIMEOUT')))
+})
+if (![401, 403].includes(unauthenticatedDownloadStatus)) throw new Error('DOWNLOAD_AUTH_BOUNDARY_FAILED')
 console.error('PHASE_COMPLETE')
 
 process.stdout.write(JSON.stringify({
@@ -160,6 +197,8 @@ process.stdout.write(JSON.stringify({
   sourceUserRecorded: true,
   sourceSessionRecorded: true,
   dataSourceRecorded: true,
+  adminRegistered: true,
+  unauthenticatedDownloadBlocked: true,
   reportFile: String(audit.relativeFilePath || ''),
   auditFile: path.relative(reportsDirectory, auditFile).split(path.sep).join('/'),
   generatedAt: String(audit.generatedAt || ''),
@@ -184,6 +223,9 @@ function execute(client) {
             'GATEWAY_CONNECT_TIMEOUT',
             'LIVE_REPORT_AUDIT_TIMEOUT',
             'LIVE_REPORT_PROVENANCE_INCOMPLETE',
+            'LIVE_REPORT_ADMIN_SYNC_FAILED',
+            'DOWNLOAD_AUTH_TIMEOUT',
+            'DOWNLOAD_AUTH_BOUNDARY_FAILED',
             'additional properties',
             'invalid params',
             'invalid request',
