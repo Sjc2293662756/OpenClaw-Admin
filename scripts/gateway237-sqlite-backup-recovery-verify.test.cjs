@@ -31,7 +31,7 @@ test('embedded verifier recognizes the controlled daily backup filename', () => 
   const verifierPrefix = outer.value.slice(0, outer.value.indexOf('const Database = require(moduleRoot)'))
   const context = { process: { argv: ['node', 'runner', 'backup-set', 'x', 'x', 'x', 'admin', 'x'] }, require }
   vm.runInNewContext(verifierPrefix + '\nglobalThis.value = parsedName("admin-daily-2026-09-07.sqlite3")', context)
-  assert.deepEqual(context.value, { tier: 'daily', period: '2026-09-07' })
+  assert.equal(JSON.stringify(context.value), JSON.stringify({ tier: 'daily', period: '2026-09-07' }))
 })
 
 test('summarizes only the allowlisted backup metadata projection', () => {
