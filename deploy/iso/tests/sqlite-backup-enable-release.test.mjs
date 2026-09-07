@@ -60,6 +60,7 @@ test('release requires safety snapshots, three tiers, restore tests and an idemp
   assert.match(runner, /phase=quiesce_sqlite_timers/)
   assert.match(runner, /systemctl disable --now "\$admin_timer" "\$upgrade_timer"/)
   assert.ok(runner.indexOf('timer_state "$admin_timer" > "$backup_root/admin.timer-state"') < runner.indexOf('phase=quiesce_sqlite_timers'))
+  assert.match(runner, /case "\$\(timer_state gaiop-report-retention-cleanup\.timer\)" in/)
   assert.match(runner, /phase=database_safety_backups/)
   assert.match(runner, /online_backup .*wizard\.db\.before-enable/)
   assert.match(runner, /online_backup .*upgrade\.db\.before-enable/)
