@@ -1,7 +1,9 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const { readFileSync } = require('node:fs')
 const test = require('node:test')
+const { join } = require('node:path')
 const { __test__ } = require('./gateway237-sqlite-backup-recovery-verify.cjs')
 
 test('parses success receipt in systemd property order without exposing raw output', () => {
@@ -11,6 +13,12 @@ test('parses success receipt in systemd property order without exposing raw outp
     startedAt: 'start',
     completedAt: 'finish',
   })
+})
+
+test('uses the component restore root alongside the isolated v1 backup set', () => {
+  const runner = readFileSync(join(__dirname, 'gateway237-sqlite-backup-recovery-verify.cjs'), 'utf8')
+  assert.match(runner, /sqlite-backups\/v1/)
+  assert.match(runner, /upgrade_restore_root="\$\(dirname "\$\(dirname "\$upgrade_backup_root"\)"\)\/sqlite-restore-tests"/)
 })
 
 test('summarizes only the allowlisted backup metadata projection', () => {
