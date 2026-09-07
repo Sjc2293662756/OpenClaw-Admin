@@ -19,6 +19,7 @@ test('uses the component restore root alongside the isolated v1 backup set', () 
   const runner = readFileSync(join(__dirname, 'gateway237-sqlite-backup-recovery-verify.cjs'), 'utf8')
   assert.match(runner, /sqlite-backups\/v1/)
   assert.match(runner, /upgrade_restore_root="\$\(dirname "\$\(dirname "\$upgrade_backup_root"\)"\)\/sqlite-restore-tests"/)
+  assert.match(runner, /entryKinds = \{ sqlite3: 0, manifests: 0, other: 0 \}/)
 })
 
 test('summarizes only the allowlisted backup metadata projection', () => {
