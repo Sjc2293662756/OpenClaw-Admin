@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import http from 'node:http'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { OpenClawGateway } from '/opt/gaiop/admin/server/gateway.js'
 import { attachReportProvenance } from '/opt/gaiop/admin/server/report-provenance-service.js'
@@ -158,12 +158,11 @@ const registryScript = [
   "import { __test__ } from 'file:///opt/gaiop/admin/server/routes/reports.js'",
   '__test__.syncGeneratedReports(db)',
   "const row = db.prepare('SELECT * FROM report_files WHERE id = ?').get(process.env.REPORT_ID)",
-  'if (!row) process.exit(1)',
-  'if (row.stored_name !== process.env.REPORT_STORED_NAME || row.audit_name !== process.env.REPORT_AUDIT_NAME) process.exit(1)',
-  "if (row.status !== 'ready' || !row.source_user_id || !row.source_session_id || !row.data_source_id) process.exit(1)",
-  "process.stdout.write(JSON.stringify({ registered: true }))",
+  "const reason = !row ? 'ROW_MISSING' : row.stored_name !== process.env.REPORT_STORED_NAME || row.audit_name !== process.env.REPORT_AUDIT_NAME ? 'PATH_MISMATCH' : row.status !== 'ready' ? 'STATUS_NOT_READY' : !row.source_user_id || !row.source_session_id || !row.data_source_id ? 'SOURCE_INCOMPLETE' : null",
+  'process.stdout.write(JSON.stringify({ registered: !reason, reason }))',
+  'if (reason) process.exitCode = 1',
 ].join('\\n')
-const registryResult = JSON.parse(execFileSync('sudo', [
+const registryProcess = spawnSync('sudo', [
   '-u', 'gaiop', 'env',
   'GAIOP_REPORTS_DIR=' + reportsDirectory,
   'GAIOP_ADMIN_DATA_DIR=' + dataDirectory,
@@ -171,8 +170,15 @@ const registryResult = JSON.parse(execFileSync('sudo', [
   'REPORT_STORED_NAME=' + String(audit.relativeFilePath || ''),
   'REPORT_AUDIT_NAME=' + path.relative(reportsDirectory, auditFile).split(path.sep).join('/'),
   '/usr/local/bin/node', '--input-type=module', '-e', registryScript,
-], { encoding: 'utf8' }))
-if (!registryResult.registered) throw new Error('LIVE_REPORT_ADMIN_SYNC_FAILED')
+], { encoding: 'utf8' })
+let registryResult = null
+try { registryResult = JSON.parse(registryProcess.stdout || '{}') } catch {}
+if (!registryResult?.registered || registryProcess.status !== 0) {
+  const reason = ['ROW_MISSING', 'PATH_MISMATCH', 'STATUS_NOT_READY', 'SOURCE_INCOMPLETE'].includes(registryResult?.reason)
+    ? registryResult.reason
+    : 'FAILED'
+  throw new Error('LIVE_REPORT_ADMIN_SYNC_' + reason)
+}
 
 console.error('PHASE_DOWNLOAD_AUTH')
 const unauthenticatedDownloadStatus = await new Promise((resolve, reject) => {
@@ -223,6 +229,10 @@ function execute(client) {
             'GATEWAY_CONNECT_TIMEOUT',
             'LIVE_REPORT_AUDIT_TIMEOUT',
             'LIVE_REPORT_PROVENANCE_INCOMPLETE',
+            'LIVE_REPORT_ADMIN_SYNC_ROW_MISSING',
+            'LIVE_REPORT_ADMIN_SYNC_PATH_MISMATCH',
+            'LIVE_REPORT_ADMIN_SYNC_STATUS_NOT_READY',
+            'LIVE_REPORT_ADMIN_SYNC_SOURCE_INCOMPLETE',
             'LIVE_REPORT_ADMIN_SYNC_FAILED',
             'DOWNLOAD_AUTH_TIMEOUT',
             'DOWNLOAD_AUTH_BOUNDARY_FAILED',
