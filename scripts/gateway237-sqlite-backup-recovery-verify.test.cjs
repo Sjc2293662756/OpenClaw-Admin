@@ -4,6 +4,7 @@ const assert = require('node:assert/strict')
 const { readFileSync } = require('node:fs')
 const test = require('node:test')
 const { join } = require('node:path')
+const vm = require('node:vm')
 const { __test__ } = require('./gateway237-sqlite-backup-recovery-verify.cjs')
 
 test('parses success receipt in systemd property order without exposing raw output', () => {
@@ -21,6 +22,16 @@ test('uses the component restore root alongside the isolated v1 backup set', () 
   assert.match(runner, /upgrade_restore_root="\$\(dirname "\$\(dirname "\$upgrade_backup_root"\)"\)\/sqlite-restore-tests"/)
   assert.match(runner, /entryKinds = \{ sqlite3: 0, manifests: 0, other: 0 \}/)
   assert.match(runner, /entryNames = entries\.map\(\(entry\) => entry\.name\)\.sort\(\)/)
+})
+
+test('embedded verifier recognizes the controlled daily backup filename', () => {
+  const source = readFileSync(join(__dirname, 'gateway237-sqlite-backup-recovery-verify.cjs'), 'utf8')
+  const outer = { require, process, console }
+  vm.runInNewContext(source.slice(0, source.indexOf('const remoteScript =')) + '\nglobalThis.value = verifier', outer)
+  const verifierPrefix = outer.value.slice(0, outer.value.indexOf('const Database = require(moduleRoot)'))
+  const context = { process: { argv: ['node', 'runner', 'backup-set', 'x', 'x', 'x', 'admin', 'x'] }, require }
+  vm.runInNewContext(verifierPrefix + '\nglobalThis.value = parsedName("admin-daily-2026-09-07.sqlite3")', context)
+  assert.equal(JSON.stringify(context.value), JSON.stringify({ tier: 'daily', period: '2026-09-07' }))
 })
 
 test('summarizes only the allowlisted backup metadata projection', () => {
