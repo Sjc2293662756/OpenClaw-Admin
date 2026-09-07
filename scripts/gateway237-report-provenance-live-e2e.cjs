@@ -19,6 +19,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { OpenClawGateway } from '/opt/gaiop/admin/server/gateway.js'
 import { attachReportProvenance } from '/opt/gaiop/admin/server/report-provenance-service.js'
 
@@ -51,12 +52,19 @@ const storeDirectory = String(environment.GAIOP_REPORT_PROVENANCE_STORE_DIR || '
 const reportsDirectory = String(environment.GAIOP_REPORTS_DIR || '/var/lib/gaiop/reports')
 if (signingKey.length < 32) throw new Error('REPORT_SIGNING_KEY_UNAVAILABLE')
 
-const sourceEnvelopes = fs.readdirSync(storeDirectory)
-  .filter((name) => name.endsWith('.json'))
-  .map((name) => JSON.parse(fs.readFileSync(path.join(storeDirectory, name), 'utf8')))
-  .filter((value) => value?.dataSourceId)
-  .sort((left, right) => Number(right.issuedAt || 0) - Number(left.issuedAt || 0))
-if (sourceEnvelopes.length === 0) throw new Error('ACTIVE_DATA_SOURCE_UNAVAILABLE')
+const require = createRequire('/opt/gaiop/admin/server/index.js')
+const Database = require('better-sqlite3')
+const dataDirectory = String(environment.GAIOP_ADMIN_DATA_DIR || '/var/lib/gaiop/admin')
+const database = new Database(path.join(dataDirectory, 'wizard.db'), {
+  readonly: true,
+  fileMustExist: true,
+})
+const activeDataSource = database.prepare(
+  'SELECT id FROM data_sources WHERE is_active = 1 ORDER BY id LIMIT 1'
+).get()
+database.close()
+const activeDataSourceId = String(activeDataSource?.id || '').trim()
+if (!activeDataSourceId) throw new Error('ACTIVE_DATA_SOURCE_UNAVAILABLE')
 
 const sessionKey = 'agent:main:main:dm:webchat-' + crypto.randomBytes(16).toString('hex')
 const idempotencyKey = 'report-live-e2e-' + Date.now()
@@ -72,7 +80,7 @@ const attached = attachReportProvenance({
   enabled: true,
   signingKey,
   storeDirectory,
-  dataSourceId: sourceEnvelopes[0].dataSourceId,
+  dataSourceId: activeDataSourceId,
   transportMetadata: false,
 })
 console.error('PHASE_SNAPSHOT')
