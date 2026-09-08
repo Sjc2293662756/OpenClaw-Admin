@@ -37,6 +37,10 @@ test('production reconciliation runtime has no database or filesystem mutation c
   assert.match(core, /'sessions', 'cleanup', '--agent', 'main', '--dry-run', '--json'/)
   assert.match(core, /'--timeout',\s*'60000'/)
   assert.match(core, /timeout:\s*75_000/)
+  assert.match(core, /gateway_cli_60000/)
+  assert.match(core, /node_execfile_75000/)
+  assert.match(core, /completedProbeCount/)
+  assert.match(core, /performance\.now\(\)/)
   assert.match(core, /JSON\.stringify\(\{ limit: MAX_OPENCLAW_ROWS \}\)/)
   assert.match(core, /XDG_RUNTIME_DIR: xdgRuntimeDirectory/)
   assert.doesNotMatch(core, /DBUS_SESSION_BUS_ADDRESS/)
@@ -56,6 +60,7 @@ test('controlled 237 entry is fixed-purpose and transient with read-only busines
   assert.match(runner, /systemd-run --quiet --wait --collect --pipe/)
   assert.match(runner, /TRANSIENT_SERVICE_COLLECTED=true/)
   assert.match(runner, /TIMER_CREATED=false/)
+  assert.match(runner, /outerRunnerState:\s*'failed'/)
   assert.doesNotMatch(runner, /ReadWritePaths=/)
   assert.doesNotMatch(runner, /systemctl\s+(?:enable|start).*timer/i)
   assert.doesNotMatch(runner, /101\.254\.114\.238/)
@@ -175,7 +180,35 @@ test('controlled runner rejects an ok-shaped result without complete zero-write 
   const parsed = controlledEntry.parseRemoteOutput(output)
   assert.equal(parsed.completed, false)
   assert.equal(parsed.executed, true)
+  assert.equal(parsed.outerRunnerState, 'completed')
   assert.equal(parsed.reconciliationSafetyConfirmed, false)
+})
+
+test('controlled runner distinguishes its fixed outer timeout without inventing reconciliation output', () => {
+  const timeoutOutput = [
+    'EXECUTED=true',
+    'RUN_EXIT=124',
+    'DATABASE_UNCHANGED=true',
+    'OPENCLAW_INDEX_UNCHANGED=true',
+    'PROTECT_SYSTEM_STRICT=true',
+    'PROTECT_HOME_READ_ONLY=true',
+    'BUSINESS_PATHS_READ_ONLY=true',
+    'XDG_RUNTIME_DYNAMIC=true',
+    'DBUS_EXPLICITLY_SET=false',
+    'TRANSIENT_SERVICE_COLLECTED=true',
+    'TIMER_CREATED=false',
+    'RESULT_B64=',
+  ].join('\n')
+  const failedOutput = timeoutOutput.replace('RUN_EXIT=124', 'RUN_EXIT=1')
+
+  const timedOut = controlledEntry.parseRemoteOutput(timeoutOutput)
+  assert.equal(timedOut.completed, false)
+  assert.equal(timedOut.executed, false)
+  assert.equal(timedOut.outerRunnerState, 'timeout_360000')
+  assert.equal(timedOut.reconciliation, null)
+
+  const failed = controlledEntry.parseRemoteOutput(failedOutput)
+  assert.equal(failed.outerRunnerState, 'failed')
 })
 
 test('controlled runner treats unrelated SQLite file activity as an observation when metadata is stable', () => {
@@ -211,6 +244,7 @@ test('controlled runner treats unrelated SQLite file activity as an observation 
   ].join('\n')
   const parsed = controlledEntry.parseRemoteOutput(output)
   assert.equal(parsed.completed, true)
+  assert.equal(parsed.outerRunnerState, 'completed')
   assert.equal(parsed.databaseFileGroupStable, false)
   assert.equal(parsed.databaseExternalActivityObserved, true)
   assert.equal(parsed.reconciliationSafetyConfirmed, true)

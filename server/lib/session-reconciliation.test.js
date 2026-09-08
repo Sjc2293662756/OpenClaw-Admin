@@ -262,6 +262,26 @@ test('reconciles normal, one-sided, missing, referenced, unknown ownership and a
   assert.equal(result.safety.sqliteTotalChanges, 0)
   assert.equal(result.safety.bffMetadataStable, true)
   assert.equal(result.safety.mutationActionsAvailable, false)
+  assert.equal(result.diagnostics.snapshotRound, null)
+  assert.equal(result.diagnostics.probe, null)
+  assert.equal(result.diagnostics.failureKind, 'none')
+  assert.equal(result.diagnostics.timeoutLayer, 'none')
+  assert.equal(result.diagnostics.completedProbeCount, 6)
+  assert.deepEqual(
+    result.diagnostics.probes.map(({ snapshotRound, probe, status }) => ({ snapshotRound, probe, status })),
+    [
+      { snapshotRound: 1, probe: 'index', status: 'completed' },
+      { snapshotRound: 1, probe: 'missing', status: 'completed' },
+      { snapshotRound: 1, probe: 'runtime', status: 'completed' },
+      { snapshotRound: 2, probe: 'index', status: 'completed' },
+      { snapshotRound: 2, probe: 'missing', status: 'completed' },
+      { snapshotRound: 2, probe: 'runtime', status: 'completed' },
+    ],
+  )
+  for (const probe of result.diagnostics.probes) {
+    assert.equal(Number.isSafeInteger(probe.elapsedMs), true)
+    assert.equal(probe.elapsedMs >= 0, true)
+  }
 
   const serialized = JSON.stringify(result)
   for (const sensitive of [
@@ -521,6 +541,72 @@ test('returns unknown instead of historical data when an OpenClaw interface fail
   assert.equal(result.safety.sqliteTotalChanges, 0)
   assert.equal(result.safety.sqlitePostcheckComplete, true)
   assert.equal(result.safety.bffMetadataStable, true)
+  assert.equal(result.diagnostics.snapshotRound, 1)
+  assert.equal(result.diagnostics.probe, 'runtime')
+  assert.equal(result.diagnostics.failureKind, 'command_failure')
+  assert.equal(result.diagnostics.timeoutLayer, 'none')
+  assert.equal(result.diagnostics.completedProbeCount, 2)
+  assert.deepEqual(result.diagnostics.probes.map((probe) => probe.status), [
+    'completed', 'completed', 'failed', 'not_started', 'not_started', 'not_started',
+  ])
+  assert.equal('categories' in result, false)
+}))
+
+test('reports only fixed diagnostics when the second runtime probe reaches the CLI timeout', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  let runtimeCalls = 0
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: async (kind) => {
+      if (kind === 'index') return indexOutput(rows.index)
+      if (kind === 'missing') return missingOutput(rows.missing)
+      runtimeCalls += 1
+      if (runtimeCalls === 2) {
+        throw new ReconciliationError('OPENCLAW_RUNTIME_TIMEOUT', {
+          failureKind: 'cli_timeout',
+          timeoutLayer: 'gateway_cli_60000',
+        })
+      }
+      return runtimeOutput(rows.runtime)
+    },
+  })
+
+  assert.equal(result.status, 'unknown')
+  assert.deepEqual(result.reasonCodes, ['OPENCLAW_RUNTIME_TIMEOUT'])
+  assert.equal(result.diagnostics.snapshotRound, 2)
+  assert.equal(result.diagnostics.probe, 'runtime')
+  assert.equal(result.diagnostics.failureKind, 'cli_timeout')
+  assert.equal(result.diagnostics.timeoutLayer, 'gateway_cli_60000')
+  assert.equal(result.diagnostics.completedProbeCount, 5)
+  assert.deepEqual(result.diagnostics.probes.map((probe) => probe.status), [
+    'completed', 'completed', 'completed', 'completed', 'completed', 'failed',
+  ])
+  assert.equal('categories' in result, false)
+  assert.equal(JSON.stringify(result).includes('session-normal'), false)
+}))
+
+test('rejects arbitrary diagnostic values instead of exposing command or path details', () => withFixture(async ({ databasePath }) => {
+  const rows = baseOpenClawRows()
+  const result = await runSessionReconciliation({
+    DatabaseClass: createTestDatabaseClass(),
+    databasePath,
+    commandRunner: async (kind) => {
+      if (kind === 'index') return indexOutput(rows.index)
+      if (kind === 'missing') return missingOutput(rows.missing)
+      throw new ReconciliationError('OPENCLAW_RUNTIME_TIMEOUT', {
+        failureKind: 'token=secret',
+        timeoutLayer: '/private/runtime/path',
+      })
+    },
+  })
+
+  assert.equal(result.status, 'unknown')
+  assert.equal(result.diagnostics.failureKind, 'command_failure')
+  assert.equal(result.diagnostics.timeoutLayer, 'none')
+  const serialized = JSON.stringify(result)
+  assert.equal(serialized.includes('token=secret'), false)
+  assert.equal(serialized.includes('/private/runtime/path'), false)
   assert.equal('categories' in result, false)
 }))
 
@@ -560,6 +646,10 @@ test('returns a sanitized unknown code for invalid OpenClaw runtime JSON', () =>
   })
   assert.equal(result.status, 'unknown')
   assert.deepEqual(result.reasonCodes, ['OPENCLAW_RUNTIME_JSON_INVALID'])
+  assert.equal(result.diagnostics.snapshotRound, 1)
+  assert.equal(result.diagnostics.probe, 'runtime')
+  assert.equal(result.diagnostics.failureKind, 'parse_failure')
+  assert.equal(result.diagnostics.timeoutLayer, 'none')
   assert.equal(JSON.stringify(result).includes('credential=secret'), false)
   assert.equal(JSON.stringify(result).includes('agent:main:sensitive'), false)
 }))
@@ -620,16 +710,47 @@ test('classifies runtime environment and command failures without exposing raw d
   assert.equal(executed, false)
 
   const cases = [
-    [{ code: 'ETIMEDOUT', stderr: 'token=secret' }, 'OPENCLAW_RUNTIME_TIMEOUT'],
-    [{ code: 7, stderr: 'connection refused token=secret' }, 'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE'],
-    [{ code: 9, stderr: 'credential=secret' }, 'OPENCLAW_RUNTIME_NONZERO_EXIT'],
+    [
+      { code: 'ETIMEDOUT', stderr: 'token=secret' },
+      'OPENCLAW_RUNTIME_TIMEOUT',
+      'execfile_timeout',
+      'node_execfile_75000',
+    ],
+    [
+      { code: null, killed: true, stderr: 'token=secret' },
+      'OPENCLAW_RUNTIME_TIMEOUT',
+      'execfile_timeout',
+      'node_execfile_75000',
+    ],
+    [
+      { code: null, signal: 'SIGTERM', stderr: 'token=secret' },
+      'OPENCLAW_RUNTIME_TIMEOUT',
+      'execfile_timeout',
+      'node_execfile_75000',
+    ],
+    [
+      { code: 7, stderr: 'gateway timed out token=secret' },
+      'OPENCLAW_RUNTIME_TIMEOUT',
+      'cli_timeout',
+      'gateway_cli_60000',
+    ],
+    [
+      { code: 7, stderr: 'connection refused token=secret' },
+      'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE',
+      'nonzero_exit',
+      'none',
+    ],
+    [{ code: 9, stderr: 'credential=secret' }, 'OPENCLAW_RUNTIME_NONZERO_EXIT', 'nonzero_exit', 'none'],
   ]
-  for (const [failure, expected] of cases) {
+  for (const [failure, expected, failureKind, timeoutLayer] of cases) {
     await assert.rejects(
       () => runFixedOpenClawCommand('runtime', async () => { throw Object.assign(new Error('raw failure'), failure) }, {
         XDG_RUNTIME_DIR: '/run/user/4242',
       }),
-      (error) => error?.code === expected && !error.message.includes('secret'),
+      (error) => error?.code === expected
+        && error?.diagnostic?.failureKind === failureKind
+        && error?.diagnostic?.timeoutLayer === timeoutLayer
+        && !error.message.includes('secret'),
     )
   }
 

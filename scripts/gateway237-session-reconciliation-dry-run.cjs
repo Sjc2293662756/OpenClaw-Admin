@@ -247,6 +247,10 @@ function parseRemoteOutput(output) {
     }
   }
   const runExit = markerInteger(markers, 'RUN_EXIT')
+  const executionMarker = markerBoolean(markers, 'EXECUTED')
+  const outerRunnerState = runExit === 124 && reconciliation === null
+    ? 'timeout_360000'
+    : (executionMarker && reconciliation !== null ? 'completed' : 'failed')
   const reconciliationSafetyConfirmed = reconciliation?.safety?.sqliteReadonly === true
     && reconciliation?.safety?.sqliteQueryOnly === true
     && reconciliation?.safety?.sqliteTotalChanges === 0
@@ -262,7 +266,7 @@ function parseRemoteOutput(output) {
     && dbusStateConfirmed
     && runtimeGuards.transientServiceCollected
     && timerStateConfirmed
-  const executed = markerBoolean(markers, 'EXECUTED') && reconciliation !== null
+  const executed = executionMarker && reconciliation !== null
   const completed = executed
     && runExit === 0
     && openclawIndexUnchanged
@@ -274,6 +278,7 @@ function parseRemoteOutput(output) {
     executed,
     status: completed ? 'dry-run-complete' : (reconciliation?.status === 'unknown' ? 'dry-run-unknown' : 'dry-run-failed'),
     runExit,
+    outerRunnerState,
     sourceBundleSha256: /^[0-9a-f]{64}$/.test(String(markers.get('BUNDLE_SHA256') || ''))
       ? markers.get('BUNDLE_SHA256')
       : null,
@@ -325,6 +330,7 @@ async function main() {
           completed: false,
           executed: false,
           status: 'dry-run-failed',
+          outerRunnerState: 'failed',
           errorCode: 'REMOTE_READONLY_RUNNER_FAILED',
         }
     process.stdout.write(`${JSON.stringify(result)}\n`)
@@ -334,6 +340,7 @@ async function main() {
       completed: false,
       executed: false,
       status: 'dry-run-failed',
+      outerRunnerState: 'failed',
       errorCode: safeErrorCode(error),
     })}\n`)
     process.exitCode = 1
