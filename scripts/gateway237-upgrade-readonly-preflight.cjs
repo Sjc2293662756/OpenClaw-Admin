@@ -36,8 +36,18 @@ else
 fi
 upgrade_service=$(systemctl is-active gaiop-upgrade.service 2>/dev/null || true)
 legacy_upgrade_service=$(systemctl is-active napm-upgrade.service 2>/dev/null || true)
-upgrade_journal=$(journalctl -u gaiop-upgrade.service -n 40 --no-pager -o cat 2>/dev/null | tail -n 40 | base64 -w 0 || true)
-admin_journal=$(journalctl -u gaiop-admin.service -n 60 --no-pager -o cat 2>/dev/null | tail -n 60 | base64 -w 0 || true)
+journal_summary() {
+  unit=$1
+  limit=$2
+  rows=$(journalctl -u "$unit" -n "$limit" --no-pager -o short-iso 2>/dev/null || true)
+  entries=$(printf '%s\n' "$rows" | sed '/^$/d' | wc -l | tr -d '[:space:]')
+  errors=$(printf '%s\n' "$rows" | grep -Eic '(^|[^a-z])(error|failed|fatal)([^a-z]|$)' || true)
+  latest=$(printf '%s\n' "$rows" | tail -n 1 | sed -n 's/^\([0-9][0-9T:+.-]*\).*/\1/p')
+  if [ -z "$latest" ]; then latest=unavailable; fi
+  printf '%s|%s|%s' "$entries" "$errors" "$latest"
+}
+upgrade_journal_summary=$(journal_summary gaiop-upgrade.service 40)
+admin_journal_summary=$(journal_summary gaiop-admin.service 60)
 if [ -d /opt/napm-upgrade/.git ]; then
   legacy_upgrade_commit=$(git -C /opt/napm-upgrade rev-parse HEAD 2>/dev/null || true)
   legacy_upgrade_dirty=$(git -C /opt/napm-upgrade status --porcelain 2>/dev/null | wc -l | tr -d '[:space:]')
@@ -99,8 +109,8 @@ printf 'UPGRADE_PROCESS=%s\n' "$upgrade_process"
 printf 'UPGRADE_CGROUP=%s\n' "$upgrade_cgroup"
 printf 'UPGRADE_SERVICE=%s\n' "$upgrade_service"
 printf 'LEGACY_UPGRADE_SERVICE=%s\n' "$legacy_upgrade_service"
-printf 'UPGRADE_JOURNAL_B64=%s\n' "$upgrade_journal"
-printf 'ADMIN_JOURNAL_B64=%s\n' "$admin_journal"
+printf 'UPGRADE_JOURNAL_SUMMARY=%s\n' "$upgrade_journal_summary"
+printf 'ADMIN_JOURNAL_SUMMARY=%s\n' "$admin_journal_summary"
 printf 'LEGACY_UPGRADE_COMMIT=%s\n' "$legacy_upgrade_commit"
 printf 'LEGACY_UPGRADE_DIRTY=%s\n' "$legacy_upgrade_dirty"
 printf 'LEGACY_UPGRADE_TOKEN=%s\n' "$legacy_upgrade_token"
@@ -139,10 +149,18 @@ function parse(output) {
   }
   let legacyConfig = {}
   try { legacyConfig = JSON.parse(values.LEGACY_CONFIG || '{}') } catch {}
-  let upgradeJournal = ''
-  try { upgradeJournal = Buffer.from(values.UPGRADE_JOURNAL_B64 || '', 'base64').toString('utf8') } catch {}
-  let adminJournal = ''
-  try { adminJournal = Buffer.from(values.ADMIN_JOURNAL_B64 || '', 'base64').toString('utf8') } catch {}
+  const parseJournalSummary = (value = '') => {
+    const [entryCount, errorCount, latestTimestamp] = String(value).split('|')
+    const count = (candidate) => {
+      const parsed = Number.parseInt(candidate, 10)
+      return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0
+    }
+    return {
+      entryCount: count(entryCount),
+      errorCount: count(errorCount),
+      latestTimestamp: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(latestTimestamp || '') ? latestTimestamp : 'unavailable',
+    }
+  }
   return {
     completed: true,
     os: values.OS,
@@ -154,7 +172,7 @@ function parse(output) {
       healthStatus: values.ADMIN_HEALTH,
       upgradeServiceUrl: values.ADMIN_UPGRADE_URL,
       upgradeToken: values.ADMIN_UPGRADE_TOKEN,
-      recentJournal: adminJournal,
+      journalSummary: parseJournalSummary(values.ADMIN_JOURNAL_SUMMARY),
     },
     upgrade: {
       serviceState: values.UPGRADE_SERVICE,
@@ -167,7 +185,7 @@ function parse(output) {
       process: values.UPGRADE_PROCESS,
       cgroup: values.UPGRADE_CGROUP,
       legacyServiceState: values.LEGACY_UPGRADE_SERVICE,
-      recentJournal: upgradeJournal,
+      journalSummary: parseJournalSummary(values.UPGRADE_JOURNAL_SUMMARY),
       legacyCommit: values.LEGACY_UPGRADE_COMMIT,
       legacyDirtyCount: values.LEGACY_UPGRADE_DIRTY,
       legacyToken: values.LEGACY_UPGRADE_TOKEN,
