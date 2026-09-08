@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFile as execFileCallback } from 'node:child_process'
+import { performance } from 'node:perf_hooks'
 import { promisify } from 'node:util'
 
 export const RECONCILIATION_SCHEMA = 'gaiop.session-reconciliation.v1'
@@ -10,6 +11,26 @@ const execFileAsync = promisify(execFileCallback)
 const MAX_OPENCLAW_ROWS = 100_000
 const MAX_DETAIL_ITEMS = 200
 const ACTIVE_ADMIN_TASK_STATUSES = new Set(['active', 'in_progress', 'pending', 'queued', 'running'])
+const SNAPSHOT_ROUNDS = Object.freeze([1, 2])
+const OPENCLAW_PROBES = Object.freeze(['index', 'missing', 'runtime'])
+const FAILURE_KINDS = new Set([
+  'none',
+  'cli_timeout',
+  'execfile_timeout',
+  'nonzero_exit',
+  'spawn_failure',
+  'command_failure',
+  'parse_failure',
+  'sqlite_failure',
+  'postcheck_failure',
+  'data_drift',
+])
+const TIMEOUT_LAYERS = new Set([
+  'none',
+  'gateway_cli_60000',
+  'node_execfile_75000',
+  'unknown',
+])
 
 const OPENCLAW_COMMANDS = Object.freeze({
   index: Object.freeze(['sessions', '--agent', 'main', '--json', '--limit', 'all']),
@@ -85,15 +106,61 @@ const BFF_FINGERPRINT_FIELDS = Object.freeze({
 })
 
 export class ReconciliationError extends Error {
-  constructor(code) {
+  constructor(code, diagnostic = {}) {
     super(code)
     this.name = 'ReconciliationError'
     this.code = code
+    this.diagnostic = sanitizeFailureDiagnostic(diagnostic)
   }
 }
 
-function fail(code) {
-  throw new ReconciliationError(code)
+function sanitizeFailureDiagnostic(value = {}) {
+  return {
+    snapshotRound: SNAPSHOT_ROUNDS.includes(value.snapshotRound) ? value.snapshotRound : null,
+    probe: OPENCLAW_PROBES.includes(value.probe) ? value.probe : null,
+    failureKind: FAILURE_KINDS.has(value.failureKind) ? value.failureKind : 'command_failure',
+    timeoutLayer: TIMEOUT_LAYERS.has(value.timeoutLayer) ? value.timeoutLayer : 'none',
+  }
+}
+
+function fail(code, diagnostic = {}) {
+  throw new ReconciliationError(code, diagnostic)
+}
+
+function createRunDiagnostics() {
+  return {
+    snapshotRound: null,
+    probe: null,
+    failureKind: 'none',
+    timeoutLayer: 'none',
+    completedProbeCount: 0,
+    probes: SNAPSHOT_ROUNDS.flatMap((snapshotRound) => OPENCLAW_PROBES.map((probe) => ({
+      snapshotRound,
+      probe,
+      status: 'not_started',
+      elapsedMs: null,
+    }))),
+  }
+}
+
+function recordFailure(diagnostics, diagnostic) {
+  const sanitized = sanitizeFailureDiagnostic(diagnostic)
+  diagnostics.snapshotRound = sanitized.snapshotRound
+  diagnostics.probe = sanitized.probe
+  diagnostics.failureKind = sanitized.failureKind
+  diagnostics.timeoutLayer = sanitized.timeoutLayer
+  return sanitized
+}
+
+function publicDiagnostics(diagnostics) {
+  return {
+    snapshotRound: diagnostics.snapshotRound,
+    probe: diagnostics.probe,
+    failureKind: diagnostics.failureKind,
+    timeoutLayer: diagnostics.timeoutLayer,
+    completedProbeCount: diagnostics.completedProbeCount,
+    probes: diagnostics.probes.map((probe) => ({ ...probe })),
+  }
 }
 
 function text(value) {
@@ -379,19 +446,62 @@ function runtimeDirectory(environment) {
 }
 
 function classifyOpenClawCommandFailure(kind, error) {
-  if (error instanceof ReconciliationError) return error.code
-  if (kind !== 'runtime') return `OPENCLAW_${kind.toUpperCase()}_FAILED`
+  if (error instanceof ReconciliationError) {
+    return {
+      reasonCode: error.code,
+      ...error.diagnostic,
+    }
+  }
+  if (error?.code === 'ETIMEDOUT' || error?.killed === true || error?.signal === 'SIGTERM') {
+    return {
+      reasonCode: kind === 'runtime' ? 'OPENCLAW_RUNTIME_TIMEOUT' : `OPENCLAW_${kind.toUpperCase()}_FAILED`,
+      failureKind: 'execfile_timeout',
+      timeoutLayer: 'node_execfile_75000',
+    }
+  }
+  if (kind !== 'runtime') {
+    return {
+      reasonCode: `OPENCLAW_${kind.toUpperCase()}_FAILED`,
+      failureKind: Number.isInteger(error?.code) ? 'nonzero_exit' : 'command_failure',
+      timeoutLayer: 'none',
+    }
+  }
   const stderr = String(error?.stderr || '')
   const message = String(error?.message || '')
   const diagnostic = `${stderr}\n${message}`
-  if (error?.code === 'ETIMEDOUT' || error?.killed === true || error?.signal === 'SIGTERM'
-    || /timed?\s*out|timeout/i.test(diagnostic)) return 'OPENCLAW_RUNTIME_TIMEOUT'
-  if (/connection\s+refused|ECONNREFUSED|gateway\s+(?:is\s+)?not\s+running|gateway\s+unavailable/i.test(diagnostic)) {
-    return 'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE'
+  if (/timed?\s*out|timeout/i.test(diagnostic)) {
+    return {
+      reasonCode: 'OPENCLAW_RUNTIME_TIMEOUT',
+      failureKind: 'cli_timeout',
+      timeoutLayer: 'gateway_cli_60000',
+    }
   }
-  if (error?.code === 'ENOENT') return 'OPENCLAW_RUNTIME_EXECUTABLE_UNAVAILABLE'
-  if (Number.isInteger(error?.code)) return 'OPENCLAW_RUNTIME_NONZERO_EXIT'
-  return 'OPENCLAW_RUNTIME_EXECUTION_FAILED'
+  if (/connection\s+refused|ECONNREFUSED|gateway\s+(?:is\s+)?not\s+running|gateway\s+unavailable/i.test(diagnostic)) {
+    return {
+      reasonCode: 'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE',
+      failureKind: Number.isInteger(error?.code) ? 'nonzero_exit' : 'command_failure',
+      timeoutLayer: 'none',
+    }
+  }
+  if (error?.code === 'ENOENT') {
+    return {
+      reasonCode: 'OPENCLAW_RUNTIME_EXECUTABLE_UNAVAILABLE',
+      failureKind: 'spawn_failure',
+      timeoutLayer: 'none',
+    }
+  }
+  if (Number.isInteger(error?.code)) {
+    return {
+      reasonCode: 'OPENCLAW_RUNTIME_NONZERO_EXIT',
+      failureKind: 'nonzero_exit',
+      timeoutLayer: 'none',
+    }
+  }
+  return {
+    reasonCode: 'OPENCLAW_RUNTIME_EXECUTION_FAILED',
+    failureKind: 'spawn_failure',
+    timeoutLayer: 'none',
+  }
 }
 
 export async function runFixedOpenClawCommand(
@@ -420,19 +530,95 @@ export async function runFixedOpenClawCommand(
     })
     return String(result?.stdout || '')
   } catch (error) {
-    fail(classifyOpenClawCommandFailure(kind, error))
+    const classified = classifyOpenClawCommandFailure(kind, error)
+    fail(classified.reasonCode, {
+      probe: kind,
+      failureKind: classified.failureKind,
+      timeoutLayer: classified.timeoutLayer,
+    })
   }
 }
 
-export async function readOpenClawSnapshot(commandRunner = runFixedOpenClawCommand) {
+function elapsedMilliseconds(startedAt) {
+  return Math.max(0, Math.round(performance.now() - startedAt))
+}
+
+async function runOpenClawProbe({ snapshotRound, probe, commandRunner, diagnostics, parser }) {
+  const diagnosticRow = diagnostics.probes.find(
+    (row) => row.snapshotRound === snapshotRound && row.probe === probe,
+  )
+  const startedAt = performance.now()
+  diagnosticRow.status = 'running'
+  let raw
+  try {
+    raw = await commandRunner(probe)
+  } catch (error) {
+    diagnosticRow.status = 'failed'
+    diagnosticRow.elapsedMs = elapsedMilliseconds(startedAt)
+    const inherited = error instanceof ReconciliationError ? error.diagnostic : {}
+    const failure = recordFailure(diagnostics, {
+      snapshotRound,
+      probe,
+      failureKind: inherited.failureKind || 'command_failure',
+      timeoutLayer: inherited.timeoutLayer || 'none',
+    })
+    if (error instanceof ReconciliationError) {
+      error.diagnostic = failure
+      throw error
+    }
+    throw new ReconciliationError('RECONCILIATION_FAILED', failure)
+  }
+
+  try {
+    const parsed = parser(raw)
+    diagnosticRow.status = 'completed'
+    diagnosticRow.elapsedMs = elapsedMilliseconds(startedAt)
+    diagnostics.completedProbeCount += 1
+    return parsed
+  } catch (error) {
+    diagnosticRow.status = 'failed'
+    diagnosticRow.elapsedMs = elapsedMilliseconds(startedAt)
+    const failure = recordFailure(diagnostics, {
+      snapshotRound,
+      probe,
+      failureKind: 'parse_failure',
+      timeoutLayer: 'none',
+    })
+    if (error instanceof ReconciliationError) {
+      error.diagnostic = failure
+      throw error
+    }
+    throw new ReconciliationError('RECONCILIATION_FAILED', failure)
+  }
+}
+
+export async function readOpenClawSnapshot(
+  commandRunner = runFixedOpenClawCommand,
+  { snapshotRound = 1, diagnostics = createRunDiagnostics() } = {},
+) {
   // The Gateway can serialize sessions.list with the index/cleanup probes;
   // keep every OpenClaw CLI invocation strictly single-flight.
-  const indexRaw = await commandRunner('index')
-  const index = parseOpenClawIndex(indexRaw)
-  const missingRaw = await commandRunner('missing')
-  const missing = parseMissingTranscriptDryRun(missingRaw, index.sessions)
-  const runtimeRaw = await commandRunner('runtime')
-  const runtime = parseOpenClawRuntime(runtimeRaw)
+  const index = await runOpenClawProbe({
+    snapshotRound,
+    probe: 'index',
+    commandRunner,
+    diagnostics,
+    parser: parseOpenClawIndex,
+  })
+  const missing = await runOpenClawProbe({
+    snapshotRound,
+    probe: 'missing',
+    commandRunner,
+    diagnostics,
+    parser: (raw) => parseMissingTranscriptDryRun(raw, index.sessions),
+  })
+  const runtime = await runOpenClawProbe({
+    snapshotRound,
+    probe: 'runtime',
+    commandRunner,
+    diagnostics,
+    parser: parseOpenClawRuntime,
+  })
   return {
     index,
     runtime,
@@ -903,7 +1089,7 @@ export function reconcileSessionMetadata(bff, openclaw) {
   }
 }
 
-function unknownResult(reasonCode, safety = {}) {
+function unknownResult(reasonCode, safety = {}, diagnostics = createRunDiagnostics()) {
   const reasonCodes = [...new Set((Array.isArray(reasonCode) ? reasonCode : [reasonCode])
     .filter((code) => /^[A-Z][A-Z0-9_]{0,95}$/.test(code)))]
   return {
@@ -922,6 +1108,7 @@ function unknownResult(reasonCode, safety = {}) {
       sqlitePostcheckComplete: safety.sqlitePostcheckComplete === true,
       fixedOpenClawInterfaces: true,
     },
+    diagnostics: publicDiagnostics(diagnostics),
   }
 }
 
@@ -930,7 +1117,14 @@ export async function runSessionReconciliation({
   databasePath = PRODUCTION_DATABASE_PATH,
   commandRunner = runFixedOpenClawCommand,
 } = {}) {
-  if (typeof DatabaseClass !== 'function') return unknownResult('SQLITE_DRIVER_UNAVAILABLE')
+  const diagnostics = createRunDiagnostics()
+  if (typeof DatabaseClass !== 'function') {
+    recordFailure(diagnostics, {
+      failureKind: 'sqlite_failure',
+      timeoutLayer: 'none',
+    })
+    return unknownResult('SQLITE_DRIVER_UNAVAILABLE', {}, diagnostics)
+  }
   let db
   const safety = {
     sqliteReadonly: false,
@@ -961,10 +1155,18 @@ export async function runSessionReconciliation({
       changesBefore = readSqliteTotalChanges(db)
       const bffBefore = readBffMetadata(db)
       bffFingerprintBefore = fingerprintBffMetadata(bffBefore)
-      openclawBefore = await readOpenClawSnapshot(commandRunner)
-      openclawAfter = await readOpenClawSnapshot(commandRunner)
+      openclawBefore = await readOpenClawSnapshot(commandRunner, { snapshotRound: 1, diagnostics })
+      openclawAfter = await readOpenClawSnapshot(commandRunner, { snapshotRound: 2, diagnostics })
     } catch (error) {
       primaryFailureCode = safeCode(error)
+      if (diagnostics.failureKind === 'none') {
+        recordFailure(diagnostics, {
+          failureKind: primaryFailureCode.startsWith('SQLITE_') || primaryFailureCode.startsWith('BFF_')
+            ? 'sqlite_failure'
+            : 'command_failure',
+          timeoutLayer: 'none',
+        })
+      }
     }
 
     if (db) {
@@ -1005,11 +1207,21 @@ export async function runSessionReconciliation({
     }
 
     if (primaryFailureCode || postcheckFailureCodes.length > 0) {
-      return unknownResult([primaryFailureCode, ...postcheckFailureCodes], safety)
+      if (!primaryFailureCode && postcheckFailureCodes.length > 0) {
+        recordFailure(diagnostics, {
+          failureKind: 'postcheck_failure',
+          timeoutLayer: 'none',
+        })
+      }
+      return unknownResult([primaryFailureCode, ...postcheckFailureCodes], safety, diagnostics)
     }
     safety.openclawSnapshotStable = openclawBefore?.fingerprint === openclawAfter?.fingerprint
     if (!safety.bffMetadataStable || !safety.openclawSnapshotStable) {
-      return unknownResult('DATA_DRIFT', safety)
+      recordFailure(diagnostics, {
+        failureKind: 'data_drift',
+        timeoutLayer: 'none',
+      })
+      return unknownResult('DATA_DRIFT', safety, diagnostics)
     }
 
     const result = reconcileSessionMetadata(bffAfter, openclawAfter)
@@ -1027,6 +1239,7 @@ export async function runSessionReconciliation({
       fixedOpenClawInterfaces: true,
       mutationActionsAvailable: false,
     }
+    result.diagnostics = publicDiagnostics(diagnostics)
     return result
   } finally {
     try {
