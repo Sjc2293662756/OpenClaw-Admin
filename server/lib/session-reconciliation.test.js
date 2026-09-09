@@ -735,7 +735,23 @@ test('classifies runtime environment and command failures without exposing raw d
       'gateway_cli_60000',
     ],
     [
+      {
+        code: 7,
+        message: 'Command failed: openclaw gateway call sessions.list --timeout 60000',
+        stderr: 'generic failure token=secret',
+      },
+      'OPENCLAW_RUNTIME_NONZERO_EXIT',
+      'nonzero_exit',
+      'none',
+    ],
+    [
       { code: 7, stderr: 'connection refused token=secret' },
+      'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE',
+      'nonzero_exit',
+      'none',
+    ],
+    [
+      { code: 7, message: 'gateway unavailable token=secret', stderr: 'generic failure' },
       'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE',
       'nonzero_exit',
       'none',

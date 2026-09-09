@@ -466,16 +466,17 @@ function classifyOpenClawCommandFailure(kind, error) {
       timeoutLayer: 'none',
     }
   }
+  // execFile error.message includes the invoked command and its fixed
+  // `--timeout 60000` argument, so only child stderr can evidence a CLI timeout.
   const stderr = String(error?.stderr || '')
-  const message = String(error?.message || '')
-  const diagnostic = `${stderr}\n${message}`
-  if (/timed?\s*out|timeout/i.test(diagnostic)) {
+  if (/(?:^|\s)(?:timed?\s+out|timeout)(?:\s|:|$)/i.test(stderr)) {
     return {
       reasonCode: 'OPENCLAW_RUNTIME_TIMEOUT',
       failureKind: 'cli_timeout',
       timeoutLayer: 'gateway_cli_60000',
     }
   }
+  const diagnostic = `${stderr}\n${String(error?.message || '')}`
   if (/connection\s+refused|ECONNREFUSED|gateway\s+(?:is\s+)?not\s+running|gateway\s+unavailable/i.test(diagnostic)) {
     return {
       reasonCode: 'OPENCLAW_RUNTIME_GATEWAY_UNAVAILABLE',

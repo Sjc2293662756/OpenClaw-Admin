@@ -41,6 +41,8 @@ test('production reconciliation runtime has no database or filesystem mutation c
   assert.match(core, /node_execfile_75000/)
   assert.match(core, /completedProbeCount/)
   assert.match(core, /performance\.now\(\)/)
+  assert.match(core, /Math\.round\(performance\.now\(\) - startedAt\)/)
+  assert.match(core, /\.test\(stderr\)\) \{\r?\n\s+return \{\r?\n\s+reasonCode: 'OPENCLAW_RUNTIME_TIMEOUT'/)
   assert.match(core, /JSON\.stringify\(\{ limit: MAX_OPENCLAW_ROWS \}\)/)
   assert.match(core, /XDG_RUNTIME_DIR: xdgRuntimeDirectory/)
   assert.doesNotMatch(core, /DBUS_SESSION_BUS_ADDRESS/)
