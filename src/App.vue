@@ -36,9 +36,11 @@ const globalSseLifecycle = createGlobalSseLifecycle(websocketStore, alertRealtim
 const appTitle = computed(() => t('app.title'));
 const lightOnlyRoute = computed(() => route.meta.lightOnly === true);
 const activeTheme = computed(() => (lightOnlyRoute.value ? null : theme.value));
-const canReceiveAlertNotifications = computed(() => LOCAL_ALERT_SOUND_DEMO || canAccessPage(
-  authStore.currentUser?.effectiveModules,
-  'alerts.notifications',
+const canReceiveAlertNotifications = computed(() => LOCAL_ALERT_SOUND_DEMO || (
+  authStore.isAuthenticated && canAccessPage(
+    authStore.currentUser?.effectiveModules,
+    'alerts.notifications',
+  )
 ))
 let permissionRefresh: Promise<void> | null = null
 

@@ -2,6 +2,7 @@ import type { AuthUser } from '@/stores/auth'
 
 type ConnectionStore = { connect: () => void; disconnect: () => void }
 type AlertStore = {
+  activeAccount: string | null
   activate: (user: AuthUser) => void
   loadPreferences: () => Promise<boolean>
   loadNotifications: () => Promise<boolean>
@@ -42,9 +43,11 @@ export function createGlobalSseLifecycle(websocket: ConnectionStore, alerts: Ale
       // account from flashing a notification while its setting is loading.
       if (notificationsAllowed) {
         await alerts.loadPreferences()
+        if (alerts.activeAccount === null) return
         await alerts.loadNotifications()
       }
       if (generation !== syncGeneration || previousToken !== token || previousAccount !== account) return
+      if (alerts.activeAccount === null) return
       if (notificationsAllowed) alerts.start()
       else alerts.stop()
       websocket.connect()

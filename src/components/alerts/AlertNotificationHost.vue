@@ -172,7 +172,7 @@ watch(() => alerts.recentEvents[0]?.notificationId, (notificationId) => {
 })
 let lastPreferencesError: string | null = null
 watch(() => alerts.preferencesLoadError, (error) => {
-  if (!error || error === lastPreferencesError) return
+  if (!error || error === lastPreferencesError || !authStore.isAuthenticated || !alerts.activeAccount) return
   lastPreferencesError = error
   notification.warning({
     title: locale.value === 'zh-CN' ? '告警通知设置暂不可用' : 'Alert notification settings are unavailable',

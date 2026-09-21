@@ -4,12 +4,15 @@ import { createGlobalSseLifecycle, shouldLoginCreateUnauthenticatedConnection } 
 function createContext() {
   const websocket = { connect: vi.fn(), disconnect: vi.fn() }
   const alerts = {
-    activate: vi.fn(),
+    activeAccount: null as string | null,
+    activate: vi.fn((account: { id?: string; username: string }) => {
+      alerts.activeAccount = String(account.id || account.username)
+    }),
     loadPreferences: vi.fn().mockResolvedValue(true),
     loadNotifications: vi.fn().mockResolvedValue(true),
     start: vi.fn(),
     stop: vi.fn(),
-    clearForLogout: vi.fn(),
+    clearForLogout: vi.fn(() => { alerts.activeAccount = null }),
   }
   return { websocket, alerts, lifecycle: createGlobalSseLifecycle(websocket, alerts) }
 }
@@ -58,6 +61,20 @@ describe('global SSE lifecycle', () => {
     expect(context.alerts.loadPreferences).toHaveBeenCalledOnce()
     expect(context.alerts.loadNotifications).toHaveBeenCalledOnce()
     expect(context.alerts.stop).toHaveBeenCalledOnce()
+  })
+
+  it('does not start a stream after preference loading clears an expired account', async () => {
+    const context = createContext()
+    context.alerts.loadPreferences.mockImplementationOnce(async () => {
+      context.alerts.activeAccount = null
+      return false
+    })
+
+    await context.lifecycle.sync('expired-token', user('one'))
+
+    expect(context.alerts.loadNotifications).not.toHaveBeenCalled()
+    expect(context.alerts.start).not.toHaveBeenCalled()
+    expect(context.websocket.connect).not.toHaveBeenCalled()
   })
 
   it('keeps Login auth-disabled ownership disjoint from App authenticated ownership', () => {

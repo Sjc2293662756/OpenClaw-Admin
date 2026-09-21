@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { useAuthStore } from './auth'
 import { useAlertRealtimeStore, type AlertNotificationCounts, type AlertRealtimeEvent } from './alert-realtime'
 
 function event(notificationId: number, {
@@ -319,6 +320,24 @@ describe('server-backed alert notification store', () => {
     late.resolve(response({ preferences: loaded }))
     await expect(stale).resolves.toBe(false)
     expect(store.activeAccount).toContain('three')
+  })
+
+  it('treats an expired session while loading preferences as logout instead of an outage', async () => {
+    localStorage.setItem('auth_token', 'expired-token')
+    localStorage.setItem('auth_user', JSON.stringify({ id: 'one', username: 'one', role: 'admin' }))
+    const auth = useAuthStore()
+    const store = useAlertRealtimeStore()
+    store.activate({ id: 'one', username: 'one', role: 'admin' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({
+      code: 'UNAUTHORIZED',
+      error: '登录状态已失效，请重新登录',
+    }, 401)))
+
+    await expect(store.loadPreferences()).resolves.toBe(false)
+    expect(store.preferencesLoadError).toBeNull()
+    expect(store.activeAccount).toBeNull()
+    expect(auth.isAuthenticated).toBe(false)
+    expect(auth.currentUser).toBeNull()
   })
 
   it('retains an unresolved upstream gap as diagnostics without replaying Receiver history into notifications', () => {

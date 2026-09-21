@@ -89,6 +89,11 @@ type OfflineAlertRange = { afterId: number; throughId: number }
 
 type ApiFailure = Error & { status?: number; code?: string }
 
+function isUnauthorizedFailure(error: unknown) {
+  const failure = error as ApiFailure
+  return failure.status === 401 || failure.code === 'UNAUTHORIZED'
+}
+
 export const DEFAULT_ALERT_NOTIFICATION_PREFERENCES: AlertNotificationPreferences = Object.freeze({
   realtimeEnabled: true,
   soundEnabled: true,
@@ -405,6 +410,12 @@ export const useAlertRealtimeStore = defineStore('alertRealtime', () => {
         return true
       } catch (error) {
         if (!isCurrentPreferenceRequest(account, generation) || controller.signal.aborted) return false
+        // An expired browser token is an expected logout path, not a preference outage.
+        if (isUnauthorizedFailure(error)) {
+          useAuthStore().expireSession()
+          clearForLogout()
+          return false
+        }
         preferences.value = { ...DEFAULT_ALERT_NOTIFICATION_PREFERENCES }
         preferencesReady.value = false
         preferencesLoadError.value = error instanceof Error ? error.message : 'ALERT_NOTIFICATION_PREFERENCES_UNAVAILABLE'
