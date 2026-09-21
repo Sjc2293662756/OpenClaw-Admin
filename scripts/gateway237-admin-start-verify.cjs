@@ -61,7 +61,17 @@ else
   exit 4
 fi
 mark_phase 'HEALTH'
-node -e "const http=require('http'); const req=http.get('http://127.0.0.1:3000/api/health',{timeout:5000},(res)=>{res.resume(); res.on('end',()=>process.exit(res.statusCode===200?0:4));}); req.on('error',()=>process.exit(5)); req.on('timeout',()=>{req.destroy();process.exit(6);});"
+health_status='unavailable'
+for i in $(seq 1 30); do
+  health_status=$(node -e "const http=require('http'); const req=http.get('http://127.0.0.1:3000/api/health',{timeout:5000},(res)=>{res.resume(); res.on('end',()=>process.stdout.write(String(res.statusCode)))}); req.on('error',()=>process.stdout.write('error')); req.on('timeout',()=>{req.destroy();process.stdout.write('timeout')});" 2>/dev/null || true)
+  if [ "$health_status" = '200' ]; then break; fi
+  systemctl is-active --quiet gaiop-admin.service || break
+  sleep 1
+done
+if [ "$health_status" != '200' ]; then
+  printf 'HEALTH_STATUS=%s\n' "$health_status"
+  exit 5
+fi
 mark_phase 'GATEWAY_CONNECTED'
 gateway_state='disconnected'
 for i in $(seq 1 30); do
