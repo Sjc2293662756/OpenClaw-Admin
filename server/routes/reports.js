@@ -402,6 +402,7 @@ function publicReport(row, delivery = null) {
     sourceChannelUserName: row.source_channel_user_name || null,
     sourceMessageId: row.source_message_id || null,
     sourceMessagePreview: row.source_message_preview || null,
+    sourceToolCallId: row.source_tool_call_id || null,
     dataSourceId: row.data_source_id || null,
     dataSourceName: row.data_source_name || null,
     mimeType: row.mime_type,
@@ -521,8 +522,17 @@ export function createReportsRouter({ db, authMiddleware, moduleMiddleware = aut
       for (const delivery of deliveries) {
         if (!latestDeliveryByReport.has(delivery.report_id)) latestDeliveryByReport.set(delivery.report_id, delivery)
       }
+      const attributionEntries = readReportAttributionIndex()
       sendOk(res, {
-        reports: rows.map((row) => publicReport(row, latestDeliveryByReport.get(row.id))),
+        reports: rows.map((row) => {
+          const attribution = resolveReportAttribution(attributionEntries, {
+            storedName: row.stored_name, auditName: row.audit_name, reportId: row.id,
+          })
+          const sourceToolCallId = attribution?.sourceSessionId === row.source_session_id
+            && attribution?.sourceUserId === row.source_user_id
+            ? attribution.sourceToolCallId : null
+          return publicReport({ ...row, source_tool_call_id: sourceToolCallId }, latestDeliveryByReport.get(row.id))
+        }),
         filters,
         reportRootReady: true,
       })

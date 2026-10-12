@@ -35,6 +35,7 @@ function areReportListsEquivalent(left: ChatReportFile[], right: ChatReportFile[
       || current.sourceSessionId !== next.sourceSessionId
       || current.sourceMessageId !== next.sourceMessageId
       || current.sourceMessagePreview !== next.sourceMessagePreview
+      || current.sourceToolCallId !== next.sourceToolCallId
       || current.createdAt !== next.createdAt
     ) return false
   }

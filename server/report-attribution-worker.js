@@ -171,7 +171,7 @@ function reportToolResults(sessionFile, roots, previousOffset = 0) {
     if (message?.role !== 'toolResult') continue
     if (message?.toolName === 'napm-report-export') {
       const result = parseToolResult(message)
-      if (result) output.results.push({ result, evidence: 'official_tool_result', timestamp: safeText(value.timestamp || message.timestamp, 128) })
+      if (result) output.results.push({ result, sourceToolCallId: safeText(message.toolCallId, 512), evidence: 'official_tool_result', timestamp: safeText(value.timestamp || message.timestamp, 128) })
     } else if (message?.toolName === 'exec') {
       const pair = resolveExecArtifactPair(message, roots, value.timestamp || message.timestamp)
       if (pair) output.results.push({ result: pair, evidence: 'exec_tool_result', timestamp: safeText(value.timestamp || message.timestamp, 128) })
@@ -372,8 +372,11 @@ export function scanReportAttributions(options = {}) {
     if (!identity) continue
     const sessionFile = safeText(record?.sessionFile, 4096)
     const stateKey = sessionFile ? sha256(sessionFile) : null
-    const parsed = reportToolResults(sessionFile, allowedRoots, dryRun ? 0 : Number(workerState[stateKey]?.offset || 0))
-    if (stateKey) nextWorkerState[stateKey] = { offset: parsed.nextOffset }
+    const needsTurnBackfill = /(?:^|:)webchat-/i.test(sessionKey)
+      && workerState[stateKey]?.reportTurnVersion !== 1
+      && [...entries.values()].some((entry) => entry.sourceSessionId === sessionKey && entry.evidence === 'official_tool_result' && !entry.sourceToolCallId)
+    const parsed = reportToolResults(sessionFile, allowedRoots, dryRun || needsTurnBackfill ? 0 : Number(workerState[stateKey]?.offset || 0))
+    if (stateKey) nextWorkerState[stateKey] = { offset: parsed.nextOffset, reportTurnVersion: 1 }
     for (const event of parsed.results) {
       const pair = resolveArtifactPair(event.result, allowedRoots, entries)
       const filePath = pair?.filePath
@@ -394,6 +397,7 @@ export function scanReportAttributions(options = {}) {
         sourceChannelUserName: identity.sourceChannelUserName || null,
         dataSourceId: identity.dataSourceId || safeText(audit?.dataSourceId || audit?.dataSource?.id, 512),
         evidence: event.evidence,
+        sourceToolCallId: event.sourceToolCallId || null,
         toolCompletedAt: event.timestamp,
         fileSha256: sha256(readFileSync(filePath)),
         observedAt: new Date().toISOString(),

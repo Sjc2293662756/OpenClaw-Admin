@@ -143,6 +143,39 @@ export const useChatStore = defineStore('chat', () => {
 
   const wsStore = useWebSocketStore()
 
+  function pendingCacheKey(key: string): string | null {
+    try {
+      const user = JSON.parse(localStorage.getItem('auth_user') || 'null')
+      const owner = user?.id || user?.username
+      return owner && key ? `gaiop:pending-chat:${encodeURIComponent(owner)}:${encodeURIComponent(key)}` : null
+    } catch { return null }
+  }
+
+  function savePendingTranscript() {
+    try {
+      const key = pendingCacheKey(sessionKey.value)
+      if (!key) return
+      const pending = messages.value.filter(isPendingTranscriptMessage).slice(-100)
+      if (pending.length === 0) sessionStorage.removeItem(key)
+      else sessionStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), messages: pending }))
+    } catch { /* Storage unavailable: keep the live conversation usable. */ }
+  }
+
+  function restorePendingTranscript(key: string): ChatMessage[] {
+    try {
+      const cacheKey = pendingCacheKey(key)
+      if (!cacheKey) return []
+      const cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null')
+      if (!cached || Date.now() - cached.savedAt > 24 * 60 * 60 * 1000) {
+        sessionStorage.removeItem(cacheKey)
+        return []
+      }
+      return Array.isArray(cached.messages) ? cached.messages.filter((item: ChatMessage) =>
+        item && ['user', 'assistant'].includes(item.role) && typeof item.content === 'string',
+      ) : []
+    } catch { return [] }
+  }
+
   function toolCompletedDetail(toolName: string): string {
     const locale = getActiveLocale()
     return byLocale(`工具完成：${toolName}`, `Tool done: ${toolName}`, locale)
@@ -387,6 +420,7 @@ export const useChatStore = defineStore('chat', () => {
     const normalizedKey = key.trim()
     const changed = normalizedKey !== sessionKey.value
     if (changed) {
+      savePendingTranscript()
       clearTimers()
       historyRequestId += 1
       activeHistoryKey = ''
@@ -398,6 +432,7 @@ export const useChatStore = defineStore('chat', () => {
       lastSyncedAt.value = null
     }
     sessionKey.value = normalizedKey
+    if (changed) messages.value = restorePendingTranscript(normalizedKey)
     const match = normalizedKey.match(/^agent:([^:]+):/)
     if (match && match[1]) {
       const agentId = match[1]
@@ -474,6 +509,7 @@ export const useChatStore = defineStore('chat', () => {
         if (changed) {
           messages.value = nextMessages
         }
+        savePendingTranscript()
         if (changed || !silent) {
           lastSyncedAt.value = Date.now()
         }
@@ -879,7 +915,7 @@ export const useChatStore = defineStore('chat', () => {
 
   function isPendingTranscriptMessage(item: ChatMessage): boolean {
     const id = item.id || ''
-    return id.startsWith('web-') || id.startsWith('local-') || id === activeRealtimeMessageId
+    return id.startsWith('web-') || id.startsWith('local-') || id.startsWith('chat-stream:') || id === activeRealtimeMessageId
   }
 
   function messagesMatch(left: ChatMessage, right: ChatMessage): boolean {
@@ -887,6 +923,10 @@ export const useChatStore = defineStore('chat', () => {
     if (left.role !== right.role) return false
     if (left.role === 'user') {
       return normalizeUserContent(left.content) === normalizeUserContent(right.content)
+    }
+    if ((left.id?.startsWith('chat-stream:') || right.id?.startsWith('chat-stream:'))
+      && left.content.trim() && right.content.trim()) {
+      return left.content.startsWith(right.content) || right.content.startsWith(left.content)
     }
     return left.content === right.content
   }
@@ -921,9 +961,8 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   function mergePendingMessages(history: ChatMessage[]): ChatMessage[] {
-    // Only preserve explicit local user placeholders and the one active chat
-    // stream. Agent telemetry and completed realtime projections must never
-    // outlive the authoritative Gateway transcript.
+    // Preserve local turns across reload until the Gateway history contains
+    // their full text. Agent telemetry is never stored as a chat message.
     const merged = [...history]
     const pending = messages.value
       .map((item, index) => ({ item, index }))
@@ -940,8 +979,14 @@ export const useChatStore = defineStore('chat', () => {
         continue
       }
 
-      const alreadyPresent = merged.some((existing) => messagesMatch(existing, item))
-      if (alreadyPresent) continue
+      const matchedIndex = merged.findIndex((existing) => messagesMatch(existing, item))
+      if (matchedIndex >= 0) {
+        const existing = merged[matchedIndex]!
+        if (item.role === 'assistant' && item.content.length > existing.content.length) {
+          merged[matchedIndex] = { ...existing, ...item }
+        }
+        continue
+      }
       const insertionIndex = findPendingInsertionIndex(item, index, merged)
       merged.splice(insertionIndex, 0, item)
     }
@@ -1030,6 +1075,7 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     messages.value = list
+    savePendingTranscript()
   }
 
   function flushPendingStreamMessages() {
@@ -1438,6 +1484,7 @@ export const useChatStore = defineStore('chat', () => {
       timestamp: new Date().toISOString(),
     }
     messages.value = [...messages.value, localMessage]
+    savePendingTranscript()
     // Start the fallback while the Gateway is still running the request. Long
     // report/tool runs may not resolve chat.send until after their transcript
     // is complete, so waiting for that RPC would leave the UI with no recovery
@@ -1464,7 +1511,9 @@ export const useChatStore = defineStore('chat', () => {
     } catch (error) {
       clearTimers()
       lastError.value = error instanceof Error ? error.message : String(error)
-      messages.value = messages.value.filter((item) => item.id !== idempotencyKey)
+      // A timeout can follow a successful Gateway acceptance. Keep the user's
+      // question visible and reloadable while exposing the send error.
+      savePendingTranscript()
       const agentStatus = getOrCreateAgentStatus(agentId)
       if (agentStatus.runId === idempotencyKey) {
         setAgentStatusPhase(agentId, 'error', { runId: null, detail: lastError.value })
@@ -1504,6 +1553,7 @@ export const useChatStore = defineStore('chat', () => {
         timestamp: new Date().toISOString(),
       }]
     }
+    savePendingTranscript()
     schedulePostSendRefreshes()
   }
 

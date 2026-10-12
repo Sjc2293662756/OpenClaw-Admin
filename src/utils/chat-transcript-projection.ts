@@ -16,16 +16,7 @@ export function isConversationTranscriptRole(role: string): boolean {
 export function isConversationTranscriptMessage(message: ChatMessage): boolean {
   if (!isConversationTranscriptRole(message.role)) return false
   if (message.process?.kind === 'user_visible_process') {
-    return message.process.visible && message.process.safe && Boolean(message.process.publicText.trim())
-  }
-  // Canonical live chat events are not yet covered by the BFF history
-  // projection. Suppress structured tool turns until their safe persisted
-  // process metadata arrives; ordinary final streaming replies remain visible.
-  if (
-    message.id?.startsWith('chat-stream:')
-    && message.rawContent?.some((part) => part.type === 'tool_call')
-  ) {
-    return false
+    return message.process.visible && Boolean(message.process.publicText.trim() || message.content.trim())
   }
   return true
 }

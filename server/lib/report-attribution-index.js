@@ -37,6 +37,7 @@ export function readReportAttributionIndex(indexPath = process.env.GAIOP_REPORT_
         sourceChannelUserId: safeText(value?.sourceChannelUserId, 512),
         sourceChannelUserName: safeText(value?.sourceChannelUserName, 512),
         dataSourceId: safeText(value?.dataSourceId, 512),
+        sourceToolCallId: safeText(value?.sourceToolCallId, 512),
         evidence: safeText(value?.evidence, 128),
       })
     }

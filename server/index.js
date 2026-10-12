@@ -1797,11 +1797,8 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
           historyPayload: historyBeforeSend,
         })
       } catch {
-        return sendError(res, {
-          status: 409,
-          code: 'CHAT_PROCESS_SNAPSHOT_UNAVAILABLE',
-          message: '暂时无法确认本次执行的过程显示边界，请稍后重试',
-        })
+        // Process display metadata is optional; it must not reject a chat send.
+        chatProcessRun = null
       }
     }
     const activeDataSource = method === 'chat.send'
@@ -1842,7 +1839,12 @@ app.post('/api/rpc', authMiddleware, rpcPermissionMiddleware, async (req, res) =
       else if (SAFE_SKILL_READ_METHODS.has(method)) payload = projectSafeSkillsPayload(result)
     }
     if (method === 'chat.history') {
-      payload = projectChatHistoryProcessMetadata(db, req.user.id, sessionKey, payload)
+      try {
+        payload = projectChatHistoryProcessMetadata(db, req.user.id, sessionKey, payload)
+      } catch {
+        // Return native history when optional process metadata cannot be built.
+        payload = result
+      }
     } else if (method === 'sessions.usage' || method === 'usage.sessions') {
       payload = filterSessionUsagePayload(payload, listOwnedWorkspaceSessionKeys(db, req.user))
     } else if (isSessionList) {

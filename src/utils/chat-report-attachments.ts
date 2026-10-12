@@ -11,6 +11,7 @@ export type ChatReportFile = {
   sourceSessionId?: string | null
   sourceMessageId?: string | null
   sourceMessagePreview?: string | null
+  sourceToolCallId?: string | null
   createdAt: number
 }
 
@@ -135,6 +136,23 @@ export function mapReportsToAssistantMessageIndexes(
       targetIndex = hasReportCompletionSignal(messages[exactSourceIndex]!)
         ? exactSourceIndex
         : uniqueCompletionTarget(messages, exactSourceIndex)
+    }
+
+    // Successful native report results identify the export call even when
+    // legacy audits omit message provenance. Match its exact call, not a file
+    // name, timestamp or the last reply in the conversation.
+    if (targetIndex === undefined && report.sourceToolCallId) {
+      const exportCalls = messages
+        .map((message, index) => ({ message, index }))
+        .filter(({ message }) => message.role === 'assistant'
+          && (message.rawContent || []).some((part) =>
+            (part.type === 'tool_call' || String(part.type) === 'toolCall')
+            && part.id === report.sourceToolCallId
+            && REPORT_EXPORT_TOOL_NAMES.has(String(part.name || '').trim().toLowerCase())
+          ))
+      if (exportCalls.length === 1) {
+        targetIndex = uniqueCompletionTarget(messages, exportCalls[0]!.index)
+      }
     }
 
     if (targetIndex === undefined && sourcePreview) {
