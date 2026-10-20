@@ -78,6 +78,7 @@ const canWriteConversation = computed(() => canUseFunctions.value && !props.read
 
 const sessionKeyInput = ref('')
 const draft = ref('')
+const submitting = ref(false)
 const roleFilter = ref<'all' | 'user' | 'assistant' | 'system'>('all')
 const autoFollowBottom = ref(true)
 const transcriptRef = ref<HTMLElement | null>(null)
@@ -2203,6 +2204,7 @@ function handleInsertQuickReply(item: { title: string; content: string }) {
 }
 
 async function handleSendQuickReply(item: { content: string }) {
+  if (submitting.value || agentBusy.value) return
   draft.value = item.content
   await handleSend()
 }
@@ -2391,6 +2393,11 @@ function moveSlashSuggestionSelection(step: number) {
 async function handleDraftKeydown(event: KeyboardEvent) {
   const isEnter = event.key === 'Enter'
   const canSend = !event.shiftKey && !event.isComposing
+
+  if (isEnter && event.repeat && (canSend || event.metaKey || event.ctrlKey)) {
+    event.preventDefault()
+    return
+  }
 
   if (slashMode.value && slashSuggestions.value.length > 0) {
     if (event.key === 'ArrowDown') {
@@ -2741,9 +2748,11 @@ async function handleSend() {
   if (!canWriteConversation.value) return
   const content = draft.value.trim()
   if (!content) return
-  if (agentBusy.value) return
+  if (submitting.value || agentBusy.value) return
 
   const showProcessForRun = chatDisplayPreferences.preferences.showThinkingProcess
+  // A new conversation has no agent status until creation returns.
+  submitting.value = true
   try {
     let createdWorkspaceSession = false
     let createdRun: { idempotencyKey: string; runId?: string } | null = null
@@ -2781,6 +2790,8 @@ async function handleSend() {
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     message.error(reason)
+  } finally {
+    submitting.value = false
   }
 }
 </script>
@@ -2874,7 +2885,7 @@ async function handleSend() {
                       </div>
                       <NSpace :size="2">
                         <NButton size="tiny" text @click="handleInsertQuickReply(item)">{{ t('pages.chat.quickReplies.insert') }}</NButton>
-                        <NButton size="tiny" text type="primary" @click="handleSendQuickReply(item)">{{ t('pages.chat.actions.send') }}</NButton>
+                        <NButton size="tiny" text type="primary" :disabled="submitting || agentBusy || !canWriteConversation" @click="handleSendQuickReply(item)">{{ t('pages.chat.actions.send') }}</NButton>
                         <NButton size="tiny" text @click="openEditQuickReply(item)">{{ t('common.edit') }}</NButton>
                         <NPopconfirm
                           :positive-text="t('common.delete')"
@@ -3468,7 +3479,7 @@ async function handleSend() {
                       <template #icon><NIcon :component="StopCircleOutline" /></template>
                       {{ t('pages.chat.actions.stop') }}
                     </NButton>
-                    <NButton size="small" type="primary" :loading="agentBusy" :disabled="agentBusy || !canWriteConversation" :title="!canWriteConversation ? chatReadOnlyHint : undefined" @click="handleSend">
+                    <NButton size="small" type="primary" :loading="submitting || agentBusy" :disabled="submitting || agentBusy || !canWriteConversation" :title="!canWriteConversation ? chatReadOnlyHint : undefined" @click="handleSend">
                       <template #icon><NIcon :component="SendOutline" /></template>
                       {{ t('pages.chat.actions.send') }}
                     </NButton>
